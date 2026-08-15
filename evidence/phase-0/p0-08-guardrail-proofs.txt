@@ -1,0 +1,527 @@
+===========================================================================
+P0-08  GUARDRAIL PROOFS
+Merchandising System for a Mid-Scale Hardware Store
+===========================================================================
+
+Captured  : 2026-08-15 10:10:36 +08:00
+Machine   : LAPTOP-3HH6OHHE
+Repo      : C:\Users\Admin\Documents\Hardware_Merchandising_System
+Task      : P0-08 - prove the guardrails actually fail
+Companion : P0-07 - task skills, Claude Code hooks, git pre-commit hook
+
+All output below was produced by executing the checks, not by describing them.
+Each failing case was created by writing a real violation to disk and reverted
+immediately afterwards. tasks.md noted that check-no-csharp.ps1 had been
+authored but never executed; this file is its first execution.
+
+===========================================================================
+SECTION 1  ENVIRONMENT DETECTION
+===========================================================================
+
+PowerShell (session)  : 7.6.4 Core
+pwsh                  : C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.4.0_x64__8wekyb3d8bbwe\pwsh.exe
+powershell.exe        : C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+bash on PATH          : NO
+Git Bash at fixed path: True  (C:\Program Files\Git\bin\bash.exe)
+jq on PATH            : NO - hooks therefore parse stdin with ConvertFrom-Json
+git                   : git version 2.53.0.windows.3
+dotnet                : C:\Program Files\dotnet\dotnet.exe
+repo has .git         : True
+git toplevel          : C:/Users/Admin/Documents/Hardware_Merchandising_System
+
+Interpreter benchmark (block-csharp.ps1, one invocation, 3 runs each):
+  powershell.exe 5.1 : 3342 / 1808 / 1820 ms
+  pwsh 7.6.4         :  677 /  623 /  642 ms
+  => hooks invoke pwsh. Both interpreters run the scripts correctly.
+
+CLAUDE_PROJECT_DIR: Claude Code sets this for hook processes. Every hook
+script falls back to deriving the repo root from $PSScriptRoot if it is
+absent, so the hooks work when run manually too.
+
+===========================================================================
+SECTION 2  CLAUDE CODE HOOK LAYERS 1 AND 2
+===========================================================================
+
+Hook scripts executed directly with the exact stdin payload shape Claude
+Code sends ({tool_name, tool_input.file_path}). See SECTION 6 for the
+status of end-to-end verification through the Claude Code runtime.
+
+===========================================================================
+LAYER 1 - PreToolUse block-csharp.ps1   (exit 2 = blocked, exit 0 = allowed)
+===========================================================================
+
+--- T1  .cs file must be BLOCKED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Scratch.cs
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Scratch.cs
+    |   Extension    : .cs
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T2  .csproj file must be BLOCKED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Foo.csproj
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Foo.csproj
+    |   Extension    : .csproj
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T2b .cshtml must be BLOCKED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Index.cshtml
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Index.cshtml
+    |   Extension    : .cshtml
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T2c .razor must be BLOCKED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\App.razor
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\App.razor
+    |   Extension    : .razor
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T2d forward slashes still BLOCKED
+    path     : src/Merchandising.Domain/Scratch.cs
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : src/Merchandising.Domain/Scratch.cs
+    |   Extension    : .cs
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T2e uppercase .CS still BLOCKED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Scratch.CS
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Scratch.CS
+    |   Extension    : .CS
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+--- T3  .vb file must be ALLOWED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Scratch.vb
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T4  .md file must be ALLOWED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\documentations\notes.md
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T4b .xaml must be ALLOWED
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\Main.xaml
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T4c Edit tool honoured too
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Edit.cs
+    expected : exit 2   actual: exit 2   => PASS
+    | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+    |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Edit.cs
+    |   Extension    : .cs
+    | All application source in this repository is Visual Basic .NET. This is a binding
+    | course requirement confirmed by the professor (PA-001) - there is no C# escape hatch,
+    | and no exception for scratch files, samples, or generated code. See CLAUDE.md section 2.
+    | Do not work around this: do not rename the file, do not write it to another directory,
+    | and do not disable the hook. If the task genuinely cannot be completed in Visual Basic,
+    | that is a stop condition (CLAUDE.md section 7.1) - report the blocker and stop.
+    | Reporting a blocker is a successful outcome. Guessing is not.
+
+===========================================================================
+LAYER 2 - PostToolUse check-vbproj.ps1  (scans only after a .vbproj edit)
+===========================================================================
+
+--- T5  .vb edit must SKIP the scan
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Product.vb
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T6  .md edit must SKIP the scan
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\docs\adr.md
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T7  obj/ path must SKIP the scan
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\obj\x.vbproj
+    expected : exit 0   actual: exit 0   => PASS
+    | (no output - allowed silently)
+
+--- T8  clean .vbproj edit runs & passes
+    path     : C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\Merchandising.Domain.vbproj
+    expected : exit 0   actual: exit 0   => PASS
+    | G-A  Checking for C# source... pass
+    | G-B  Checking client project references... pass
+    | G-C  Checking client projects for credentials... pass
+    | G-D  Checking Option Strict inheritance... pass
+    | All guardrails passed.
+
+
+===========================================================================
+SECTION 3  GUARDRAIL SCRIPT - BREAK AND REVERT (P0-08 core)
+===========================================================================
+
+===========================================================================
+P0-08  GUARDRAIL PROOFS - scripts/check-no-csharp.ps1
+===========================================================================
+
+---------------------------------------------------------------------------
+CASE 1  Clean repo (stub client .vbproj, no violations)
+   expected guardrails to: PASS     actual: PASS (exit 0)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | All guardrails passed.
+
+---------------------------------------------------------------------------
+CASE 2  G-A  src/Merchandising.Domain/Test.cs dropped in
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... FAIL
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | GUARDRAILS FAILED (1 issue(s)):
+   |   [G-A] C# / Razor source is not permitted: src\Merchandising.Domain\Test.cs
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 3  G-B  ClientCommon references Merchandising.Infrastructure
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... FAIL
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | GUARDRAILS FAILED (1 issue(s)):
+   |   [G-B] Merchandising.ClientCommon must not reference 'Merchandising\.Infrastructure'. Client projects never touch the database.
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 4  G-B  ClientCommon takes a MySqlConnector PackageReference
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... FAIL
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | GUARDRAILS FAILED (1 issue(s)):
+   |   [G-B] Merchandising.ClientCommon must not reference 'MySqlConnector'. Client projects never touch the database.
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 5  G-C  Connection string in a client .vb file
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... FAIL
+   | G-D  Checking Option Strict inheritance... pass
+   | GUARDRAILS FAILED (4 issue(s)):
+   |   [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\BadConfig.vb (matched /Server\s*=\s*[^;"']+;/)
+   |   [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\BadConfig.vb (matched /Database\s*=\s*[^;"']+;/)
+   |   [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\BadConfig.vb (matched /Uid\s*=/)
+   |   [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\BadConfig.vb (matched /Pwd\s*=/)
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 6  G-D  <OptionStrict>Off</OptionStrict> in a .vbproj
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... FAIL
+   | GUARDRAILS FAILED (1 issue(s)):
+   |   [G-D] Option Strict is disabled in src\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj. It is set globally in Directory.Build.props and must not be overridden.
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 7  G-D  <PublishAot>true</PublishAot> in a .vbproj
+   expected guardrails to: FAIL     actual: FAIL (exit 1)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... FAIL
+   | GUARDRAILS FAILED (1 issue(s)):
+   |   [G-D] AOT/trimming is enabled in src\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj. These do not work with Visual Basic - see CLAUDE.md section 3.
+   | See CLAUDE.md for the rules these enforce.
+
+---------------------------------------------------------------------------
+CASE 8  Build output under bin/ obj/ .vs/ must be IGNORED (4 .cs/.csproj files present)
+   expected guardrails to: PASS     actual: PASS (exit 0)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | All guardrails passed.
+
+---------------------------------------------------------------------------
+CASE 9  Clean repo again after every revert
+   expected guardrails to: PASS     actual: PASS (exit 0)  => CORRECT
+
+   | G-A  Checking for C# source... pass
+   | G-B  Checking client project references... pass
+   | G-C  Checking client projects for credentials... pass
+   | G-D  Checking Option Strict inheritance... pass
+   | All guardrails passed.
+
+===========================================================================
+SUMMARY
+===========================================================================
+CORRECT        expected PASS got PASS  CASE 1  Clean repo (stub client .vbproj, no violations)
+CORRECT        expected FAIL got FAIL  CASE 2  G-A  src/Merchandising.Domain/Test.cs dropped in
+CORRECT        expected FAIL got FAIL  CASE 3  G-B  ClientCommon references Merchandising.Infrastructure
+CORRECT        expected FAIL got FAIL  CASE 4  G-B  ClientCommon takes a MySqlConnector PackageReference
+CORRECT        expected FAIL got FAIL  CASE 5  G-C  Connection string in a client .vb file
+CORRECT        expected FAIL got FAIL  CASE 6  G-D  <OptionStrict>Off</OptionStrict> in a .vbproj
+CORRECT        expected FAIL got FAIL  CASE 7  G-D  <PublishAot>true</PublishAot> in a .vbproj
+CORRECT        expected PASS got PASS  CASE 8  Build output under bin/ obj/ .vs/ must be IGNORED (4 .cs/.csproj files present)
+CORRECT        expected PASS got PASS  CASE 9  Clean repo again after every revert
+
+9 cases, 0 incorrect.
+Stubs removed. src/ left empty: 0 files remain.
+
+===========================================================================
+SECTION 4  GIT PRE-COMMIT HOOK
+===========================================================================
+
+Installed by scripts/install-hooks.ps1. This hook is NOT redundant with the
+Claude Code hooks: Claude Code hooks fire only when Claude edits a file, so
+every edit made in Visual Studio 2026 - the WPF designer, the project
+properties pages - bypasses them entirely. The git hook is the only thing
+that catches those.
+
+Hook installed at : C:\Users\Admin\Documents\Hardware_Merchandising_System\.git\hooks\pre-commit
+Shebang line      : #!/bin/sh
+CRLF pairs in body: 1  (body is LF-terminated; sh shebang resolves correctly)
+
+Interpreter visible from git's sh:
+  /c/Program Files/WindowsApps/Microsoft.PowerShell_7.6.4.0_x64__8wekyb3d8bbwe/pwsh
+  /c/Windows/System32/WindowsPowerShell/v1.0/powershell
+
+TEST 11  git commit with a staged .cs file - MUST BE BLOCKED
+-------------------------------------------------------------------
+$ git add src/Merchandising.Domain/HookTest.cs
+$ git commit -m "P0-08: this commit must be blocked"
+  Running repository guardrails...
+  G-A  Checking for C# source... FAIL
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  GUARDRAILS FAILED (1 issue(s)):
+  
+    [G-A] C# / Razor source is not permitted: src\Merchandising.Domain\HookTest.cs
+  
+  See CLAUDE.md for the rules these enforce.
+  
+  Commit blocked by repository guardrails. See CLAUDE.md.
+
+  git exit code : 1   (non-zero = commit refused)
+  commits in repo: 0
+  VERDICT: PASS - commit blocked with a readable message
+
+TEST 12  git commit --no-verify - deliberate escape hatch MUST STILL WORK
+-------------------------------------------------------------------
+$ git commit --no-verify -m "P0-08: escape hatch proof"
+  [master (root-commit) 8b77f89] P0-08: escape hatch proof - rolled back immediately
+   1 file changed, 1 insertion(+)
+   create mode 100644 src/Merchandising.Domain/HookTest.cs
+
+  git exit code : 0   (zero = escape hatch available)
+  VERDICT: PASS - --no-verify bypasses the hook as designed
+
+Rollback of the escape-hatch proof commit:
+  commits in repo : 0
+  HookTest.cs on disk : False
+  files under src/ : 0
+
+===========================================================================
+SECTION 5  STOP HOOK (LAYER 3) - TIMING AND LOOP PROTECTION
+===========================================================================
+
+Full end-to-end Stop hook (pwsh startup + full guardrail sweep), 5 runs:
+  787 ms, 734 ms, 720 ms, 713 ms, 707 ms
+  mean 732 ms   max 787 ms
+  Threshold for concern was ~2000 ms. VERDICT: PASS - 732 ms, comfortably under
+
+  Measured with src/ empty (Phase 0). The sweep walks src/ only, so cost
+  grows with the tree; roughly 600 ms of the total is pwsh startup and is
+  fixed. Re-measure at the Phase 1 gate once all eleven projects exist.
+
+Loop protection - stop_hook_active=true must not block a second time:
+  exit code 0   VERDICT: PASS - short-circuits, cannot wedge the session
+
+
+===========================================================================
+SECTION 6  SKILLS, AND WHAT COULD NOT BE VERIFIED END-TO-END THIS SESSION
+===========================================================================
+
+This section records a limitation honestly rather than reporting a green
+result that was not observed.
+
+6.1  Claude Code loads hook and skill configuration at SESSION START
+---------------------------------------------------------------------
+.claude/settings.json and the two SKILL.md files were created during this
+session. Claude Code reads both at startup, so neither was live while the
+tests ran. Two observations confirm this, both real:
+
+  a) A Write of src/Merchandising.Domain/Scratch.cs during this session
+     SUCCEEDED - the PreToolUse hook was not registered yet. The file was
+     deleted immediately (Test-Path afterwards: False, and src/ is empty,
+     see SECTION 4 rollback).
+
+  b) Invoking the new skill returned, verbatim:
+       Unknown skill: task. Did you mean tasks?
+
+Therefore:
+  - Hook layers 1-3: the SCRIPT LOGIC is fully verified (SECTION 2 and
+    SECTION 5) by feeding each script the exact stdin payload shape Claude
+    Code sends and asserting on exit codes and stderr. What remains unproven
+    is only the wiring - that Claude Code invokes them with that payload.
+  - Skills: the FILES are verified structurally (6.3). Their behaviour in a
+    live session is unproven.
+
+Both become verifiable on the next session start. Re-run these four checks
+then, and record the result here:
+    [ ] Write src/Merchandising.Domain/Scratch.cs -> blocked by hook, exit 2
+    [ ] Write src/Merchandising.Domain/Scratch.vb -> allowed
+    [ ] /task P0-04    -> reads the card, cites spec 6.3, STOPS to restate scope
+    [ ] /phase-gate    -> reports Phase 0 FAIL with the missing items in 6.4
+
+6.2  What WAS verified without any dependency on the runtime
+---------------------------------------------------------------------
+  - block-csharp.ps1     : 10/10 cases correct (SECTION 2)
+  - check-vbproj.ps1     : 4/4 cases correct (SECTION 2)
+  - stop-guardrails.ps1  : timing + loop protection (SECTION 5)
+  - check-no-csharp.ps1  : 9/9 cases correct (SECTION 3)
+  - git pre-commit hook  : 2/2 cases correct, fully end-to-end (SECTION 4)
+
+The git hook is the one enforcement layer proven end-to-end today. That is
+fitting: it is also the only layer that catches Visual Studio edits.
+
+6.3  TEST 13/14 (part 1) - skill file validation
+---------------------------------------------------------------------
+  .claude/skills/task/SKILL.md
+      name: task              matches directory name
+      description present     yes (names P0-04, P1-02, P4-07, "next task")
+      argument-hint           "[task-id]"
+      allowed-tools           Read, Grep, Glob, Edit, Write, Bash(git *),
+                              Bash(dotnet *), Bash(powershell *), Bash(pwsh *)
+      body                    55 lines
+
+  .claude/skills/phase-gate/SKILL.md
+      name: phase-gate        matches directory name
+      description present     yes ("phase exit", "regenerate tasks.md")
+      allowed-tools           Read, Grep, Glob, Write, Edit
+      body                    45 lines
+
+6.4  TEST 14 (part 2) - phase-gate procedure executed MANUALLY
+---------------------------------------------------------------------
+The skill could not be invoked, so its procedure was carried out by hand
+against the real repository to prove the procedure produces the right answer.
+
+  VERDICT: FAIL - Phase 0 is not complete. 6 of 7 evidence artifacts missing.
+
+  Phase 0 exit gate (tasks.md)                      status
+  ------------------------------------------------  --------------------------
+  Manifest complete for dev machine, host, clients  MISSING - P0-01, P0-02 not
+                                                    started; manifest sections
+                                                    1-4 unpopulated
+  ADR-002 populated with real versions              MISSING - ADR-002 still
+                                                    PENDING (docs/adr.md:52,
+                                                    "resolve at P0-04 and P1-05")
+  Approvals documented with evidence                MISSING - PA-001 and PA-002
+                                                    screenshots not attached
+  Repo scaffolded, hooks installed, guardrails       MET - this task
+    proven to fail correctly
+
+  Evidence artifacts referenced by Phase 0 cards:
+    evidence/phase-0/dotnet-info-dev.txt          MISSING  (P0-01)
+    evidence/phase-0/xampp-services.png           MISSING  (P0-03)
+    evidence/phase-0/mariadb-config.txt           MISSING  (P0-04)
+    evidence/phase-0/ping-<client>.txt            MISSING  (P0-05)
+    evidence/phase-0/pa-001-approval.png          MISSING  (P0-06)
+    evidence/phase-0/pa-002-approval.png          MISSING  (P0-06)
+    evidence/phase-0/p0-08-guardrail-proofs.txt   PRESENT  (P0-08 - this file)
+
+  ADR entries Phase 0 owed that are still PENDING:
+    ADR-002  MariaDB / connector versions   owed by P0-04
+    ADR-011  MERCH-HOST name and cert SAN   owed by P0-05
+
+  Clean-clone build: not applicable - src/ is empty and no application code
+  exists in Phase 0. Recorded as "not applicable", not as a pass.
+
+  Actions that would make this PASS: P0-01, P0-02, P0-03, P0-04, P0-05, and
+  the outstanding evidence capture on P0-06.
+
+===========================================================================
+SECTION 7  SUMMARY
+===========================================================================
+
+  Layer / check                        cases  result
+  -----------------------------------  -----  ------------------------------
+  L1 block-csharp.ps1 (script)          10    10 correct
+  L2 check-vbproj.ps1 (script)           4     4 correct
+  L3 stop-guardrails.ps1 timing          6     mean 732 ms, loop-safe
+  check-no-csharp.ps1 G-A..G-D           9     9 correct
+  git pre-commit hook (end-to-end)       2     2 correct
+  skill files                            2     both structurally valid
+  -----------------------------------  -----  ------------------------------
+  Claude Code hook wiring                -     deferred to next session (6.1)
+
+  P0-08 "Done when" checklist:
+    [x] Clean run passes                                    CASE 1, CASE 9
+    [x] Drop src/Merchandising.Domain/Test.cs -> G-A fails   CASE 2, reverted
+    [x] Fake Infrastructure reference -> G-B fails           CASE 3, reverted
+    [x] Server=localhost;Database=x; -> G-C fails            CASE 5, reverted
+    [x] <OptionStrict>Off</OptionStrict> -> G-D fails        CASE 6, reverted
+    [x] Pre-commit hook blocks a commit containing a .cs     TEST 11
+
+  Extra cases beyond the card: MySqlConnector PackageReference (G-B),
+  PublishAot (G-D), and bin/ obj/ .vs/ exclusion.
+
+  Nothing in this file was simulated. Every failure above was produced by
+  writing a real violation to disk, and every one was reverted.
+
+--- end of P0-08 guardrail proofs ---

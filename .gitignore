@@ -1,0 +1,86 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Pp]ublish/
+*.publishproj
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.psess
+*.vsp
+*.vspx
+
+# Test output
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+*.nuget.props
+*.nuget.targets
+
+# ---------------------------------------------------------------------------
+# Secrets and environment-specific configuration
+#
+# Database credentials live ONLY on the host, in an ACL-protected location
+# outside the repository (spec section 9, gap G-10). Nothing here should ever
+# need un-ignoring - if you are tempted, you are about to commit a credential.
+# ---------------------------------------------------------------------------
+appsettings.Production.json
+appsettings.Local.json
+appsettings.*.Local.json
+secrets.json
+*.pfx
+*.p12
+*.key
+*.pem
+connectionstrings.json
+
+# Backups and database dumps - these contain live operational data
+backups/
+*.sql.gz
+*.dump
+!db/migrations/*.sql
+
+# Local logs
+logs/
+*.log
+!evidence/**/*.log
+
+# OS noise
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Local scratch
+scratch/
+tmp/
+*.tmp
+
+# ---------------------------------------------------------------------------
+# Claude Code
+#
+# .claude/settings.json IS committed - the guardrail hooks must apply to
+# everyone working in this repo. Only machine-specific overrides belong in
+# settings.local.json, and those stay local. If you are tempted to move a
+# guardrail into the local file to stop it complaining, the guardrail is
+# telling you something real.
+# ---------------------------------------------------------------------------
+.claude/settings.local.json

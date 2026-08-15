@@ -1,0 +1,100 @@
+<Project>
+
+  <!--
+    Directory.Build.props - inherited by every project in this repository.
+
+    Do not override these values in individual .vbproj files. Guardrail G-D
+    (scripts/check-no-csharp.ps1) fails the build if you do.
+
+    Version pins live in docs/adr.md. If you need a version that is not
+    recorded there, stop and ask - see CLAUDE.md section 6.
+  -->
+
+  <PropertyGroup Label="Target frameworks">
+    <!--
+      Projects reference these variables rather than hard-coding a TFM, so the
+      whole solution moves together if the target is ever revised.
+        MerchNetTfm        - class libraries, API, maintenance utility, tests
+        MerchWindowsTfm    - WPF clients (Windows-only UI framework)
+      CONFIRM against `dotnet --info` on the classroom machines (task P0-01)
+      and record the exact SDK version in docs/environment-manifest.md.
+    -->
+    <MerchNetTfm>net10.0</MerchNetTfm>
+    <MerchWindowsTfm>net10.0-windows</MerchWindowsTfm>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Visual Basic language options">
+    <!--
+      Option Strict On turns a class of late-binding runtime surprises into
+      compile errors. This is deliberate and is not to be relaxed, including
+      "temporarily" while getting something to build.
+    -->
+    <OptionStrict>On</OptionStrict>
+    <OptionExplicit>On</OptionExplicit>
+    <OptionInfer>On</OptionInfer>
+    <OptionCompare>Binary</OptionCompare>
+    <!--
+      MyType is deliberately NOT set here. WPF projects rely on the default
+      to generate their Application class correctly; forcing it globally
+      breaks them in ways that are tedious to diagnose.
+    -->
+  </PropertyGroup>
+
+  <PropertyGroup Label="Build behaviour">
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!--
+      Warnings that indicate a real defect in this codebase are escalated to
+      errors. The full set is deliberately narrow so the build stays usable.
+        BC42104 - variable used before assigned a value
+        BC42030 - variable passed ByRef before being assigned
+        BC42016 - implicit conversion (belt and braces alongside Option Strict)
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);BC42104;BC42030;BC42016</WarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Visual Basic incompatibilities - do not change">
+    <!--
+      The ASP.NET Core Request Delegate Generator is a C#-only source
+      generator. Leaving it enabled produces confusing build failures in a
+      Visual Basic project. See CLAUDE.md section 3.
+    -->
+    <EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>
+
+    <!--
+      Native AOT and trimming rely on C#-only source generation and are not
+      supported for Visual Basic. Guardrail G-D fails the build if a project
+      sets either to true.
+    -->
+    <PublishAot>false</PublishAot>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Deployment target">
+    <!--
+      Spec section 18 targets Windows x64 explicitly, but RuntimeIdentifier is
+      deliberately NOT set globally here. Applying a RID to class libraries and
+      test projects forces RID-specific NuGet restore and makes `dotnet test`
+      awkward for no benefit.
+
+      Instead, win-x64 is passed at publish time by scripts/publish-release.ps1
+      and recorded in the release manifest. Only the three WPF clients, the API,
+      and the maintenance utility are published.
+    -->
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Assembly metadata">
+    <Company>Merchandising System - Academic Prototype</Company>
+    <Product>Merchandising System for a Mid-Scale Hardware Store</Product>
+    <!-- Bump per release; recorded in the release manifest (spec section 18). -->
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+  </PropertyGroup>
+
+</Project>

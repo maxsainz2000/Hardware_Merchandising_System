@@ -1,0 +1,76 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{vb,vbproj}]
+indent_size = 4
+
+# CSV exports are specified as UTF-8 (spec section 14); keep sample fixtures honest.
+[*.csv]
+charset = utf-8
+trim_trailing_whitespace = false
+
+[*.{xaml,xml,props,targets,config}]
+indent_size = 2
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.sql]
+indent_size = 4
+end_of_line = lf
+
+[*.md]
+indent_size = 2
+trim_trailing_whitespace = false
+
+[*.ps1]
+indent_size = 4
+
+# Shell scripts (git hooks) must use LF or they will not execute.
+[*.sh]
+indent_size = 2
+end_of_line = lf
+
+# ---------------------------------------------------------------------------
+# Visual Basic style
+# ---------------------------------------------------------------------------
+[*.vb]
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Prefer explicit types - reinforces Option Strict On at the style layer.
+visual_basic_style_prefer_isnot_expression = true:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_readonly_field = true:suggestion
+dotnet_style_require_accessibility_modifiers = always:warning
+
+# Naming: PascalCase for public members
+dotnet_naming_rule.public_members_pascal.symbols = public_symbols
+dotnet_naming_rule.public_members_pascal.style = pascal_case
+dotnet_naming_rule.public_members_pascal.severity = suggestion
+
+dotnet_naming_symbols.public_symbols.applicable_kinds = property,method,event,class,struct,interface,enum
+dotnet_naming_symbols.public_symbols.applicable_accessibilities = public
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+# Naming: private fields prefixed with underscore
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+dotnet_naming_style.underscore_camel.required_prefix = _

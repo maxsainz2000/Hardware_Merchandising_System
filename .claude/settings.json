@@ -1,0 +1,57 @@
+{
+  "$comment": [
+    "Committed on purpose. These guardrails apply to everyone working in this repo,",
+    "including future you at 2am in finals week. Machine-local overrides belong in",
+    ".claude/settings.local.json, which is gitignored.",
+    "",
+    "Three layers, deliberately not one:",
+    "  PreToolUse  - prevention. Pure path check, no tree scan. Must stay fast.",
+    "  PostToolUse - targeted detection. Full sweep only after a .vbproj edit.",
+    "  Stop        - full sweep once per turn. Catches what the other two skip.",
+    "",
+    "Interpreter is pwsh (PowerShell 7). It measured ~640ms per invocation on the dev",
+    "machine against ~1820ms for Windows PowerShell 5.1. If pwsh is ever unavailable,",
+    "swap 'pwsh' for 'powershell.exe' below - the scripts run under both. Nothing here",
+    "depends on jq: the hook payload is parsed with ConvertFrom-Json.",
+    "",
+    "These hooks fire only when CLAUDE edits a file. Visual Studio edits bypass them",
+    "entirely - that is what the git pre-commit hook is for. See CLAUDE.md section 11."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-csharp.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-vbproj.ps1\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guardrails.ps1\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

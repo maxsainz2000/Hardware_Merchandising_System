@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Directory.Build.targets - build-time enforcement.
+
+    The guardrail script is wired to the API project's build rather than to
+    every project's build, so a full solution build runs it exactly once
+    instead of eleven times.
+
+    This is a safety net, not the primary mechanism. The primary mechanism is
+    the git pre-commit hook installed by scripts/install-hooks.ps1, which
+    catches violations before they can be committed at all.
+  -->
+
+  <Target Name="MerchGuardrails"
+          BeforeTargets="Build"
+          Condition="'$(MSBuildProjectName)' == 'Merchandising.Api' AND '$(MerchSkipGuardrails)' != 'true'">
+
+    <PropertyGroup>
+      <MerchGuardrailScript>$(MSBuildThisFileDirectory)scripts\check-no-csharp.ps1</MerchGuardrailScript>
+    </PropertyGroup>
+
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MerchGuardrailScript)&quot;"
+          Condition="Exists('$(MerchGuardrailScript)')"
+          ContinueOnError="false" />
+
+  </Target>
+
+</Project>
