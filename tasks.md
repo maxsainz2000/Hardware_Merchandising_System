@@ -412,6 +412,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] `DELETE` on `StockMovements` as `merch_api` is **rejected by privilege**
 - [ ] `0.001` and `12345678901234.5678` round-trip exactly
 - [ ] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
+- [ ] **Integration test:** an over-scale value (money with >4 dp, quantity with >3 dp) is either **rejected** by the API or **explicitly rounded** by it before the parameter is bound — asserted at the API boundary, not by reading the stored value back. Per ADR-004.1, `STRICT_TRANS_TABLES` rounds over-scale decimals silently (`Note 1265`), so a correctly-scaled stored value proves nothing on its own.
 - [ ] PA-003 raised with the professor
 
 > **P0-07 pre-checks — these were proven on the real server, so 0001 should not surprise you.** A table with two `VARCHAR(255)` utf8mb4 **unique** indexes (SKU and barcode) created without error: `innodb_default_row_format=dynamic`, 16 KB pages, 3072-byte key prefix limit, 255×4 = 1020 bytes used — roughly 3× headroom. `DECIMAL(19,4)` and `DECIMAL(19,3)` round-tripped `12345678901234.5678` and `0.001` exactly alongside a `DATETIME(6)`.
@@ -493,8 +494,9 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] Insufficient stock returns a controlled response and creates **zero** rows
 - [ ] Affected-row count is verified before returning success
 - [ ] Correlation ID recorded on both movement and audit rows
+- [ ] **Integration test:** a decrement whose computed value exceeds storage scale (quantity >3 dp, or any money value >4 dp on the same command) is **rejected** or **explicitly rounded by the API** before insert, per ADR-004.1's half-up policy. Assert on the API's own behaviour — the server rounds silently and would report success either way.
 
-**Evidence:** `p1-11-happy-path.txt`, `p1-11-insufficient-stock.txt`
+**Evidence:** `p1-11-happy-path.txt`, `p1-11-insufficient-stock.txt`, `p1-11-decimal-scale.txt`
 
 ---
 

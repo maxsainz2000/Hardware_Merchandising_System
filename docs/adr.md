@@ -169,7 +169,9 @@ A truncated SKU and a silently rounded quantity, with no error returned to the A
 1. **Set it server-side** at P1-04: add `STRICT_TRANS_TABLES` to `sql_mode` in `my.ini` and restart. This is an environment change — record it in the environment manifest change log.
 2. **Set it per connection** in the `Infrastructure` connection factory at P1-05, so a rebuilt or reinstalled XAMPP cannot quietly revert the guarantee. The connection is the only thing the application controls.
 
-Column widths and decimal scales are then enforced by the database, which is where they belong — an application-only check is one forgotten `Try/Catch` away from being no check at all.
+Column widths and decimal **ranges** are then enforced by the database, which is where they belong — an application-only check is one forgotten `Try/Catch` away from being no check at all.
+
+> **Correction — decimal *scale* is not covered by this.** An earlier reading of this ADR claimed strict mode enforces decimal scales too. It does not: over-scale values are still rounded silently under `STRICT_TRANS_TABLES`. That gap is closed in the API instead — see **ADR-004.1**.
 
 **Rejected:** relying on API-side validation alone. The API re-validates everything that matters (CLAUDE.md §5), but a defence that exists in exactly one layer is not a defence, and the failure mode here is silent.
 
@@ -190,6 +192,39 @@ Column widths and decimal scales are then enforced by the database, which is whe
 **Decision:** _(confirm or adjust after professor review)_
 
 **Consequence.** `Double` and `Single` are forbidden for money and quantity everywhere — storage, calculation, and transport. Use `Decimal` in VB.
+
+---
+
+### ADR-004.1 · Rounding to storage scale is the API's job, not the database's
+
+**`STRICT_TRANS_TABLES` does not close the decimal-scale hole.** ADR-003.2 fixes silent *string truncation* and makes over-**range** decimals an error. It does **not** make over-**scale** decimals an error: rounding a value to the column's declared scale stays a `Note`-level diagnostic under every `sql_mode`, strict included. This is long-standing upstream behaviour — MySQL feature request **#87678** ("Strict mode should reject, not round, over-precision decimals") is still open, and MariaDB inherits it.
+
+So the demonstration in ADR-003.2 splits in two once P1-04 lands:
+
+```
+INSERT INTO t VALUES ('THIS-SKU-IS-FAR-TOO-LONG', 1.9999);   -- VARCHAR(8), DECIMAL(19,3)
+  with STRICT_TRANS_TABLES:
+    Sku  → ERROR 1406, rejected                              -- fixed by ADR-003.2
+    Qty  → stored 2.000, Note 1265, "success"                -- NOT fixed. Still silent.
+```
+
+**Why this matters more for money than the truncation case did.** `DECIMAL(19,4)` holds four decimal places. Any computed value with more — a line total from a fractional quantity (`2.5 m × ₱13.3333`), a percentage discount, a VAT-inclusive unwind, a landed-cost allocation split across receipt lines — arrives at the database with more precision than the column can hold and is rounded on the way in, without an error.
+
+The failure mode is not a wrong-looking number. It is **drift**: the API computes an order total in full `Decimal` precision and stores it, then stores each line value rounded independently. The header total and `SUM(line values)` now differ by cents. Nothing reports an error, both figures look plausible, and the discrepancy surfaces on a reconciliation report long after the movements and audit rows have been written and made immutable. There is no corrective edit available — `StockMovements` and `AuditLogs` are append-only.
+
+**Decision.** The database is **never** trusted to round. Every money and quantity value is validated and **explicitly rounded to its storage scale in the API, before it reaches the parameter**:
+
+- Money → **4** decimal places · Quantity → **3** decimal places.
+- One policy, applied everywhere: **`Decimal.Round(value, scale, MidpointRounding.AwayFromZero)`** — half-up, matching invoice and receipt arithmetic as a cashier would check it by hand. `MidpointRounding.ToEven` (banker's rounding) is .NET's *default* and is **rejected** here: it is correct for statistics and wrong for a printed receipt a customer can add up.
+- Rounding happens **once**, at the boundary where a value is persisted or returned. Intermediate arithmetic stays at full `Decimal` precision — rounding each intermediate step reintroduces the same drift by a different route.
+- **Totals are derived from already-rounded components**, never rounded independently of them. A header total is the sum of the rounded line values, so header and lines are equal by construction rather than by coincidence.
+- Client-supplied values exceeding the storage scale are a **validation failure** returning a controlled 400 with field-level detail — not a value to quietly round on the caller's behalf. Only values the API itself computes are rounded.
+
+**Consequence.** `Infrastructure` may assume every `Decimal` parameter it binds is already at storage scale. A `Note 1265` from the server is therefore evidence of an API defect, not a routine event.
+
+**Rejected:** leaving rounding to the database now that strict mode is on. Strict mode does not do it, and even if a future MariaDB made it an error, an error at the `INSERT` is the wrong place to discover a rounding question — the transaction is already open, the movement row already written, and the only answer available at that point is a rollback.
+
+**Verification required:** P1-07 and P1-11 each carry an integration test that inserts an over-scale value and asserts the API rejected or explicitly rounded it. A test that merely observes the stored value is correct at the declared scale proves nothing — the silent rounding produces exactly that result.
 
 ---
 
