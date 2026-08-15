@@ -1,0 +1,50 @@
+# Line-ending policy for the Merchandising System.
+#
+# Why this file exists, in one sentence: core.autocrlf is true on this machine and
+# without a .gitattributes git decides line endings by guesswork, which silently
+# breaks any file whose first line has to be exactly "#!/bin/sh".
+#
+# The git pre-commit hook (.git/hooks/pre-commit) is a /bin/sh script. If its
+# shebang ever ends CRLF, sh looks for an interpreter literally named "/bin/sh\r",
+# fails, and THE HOOK STOPS RUNNING WITHOUT SAYING ANYTHING. That hook is the only
+# enforcement layer that catches edits made in Visual Studio 2026, which bypass the
+# Claude Code hooks entirely (CLAUDE.md section 11). A silent failure there is the
+# worst outcome in the whole guardrail arrangement.
+
+* text=auto
+
+# Shell and SQL must be LF. sh will not tolerate CR, and MariaDB migrations are
+# checksummed by the P1-06 runner - a line-ending flip would change every checksum
+# and make the runner refuse to proceed on a schema that had not actually changed.
+*.sh    text eol=lf
+*.sql   text eol=lf
+
+# Windows-side source. CRLF keeps Visual Studio 2026 and the WPF designer from
+# rewriting whole files on save and producing diffs that are pure noise.
+*.ps1     text eol=crlf
+*.vb      text eol=crlf
+*.vbproj  text eol=crlf
+*.sln     text eol=crlf
+*.xaml    text eol=crlf
+*.config  text eol=crlf
+*.props   text eol=crlf
+*.targets text eol=crlf
+
+# CAUTION on *.ps1 eol=crlf: scripts/install-hooks.ps1 embeds the pre-commit hook
+# body as a here-string. Once that file is checked out with CRLF, the here-string
+# carries CRLF too, and a naive writer would emit a CRLF shebang - reintroducing
+# exactly the failure this file prevents. install-hooks.ps1 therefore normalises
+# the hook body to LF and writes bytes directly. Do not "simplify" it back to a
+# plain Set-Content.
+
+# Binary - never touch these.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.pfx binary
+*.snk binary
+*.zip binary
+*.exe binary
+*.dll binary

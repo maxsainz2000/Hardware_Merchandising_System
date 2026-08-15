@@ -1,0 +1,309 @@
+===========================================================================
+P0-07  RUNG A PRE-FLIGHT PROBE (Part D)
+Hand-authored VB ASP.NET Core Web API on Microsoft.NET.Sdk.Web
+===========================================================================
+
+Captured : 2026-08-15 19:32:47 +08:00
+Machine  : LAPTOP-3HH6OHHE
+SDK      : 10.0.301
+Location : a scratch directory OUTSIDE the repository, deleted afterwards.
+           No project was created under src/. This probe does NOT close P1-02.
+
+  Purpose: answer TODAY the one question the whole project is gated on -
+  does a hand-authored Visual Basic .vbproj on the ASP.NET Core Web SDK
+  build, run, serve, and publish on .NET 10? If rung A was going to fail,
+  the time to find out was before Phase 1 formally started, not three tasks
+  into it.
+
+###########################################################################
+#  VERDICT: RUNG A WORKS. CLEAN, FIRST ATTEMPT, ZERO WARNINGS.
+#  P1-02a (the rung B insurance spike) is NOT required - see section 7.
+###########################################################################
+
+---------------------------------------------------------------------------
+1  THE PROJECT FILE AS AUTHORED
+---------------------------------------------------------------------------
+
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>RungAProbe</RootNamespace>
+    <AssemblyName>RungAProbe</AssemblyName>
+
+    <!-- C#-only source generator. Must be off for VB (CLAUDE.md section 3). -->
+    <EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>
+
+    <OptionStrict>On</OptionStrict>
+    <OptionExplicit>On</OptionExplicit>
+    <OptionCompare>Binary</OptionCompare>
+    <OptionInfer>On</OptionInfer>
+
+    <!-- Never for VB. Recorded here to prove the probe did not quietly enable them. -->
+    <PublishAot>false</PublishAot>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+</Project>
+
+---------------------------------------------------------------------------
+2  Program.vb  - Module Program / Sub Main, NOT top-level statements
+---------------------------------------------------------------------------
+
+' Rung A pre-flight probe. Module Program / Sub Main - NOT top-level statements.
+
+Imports Microsoft.AspNetCore.Builder
+Imports Microsoft.Extensions.DependencyInjection
+Imports Microsoft.Extensions.Hosting
+
+Public Module Program
+
+    Public Sub Main(args As String())
+
+        Dim builder = WebApplication.CreateBuilder(args)
+
+        builder.Services.AddControllers()
+
+        Dim app = builder.Build()
+
+        app.MapControllers()
+
+        app.Run()
+
+    End Sub
+
+End Module
+
+---------------------------------------------------------------------------
+3  HealthController.vb - controller-based, angle-bracket attributes
+---------------------------------------------------------------------------
+
+' Controller-based endpoint, not a minimal-API lambda (CLAUDE.md section 3).
+' Attributes use angle brackets, each on its own line above the member.
+
+Imports System
+Imports Microsoft.AspNetCore.Mvc
+
+Namespace Controllers
+
+    <ApiController>
+    <Route("health")>
+    Public Class HealthController
+        Inherits ControllerBase
+
+        ''' <summary>Non-sensitive liveness probe. No DB, config or environment detail.</summary>
+        <HttpGet>
+        Public Function GetHealth() As IActionResult
+
+            Dim payload = New With {
+                .status = "ok",
+                .version = "0.0.1-probe",
+                .utcTime = DateTime.UtcNow.ToString("o")
+            }
+
+            Return Ok(payload)
+
+        End Function
+
+    End Class
+
+End Namespace
+
+---------------------------------------------------------------------------
+4  BUILD
+---------------------------------------------------------------------------
+
+  $ dotnet build -v minimal
+    Determining projects to restore...
+    Restored RungAProbe.vbproj (in 132 ms).
+    RungAProbe -> bin\Debug\net10.0\RungAProbe.dll
+
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+    Time Elapsed 00:00:07.03
+    EXIT CODE: 0
+
+  ZERO warnings. No NU* restore warning, no MSB* target warning, no BC*
+  compiler warning. Nothing was suppressed to achieve that - there is no
+  NoWarn in the project file.
+
+---------------------------------------------------------------------------
+5  RUN AND CALL THE ENDPOINT
+---------------------------------------------------------------------------
+
+  $ dotnet run --no-build     (ASPNETCORE_URLS=http://127.0.0.1:5199)
+
+  info: Microsoft.Hosting.Lifetime[14]
+        Now listening on: http://127.0.0.1:5199
+  info: Microsoft.Hosting.Lifetime[0]
+        Application started. Press Ctrl+C to shut down.
+  info: Microsoft.Hosting.Lifetime[0]
+        Hosting environment: Production
+
+  $ GET http://127.0.0.1:5199/health
+    status code : 200 OK
+    content-type: application/json; charset=utf-8
+    body        : {"status":"ok","version":"0.0.1-probe",
+                   "utcTime":"2026-08-15T11:30:55.7217511Z"}
+
+  Routing and model binding confirmed from the server log:
+
+  info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+        Executing endpoint
+        'RungAProbe.Controllers.HealthController.GetHealth (RungAProbe)'
+  info: Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker[102]
+        Route matched with {action = "GetHealth", controller = "Health"}.
+  info: Microsoft.AspNetCore.Mvc.Infrastructure.ObjectResultExecutor[1]
+        Executing OkObjectResult, writing value of type
+        'VB$AnonymousType_0`3[[System.String...]]'
+  info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+        Request finished HTTP/1.1 GET /health - 200 -
+        application/json;+charset=utf-8 132.3248ms
+
+  THE MOST USEFUL LINE ABOVE IS THE ObjectResultExecutor ONE. A Visual Basic
+  ANONYMOUS TYPE (VB$AnonymousType_0) was serialised to correct JSON by the
+  reflection-based System.Text.Json path. That is exactly the combination
+  CLAUDE.md section 3 requires (source generation is C#-only), and it is now
+  demonstrated rather than assumed. stderr was empty.
+
+---------------------------------------------------------------------------
+6  PUBLISH - BOTH MODES, win-x64
+---------------------------------------------------------------------------
+
+  $ dotnet publish -c Release -r win-x64 --self-contained false -o pub-fd
+    Build succeeded.  EXIT: 0
+    -> 7 files, 0.2 MB
+
+  $ dotnet publish -c Release -r win-x64 --self-contained true  -o pub-sc
+    Build succeeded.  EXIT: 0
+    -> 341 files, 105.0 MB
+
+  Both published outputs were RUN, not merely produced:
+
+    pub-fd\RungAProbe.exe  -> GET /health  200
+      {"status":"ok","version":"0.0.1-probe","utcTime":"2026-08-15T11:31:47.9420421Z"}
+
+    pub-sc\RungAProbe.exe  -> GET /health  200
+      {"status":"ok","version":"0.0.1-probe","utcTime":"2026-08-15T11:32:04.6613334Z"}
+
+  Framework-dependent output (7 files):
+    RungAProbe.deps.json                         478
+    RungAProbe.dll                              6144
+    RungAProbe.exe                            162304
+    RungAProbe.pdb                             21308
+    RungAProbe.runtimeconfig.json                491
+    RungAProbe.staticwebassets.endpoints.json     53
+    web.config                                   477
+
+  Note for P1-03/ADR-010: the Web SDK emits web.config and
+  staticwebassets.endpoints.json. Both are IIS/static-asset artifacts this
+  project does not use (Kestrel + Windows Service, JSON only). They are
+  harmless, but do not let them suggest IIS hosting is in scope.
+
+  Size delta is the real ADR-010 input: 0.2 MB vs 105.0 MB. Self-contained
+  removes the .NET 10 runtime prerequisite from the host at ~525x the
+  payload. Both work; the decision stays open for P1-03 as intended.
+
+---------------------------------------------------------------------------
+7  FRICTION AUDIT - DOES P1-02a NEED TO RUN?
+---------------------------------------------------------------------------
+
+P1-02a runs ONLY if rung A showed friction: "an SDK target that needed a
+workaround, a build warning you had to suppress, a property you had to set
+that is not in the standard template."  Taken one at a time:
+
+  a) An SDK target that needed a workaround     : NONE. No target was
+     overridden, no Import was added, no MSBuild property was set to route
+     around a C#-assuming target. The Web SDK handled a .vbproj unmodified.
+
+  b) A build warning that had to be suppressed  : NONE. The build emitted
+     0 warnings and the project file contains no NoWarn.
+
+  c) A property set beyond the standard template: TESTED DIRECTLY, and the
+     answer is no. The obvious candidate was
+     <EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>,
+     which CLAUDE.md section 3 mandates. To find out whether it is a
+     WORKAROUND or a PRECAUTION, it was removed and the project rebuilt from
+     scratch:
+
+       $ dotnet build -v minimal --no-incremental   (property removed)
+         Build succeeded.
+             0 Warning(s)
+             0 Error(s)
+         EXIT CODE: 0
+
+     It builds fine without it. The Request Delegate Generator only applies
+     to MINIMAL API endpoints, and this project uses CONTROLLERS - which is
+     already the mandated design for independent reasons. So the property is
+     defence in depth, not a workaround for a failure. KEEP IT SET (it costs
+     nothing and protects anyone who later reaches for a minimal-API lambda),
+     but it does NOT count as friction.
+
+     The remaining properties - OutputType, TargetFramework, RootNamespace,
+     AssemblyName, OptionStrict/Explicit/Compare/Infer, PublishAot/Trimmed
+     false - are ordinary project settings or this repo own conventions from
+     Directory.Build.props. None is a workaround.
+
+  d) BONUS CHECK - did the Web SDK generate any C# behind our backs?
+
+       $ Get-ChildItem -Recurse -Include *.cs,*.csproj
+         count: 0
+
+     Intermediate files generated into obj/ by extension:
+       16 .cache   13 .json   6 .dll   4 .txt   4 .vb   2 .editorconfig
+        2 .exe      2 .pdb    1 .props 1 .targets 1 .Up2Date
+
+     FOUR .vb files, ZERO .cs files. The SDK generates its AssemblyInfo and
+     related intermediates in Visual Basic for a VB project. Guardrail G-A
+     will not fight the build, and the language rule holds all the way down
+     to generated code. This was a genuine open risk and it is now closed.
+
+  CONCLUSION: zero friction on all four counts.
+  => P1-02a SHOULD BE SKIPPED when Phase 1 reaches it. Proving a fallback
+     there is no reason to need is busywork, and the card says so itself.
+     If P1-02 in-repo behaves differently from this probe, that difference
+     is itself the friction and P1-02a triggers on it.
+
+---------------------------------------------------------------------------
+8  WHAT THIS DOES AND DOES NOT SETTLE
+---------------------------------------------------------------------------
+
+SETTLES (as advance information, to be re-proven in-repo):
+  - Rung A is viable on this exact SDK, machine and framework.
+  - Module Program / Sub Main works as an ASP.NET Core entry point.
+  - Controller routing, attribute routing and DI work from VB.
+  - Reflection-based JSON serialises VB anonymous types correctly.
+  - Both publish modes work and both published binaries actually serve.
+  - The Web SDK emits no C# for a VB project.
+
+DOES NOT SETTLE - these remain Phase 1 work with their own evidence:
+  - P1-02 is NOT closed. It runs in-repo, under Directory.Build.props,
+    alongside ten sibling projects, and records ADR-001 itself.
+  - P1-03 is NOT closed. Publishing from a scratch folder is not the same as
+    publishing the real solution, and ADR-010 is still an open decision.
+  - Nothing here touches HTTPS, Windows Service hosting, MariaDB, auth, or
+    the transactional core.
+
+This probe cost well under the one-hour box. Rung B was NOT attempted,
+because it is only reached when rung A fails, and rung A did not fail.
+
+---------------------------------------------------------------------------
+9  CLEANUP
+---------------------------------------------------------------------------
+
+  Files in the scratch project before deletion : 768
+  Scratch directory removed                    : True
+  Path                                         : <TEMP>\...\scratchpad\rungA
+  RungAProbe processes still running           : 
+0
+
+  Repository untouched throughout. Verified after cleanup:
+    .cs / .csproj files under src\  : 
+0
+    files under src\                : 
+1
+   (.gitkeep only)
+
+--- end of P0-07 rung A pre-flight probe ---

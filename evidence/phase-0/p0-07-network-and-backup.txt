@@ -1,0 +1,172 @@
+===========================================================================
+P0-07  NETWORK ADDRESSING, MERCH-HOST, AND BACKUP DIRECTORY (Parts C2-C4)
+===========================================================================
+
+Captured : 2026-08-15 19:25:31 +08:00
+Machine  : LAPTOP-3HH6OHHE
+
+---------------------------------------------------------------------------
+C2  STATIC-IP CONFLICT RISK
+---------------------------------------------------------------------------
+
+Host addressing as configured by P0-05:
+IPAddress    : 192.168.100.165
+PrefixLength : 24
+AddressState : Preferred
+PrefixOrigin : Manual
+SuffixOrigin : Manual
+
+  AddressState=Preferred means Windows duplicate-address detection found no
+  other host answering at .165 when the address was assigned. That is real
+  evidence of no CURRENT conflict. It is NOT evidence that the router will
+  never hand .165 to something else later - DAD only looks at the moment of
+  assignment.
+
+DHCP state per interface:
+InterfaceAlias              InterfaceIndex     Dhcp ConnectionState
+--------------              --------------     ---- ---------------
+Local Area Connection* 2                 4 Disabled    Disconnected
+Local Area Connection* 1                 9  Enabled    Disconnected
+Wi-Fi                                   14 Disabled       Connected
+Tailscale                               23 Disabled       Connected
+Loopback Pseudo-Interface 1              1 Disabled       Connected
+
+Live neighbours on 192.168.100.0/24 (entries with a real MAC):
+IPAddress       LinkLayerAddress      State
+---------       ----------------      -----
+192.168.100.1   20-53-83-04-99-D9 Reachable
+192.168.100.6   BA-58-C5-15-CE-45     Stale
+192.168.100.74  12-FA-93-58-4F-2B     Stale
+192.168.100.83  7A-00-FA-57-6A-8D     Stale
+192.168.100.149 42-34-25-4B-DF-50     Stale
+192.168.100.174 E6-D5-0E-97-15-A0     Stale
+192.168.100.175 6E-C9-52-5E-82-B3     Stale
+192.168.100.187 4A-CE-7F-D5-6D-9C     Stale
+192.168.100.191 FE-D4-29-78-82-57     Stale
+
+  READ THIS CAREFULLY - it is the point of the whole check:
+
+  Occupied addresses observed: .1 (gateway), .6, .74, .83, .149, .174, .175,
+  .187, .191. They span BOTH SIDES of the host address .165, and reach as
+  high as .191.
+
+  A DHCP server that has already issued .191 is handing out addresses from a
+  pool that almost certainly INCLUDES .165. The default pool on Huawei home
+  gateways is typically 192.168.100.2 - 192.168.100.254. If that is the case
+  here, the static address configured on this host sits inside the pool, the
+  router does not know it is taken, and it can lease .165 to a phone that
+  joins the Wi-Fi. The most likely moment for that to happen is when the room
+  fills with people - i.e. during the demo.
+
+  The MAC addresses are locally-administered (first octet has bit 1 set:
+  BA, 12, 7A, 42, E6, 6E, 4A, FE) - these are randomised-MAC mobile devices
+  joining and leaving. Exactly the population that churns through a DHCP pool.
+
+  This CANNOT be resolved from the host. Reading or changing the pool needs
+  the router admin UI. Confirmed reachable:
+
+    http port 80    on 192.168.100.1 : open=True
+    http port 443   on 192.168.100.1 : open=False
+    http port 8080  on 192.168.100.1 : open=False
+
+    => router admin UI at  http://192.168.100.1   (port 80 open, 443/8080 closed)
+
+  MAX TASK - the exact question to answer there:
+    "Is 192.168.100.165 inside the DHCP pool on the Huawei router, and if so
+     what is the pool range?"
+    Then EITHER move the host static IP outside the pool, OR shrink the pool
+    to exclude it, OR convert to a router-side DHCP reservation for the host
+    MAC. Any one of the three closes the risk. Belongs to card P0-05.
+
+BINDING NOTE: this entire configuration is bound to the Wi-Fi network
+"HUAWEI-5G-fP2f 2". Subnet, gateway, host address and any router-side
+reservation must ALL be redone on the classroom or store network. Nothing
+about 192.168.100.165 transfers. P0-05 will need re-running at deployment.
+
+ALSO OBSERVED: a Tailscale tunnel interface is active on this machine
+(100.76.155.51/32, Tailscale Tunnel). It is a second network path into and
+out of the host that is not the store LAN. Two consequences:
+  - P1-10 requires the MariaDB port to be unreachable from a client. Any
+    firewall rule scoped to "the private subnet" must account for the
+    Tailscale interface, or the negative test proves less than it appears to.
+  - It may be a way to test a client seam before a physical laptop arrives,
+    but it is NOT the tested topology and must not stand in for P0-05.
+
+---------------------------------------------------------------------------
+C3  MERCH-HOST NAME RESOLUTION ON THE HOST - BLOCKED, NOT DONE
+---------------------------------------------------------------------------
+
+Goal: add 192.168.100.165 -> MERCH-HOST to this machine hosts file so that
+one step is already done when the client laptop arrives.
+
+STATUS: NOT APPLIED. Recorded as a blocker rather than reported as done.
+
+Current state, verified:
+  session elevated                : False
+  MERCH-HOST lines in hosts file  : none
+  MERCH-HOST resolves             : does not resolve - No such host is known.
+
+Why it was not applied: the hosts file requires administrator rights. The
+agent session is not elevated. Attempting to self-elevate via
+Start-Process -Verb RunAs was refused by the Claude Code permission
+classifier. That refusal is a correct boundary and was NOT worked around.
+
+MAX TASK - run this in an ELEVATED PowerShell on the HOST (one line):
+
+  Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n# Merchandising System (P0-05)`n192.168.100.165`tMERCH-HOST"
+
+Then verify:
+  ping MERCH-HOST
+  Resolve-DnsName MERCH-HOST -ErrorAction SilentlyContinue
+
+The identical procedure for CLIENT machines is written up copy-pasteable in
+docs/installation-guide.md. Note that adding it on the host does NOT close
+P0-05 - that card requires resolution FROM A CLIENT.
+
+---------------------------------------------------------------------------
+C4  BACKUP DIRECTORY - CREATED, RESTRICTED, WRITE-PROVEN
+---------------------------------------------------------------------------
+
+Path: C:\MerchandisingBackups
+
+  exists              : True
+  inside the repo     : False   (must be False)
+  inside C:\xampp     : False   (must be False - not served by Apache, and Apache is stopped anyway)
+  owner               : LAPTOP-3HH6OHHE\Admin
+
+ACL BEFORE (all inherited from C:\ - too permissive for database dumps):
+  BUILTIN\Administrators            FullControl              Allow  inherited
+  NT AUTHORITY\SYSTEM               FullControl              Allow  inherited
+  BUILTIN\Users                     ReadAndExecute           Allow  inherited
+  NT AUTHORITY\Authenticated Users  Modify                   Allow  inherited   <-- the problem
+
+  A mysqldump of this database contains every user row and every salted
+  password hash. Authenticated Users having Modify on it is not acceptable,
+  and it was the DEFAULT. Inheritance was disabled and the ACL rebuilt.
+
+ACL AFTER (inheritance disabled, explicit rules only):
+IdentityReference         FileSystemRights AccessControlType IsInherited
+-----------------         ---------------- ----------------- -----------
+NT AUTHORITY\SYSTEM            FullControl             Allow       False
+BUILTIN\Administrators         FullControl             Allow       False
+LAPTOP-3HH6OHHE\Admin  Modify, Synchronize             Allow       False
+
+  LAPTOP-3HH6OHHE\Admin keeps Modify deliberately: this token is NOT a member
+  of BUILTIN\Administrators, so removing it entirely would have locked the
+  developer out of the directory that Phase 1 has to write to. Revisit at
+  P1-16, when the API service identity is defined - the backup account should
+  end up with the narrowest grant that still lets the scheduled job run.
+
+WRITE PROOF (create, read back, delete):
+  created  : C:\MerchandisingBackups\p0-07-write-test.tmp  (68 bytes)
+  contents : write test after ACL restriction 2026-08-15T19:24:47.7819111+08:00
+  deleted  : True
+  directory now : (empty)
+
+OFF-HOST DESTINATION: NOT CHOSEN. This needs a physical drive that does not
+exist on this machine, and choosing it is a decision, not a lookup. Left for
+Max. The manifest checklist box stays UNTICKED for that reason - the
+requirement is "backup directory AND off-host destination chosen and
+writable", and only the first half is satisfied.
+
+--- end of P0-07 network and backup evidence ---

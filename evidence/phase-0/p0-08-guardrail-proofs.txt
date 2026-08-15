@@ -424,10 +424,13 @@ Therefore:
 
 Both become verifiable on the next session start. Re-run these four checks
 then, and record the result here:
-    [ ] Write src/Merchandising.Domain/Scratch.cs -> blocked by hook, exit 2
-    [ ] Write src/Merchandising.Domain/Scratch.vb -> allowed
-    [ ] /task P0-04    -> reads the card, cites spec 6.3, STOPS to restate scope
-    [ ] /phase-gate    -> reports Phase 0 FAIL with the missing items in 6.4
+    [x] Write src/Merchandising.Domain/Scratch.cs -> blocked by hook, exit 2
+    [x] Write src/Merchandising.Domain/Scratch.vb -> allowed
+    [x] /task P0-04    -> reads the card, cites spec 6.3, STOPS to restate scope
+    [x] /phase-gate    -> reports Phase 0 FAIL with the missing items in 6.4
+
+    ALL FOUR EXECUTED IN A LIVE SESSION 2026-08-15. See SECTION 8 for the
+    verbatim results, plus a real defect that only a live run could expose.
 
 6.2  What WAS verified without any dependency on the runtime
 ---------------------------------------------------------------------
@@ -524,4 +527,402 @@ SECTION 7  SUMMARY
   Nothing in this file was simulated. Every failure above was produced by
   writing a real violation to disk, and every one was reverted.
 
+===========================================================================
+SECTION 8  HOOK WIRING VERIFIED IN A LIVE SESSION
+===========================================================================
+
+Captured : 2026-08-15 (session following the one that authored the hooks)
+Task     : P0-07 close-out, Part A
+Purpose  : SECTION 6.1 deferred four checks because Claude Code loads hooks
+           and skills at SESSION START. This session started after those
+           files existed, so all four are now executed for real - through
+           the Claude Code runtime, not by feeding scripts a synthetic
+           payload.
+
+RESULT: all four deferred checks PASS. One real defect was found that only
+a live run could have exposed, and it is fixed. Detail below.
+
+---------------------------------------------------------------------------
+A1  ARE THE HOOKS REGISTERED?
+---------------------------------------------------------------------------
+NOT RUN AS SPECIFIED, AND THIS IS RECORDED RATHER THAN PAPERED OVER.
+
+`/hooks` is an interactive Claude Code CLI command. It opens a terminal UI
+for the human operator; it is not a skill and there is no tool through which
+the agent can invoke it and capture its output. Asserting "the three layers
+are listed" would be reporting a run that did not happen - the exact thing
+the close-out prompt forbids.
+
+Substituted with something stronger: BEHAVIOURAL proof of all three layers.
+A hook that is listed but broken still passes a listing check. A hook that
+blocks a real tool call is registered, by definition.
+
+  Layer 1  PreToolUse   fired and blocked  -> A2 below
+  Layer 2  PostToolUse  fired and blocked  -> A7 below
+  Layer 3  Stop         fired and blocked  -> A6 below
+
+All three confirmed live. For a human-readable listing, run /hooks manually.
+
+---------------------------------------------------------------------------
+A2  PreToolUse MUST BLOCK  (the check that mattered most)
+---------------------------------------------------------------------------
+Action   : Write tool -> src/Merchandising.Domain/Scratch.cs
+Expected : blocked, exit 2, guardrail message
+Actual   : BLOCKED. Verbatim response returned to the agent:
+
+  | PreToolUse:Write hook error: [pwsh -NoProfile -ExecutionPolicy Bypass
+  | -File "$CLAUDE_PROJECT_DIR/.claude/hooks/block-csharp.ps1"]:
+  | BLOCKED by repository guardrail (Claude Code PreToolUse hook).
+  |
+  |   Refused path : C:\Users\Admin\Documents\Hardware_Merchandising_System\
+  |                  src\Merchandising.Domain\Scratch.cs
+  |   Extension    : .cs
+  |
+  | All application source in this repository is Visual Basic .NET. This is a
+  | binding course requirement confirmed by the professor (PA-001) - there is
+  | no C# escape hatch, and no exception for scratch files, samples, or
+  | generated code. See CLAUDE.md section 2.
+  | ...
+  | Reporting a blocker is a successful outcome. Guessing is not.
+
+VERDICT: PASS.
+
+THE FEARED FAILURE MODE DID NOT OCCUR. The close-out prompt predicted that
+"$CLAUDE_PROJECT_DIR/..." might be bash-only syntax that PowerShell would
+not expand, silently producing exit 1 (allow) instead of exit 2 (block).
+It expands correctly. Claude Code substitutes $CLAUDE_PROJECT_DIR itself
+before handing the command to the shell, so the bash-vs-PowerShell question
+never arises. bash not being on PATH is irrelevant here.
+
+  => .claude/settings.json needs NO change. The repo-relative-path fix the
+     prompt pre-authorised was NOT applied, because it would have been a fix
+     for a bug that does not exist.
+
+File landing check after the block:
+  Test-Path src\Merchandising.Domain\Scratch.cs : False
+  .cs files under src\                          : 0
+
+---------------------------------------------------------------------------
+A3  .vb MUST BE ALLOWED
+---------------------------------------------------------------------------
+Action   : Write tool -> src/Merchandising.Domain/Scratch.vb
+Expected : allowed
+Actual   : "File created successfully at ...Scratch.vb"
+Cleanup  : deleted. Test-Path -> False. The empty Merchandising.Domain
+           directory created as a side effect was removed too; src/ contains
+           only .gitkeep, exactly as SECTION 3 left it.
+VERDICT: PASS. The hook discriminates on extension - it is not blocking
+everything, which would be an equally broken outcome.
+
+---------------------------------------------------------------------------
+A4  /task P0-04 MUST STOP TO RESTATE SCOPE
+---------------------------------------------------------------------------
+Action   : invoked the `task` skill with argument P0-04
+Expected : loads the card, cites the spec, stops before doing work
+Actual   : PASS on all three counts.
+
+  - The skill resolved and loaded (contrast with the previous session, where
+    the same invocation returned "Unknown skill: task. Did you mean tasks?").
+    It is listed in the session's available-skills roster alongside
+    phase-gate, which is itself evidence that skill loading now works.
+  - It emitted the eleven-step loop with the base directory
+    .claude/skills/task, including step 2 "Read the spec ... Cite them back"
+    and step 4 in bold: "Restate scope and acceptance criteria in your own
+    words, then STOP for confirmation. Not optional, not a formality."
+  - Spec citation exercised for real: P0-04 cites 6.3, and spec 6.3
+    "Database access and migration decision" (line 110 of the spec) was
+    read and confirmed to be the section that governs the dump-tool and
+    version-pinning decision the card makes.
+  - The loop did NOT proceed to implementation. P0-04 is already complete;
+    it was used as a load-bearing test of the skill, not re-executed.
+
+VERDICT: PASS - the restate-and-stop discipline is live, not decorative.
+
+---------------------------------------------------------------------------
+A5  /phase-gate MUST REPORT PHASE 0 INCOMPLETE
+---------------------------------------------------------------------------
+Action   : invoked the `phase-gate` skill
+Expected : reports Phase 0 incomplete, names the specific missing artifacts
+Actual   : PASS. The skill loaded its seven-step procedure, including
+           "The default answer is *no* until evidence says otherwise" and
+           "Do not declare PASS if any artifact is missing."
+
+Procedure executed against the real repository at the START of this session:
+
+  VERDICT: FAIL - Phase 0 is not complete.
+
+  Phase 0 exit gate criterion                    status
+  ---------------------------------------------  ---------------------------
+  Manifest complete for dev, host, every client  FAIL - manifest section 3 is
+                                                 placeholders; no client
+                                                 laptops provisioned. Host row
+                                                 had 9 blank fields.
+  ADR-002 populated with real versions           FAIL - status PENDING; XAMPP
+                                                 version, .NET SDK version and
+                                                 connector rows all "(record)"
+  Approvals documented with evidence             FAIL - pa-001-approval.png
+                                                 and pa-002-approval.png
+                                                 absent from evidence/phase-0
+  Repo scaffolded, hooks installed, guardrails   PARTIAL - guardrails and
+    proven to fail correctly                     hooks proven; folder
+                                                 structure incomplete (see
+                                                 P0-07 note in tasks.md)
+
+  Evidence artifacts referenced by Phase 0 cards, checked on disk:
+    dotnet-info-dev.txt           PRESENT   1905 bytes
+    xampp-services.txt            PRESENT   1907 bytes
+    mariadb-config.txt            PRESENT   1117 bytes
+    host-ip-reservation.txt       PRESENT    813 bytes
+    p0-08-guardrail-proofs.txt    PRESENT  29399 bytes
+    ping-<client>.txt             MISSING   (P0-05 - needs a client laptop)
+    pa-001-approval.png           MISSING   (P0-06 - Max to capture)
+    pa-002-approval.png           MISSING   (P0-06 - Max to capture)
+
+  ADR entries Phase 0 owed that were still PENDING at session start:
+    ADR-002  MariaDB / connector / SDK versions   owed by P0-01, P0-03, P0-04
+
+  Clean-clone build: NOT APPLICABLE - src/ contains no projects in Phase 0.
+  Recorded as not applicable, explicitly not as a pass (procedure step 5).
+
+  Missing-artifact count: 3.
+  Actions that would make this PASS: P0-02, P0-03 and P0-05 client-side
+  checks (all need the client laptop), and P0-06 evidence capture.
+
+  Because the verdict was not PASS, tasks.md was NOT regenerated for
+  Phase 1 - procedure step 7 correctly did not trigger.
+
+VERDICT: PASS - the gate reports incomplete and names what is missing.
+A gate that always passes is decoration; this one failed as designed.
+
+---------------------------------------------------------------------------
+A6  STOP HOOK - LIVE RUN, MEASURED DURATION, AND A REAL DEFECT
+---------------------------------------------------------------------------
+A passing Stop hook is silent, so "it ran" is unfalsifiable. To make the
+test conclusive, a violation was planted the way the Stop hook exists to
+catch: written with Set-Content from PowerShell, NOT with the Write tool,
+so PreToolUse never saw it. This is precisely the Visual Studio 2026 edit
+path described in CLAUDE.md section 11.
+
+  $ Set-Content src\Merchandising.Domain\StopHookProbe.cs
+    planted: True
+
+The turn was then ended deliberately. Claude Code returned:
+
+  | Stop hook feedback:
+  | [pwsh -NoProfile -ExecutionPolicy Bypass -File
+  |  "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guardrails.ps1"]:
+  | Repository guardrails FAILED at end of turn:
+  |
+  |
+  | Do not finish the turn on a failing guardrail. Fix the cause, then re-run
+  | scripts/check-no-csharp.ps1. ...
+
+Layer 3 wiring: CONFIRMED LIVE. It detected a file that Layers 1 and 2
+never saw, and refused to let the turn end.
+
+*** DEFECT FOUND - and it was invisible to every previous test. ***
+
+Look at the blank lines above where the guardrail output belongs. The hook
+blocked correctly but reported WHICH guardrail failed and WHICH file caused
+it as an empty string. Under a real failure the agent would have been told
+"something failed" with no way to find it.
+
+Root cause, confirmed by direct reproduction:
+
+  scripts/check-no-csharp.ps1 reports through Write-Host. In PowerShell 7
+  Write-Host writes to the INFORMATION stream (6) - not stdout, not stderr.
+  Both hooks captured the run with:
+
+      $output = & $guardrails -RepoRoot $repoRoot 2>&1 | Out-String
+
+  2>&1 merges stream 2 into stream 1. Stream 6 is in neither. $output was
+  therefore always the empty string, while the diagnostics went straight to
+  the console the hook process did not own.
+
+  Reproduced verbatim - note the text visible on the console while the
+  captured stderr body is empty:
+
+    exit code       : 2   (2 = blocks the turn)
+    wall clock (ms) : 965
+    --- stderr as Claude Code would receive it ---
+    |stop-guardrails.ps1 elapsed: 260 ms
+    |Repository guardrails FAILED at end of turn:
+    |
+    |
+    |Do not finish the turn on a failing guardrail. ...
+
+  Why nothing caught this earlier: SECTION 2 and SECTION 5 tested the hook
+  scripts' EXIT CODES and timing, which were always correct. SECTION 4
+  tested the git hook, which runs check-no-csharp.ps1 inline in a shell that
+  owns the console, so Write-Host lands on the terminal and the defect
+  cannot appear there. The bug lived only in the capture-and-relay path,
+  and only a live blocking run made it visible.
+
+FIX APPLIED to both .claude/hooks/stop-guardrails.ps1 and
+.claude/hooks/check-vbproj.ps1 - 2>&1 changed to *>&1, which merges ALL
+streams including 6. A comment at each site records why, so nobody narrows
+the redirection back later.
+
+Re-run after the fix, same planted violation:
+
+    exit code: 2
+    --- stderr after the fix ---
+    |stop-guardrails.ps1 elapsed: 268 ms
+    |Repository guardrails FAILED at end of turn:
+    |
+    |G-A  Checking for C# source...
+    | FAIL
+    |G-B  Checking client project references...
+    | pass
+    |G-C  Checking client projects for credentials...
+    | pass
+    |G-D  Checking Option Strict inheritance...
+    | pass
+    |
+    |GUARDRAILS FAILED (1 issue(s)):
+    |
+    |  [G-A] C# / Razor source is not permitted:
+    |        src\Merchandising.Domain\StopHookProbe.cs
+    |
+    |See CLAUDE.md for the rules these enforce.
+    |
+    |Do not finish the turn on a failing guardrail. ...
+
+The failing guardrail and the offending path are now both named. The
+-NoNewline on each Write-Host is lost crossing the information stream, so
+" FAIL" lands on its own line. Cosmetic; left alone deliberately rather
+than restructuring a working guardrail script for alignment.
+
+MEASURED DURATION - probe removed, passing path, 5 consecutive runs:
+
+  run 1  exit=0  wall=816 ms  script self-timed 249 ms
+  run 2  exit=0  wall=746 ms  script self-timed 207 ms
+  run 3  exit=0  wall=850 ms  script self-timed 205 ms
+  run 4  exit=0  wall=758 ms  script self-timed 206 ms
+  run 5  exit=0  wall=723 ms  script self-timed 200 ms
+
+  mean wall clock 779 ms    max 850 ms
+  mean guardrail sweep 213 ms; the remaining ~566 ms is pwsh process start
+  and is fixed cost, independent of tree size.
+
+  Comparable to SECTION 5's 732 ms mean, measured the same way on the same
+  empty tree. Threshold for concern remains ~2000 ms. VERDICT: PASS.
+  Re-measure at the Phase 1 gate once eleven projects exist - only the
+  213 ms component will grow.
+
+Loop protection re-confirmed after the edit:
+  stop_hook_active=true -> exit 0. The hook cannot wedge the session.
+
+---------------------------------------------------------------------------
+A7  POSTTOOLUSE (LAYER 2) - LIVE, AND THE FIX CONFIRMED THERE TOO
+---------------------------------------------------------------------------
+Not in the prompt's list, but Layer 2 was the one layer with no live proof,
+and a silent pass is indistinguishable from a hook that never fired.
+
+Method: plant the same PowerShell-written .cs violation, then edit a
+.vbproj through the Write tool. Layer 2 triggers only on .vbproj. The
+.vbproj was written to the session scratchpad OUTSIDE the repository, so
+the close-out rule "do not create any project under src/" is not touched -
+the hook keys on the edited file's extension but always sweeps the repo.
+
+Claude Code returned:
+
+  | PostToolUse:Write hook blocking error from command:
+  | "pwsh ... -File "$CLAUDE_PROJECT_DIR/.claude/hooks/check-vbproj.ps1"":
+  | Project-file guardrail FAILED after editing:
+  |   ...\scratchpad\L2Probe.vbproj
+  |
+  | G-A  Checking for C# source...
+  |  FAIL
+  | G-B  Checking client project references...
+  |  pass
+  | G-C  Checking client projects for credentials...
+  |  pass
+  | G-D  Checking Option Strict inheritance...
+  |  pass
+  |
+  | GUARDRAILS FAILED (1 issue(s)):
+  |
+  |   [G-A] C# / Razor source is not permitted:
+  |         src\Merchandising.Domain\L2Probe.cs
+  |
+  | See CLAUDE.md for the rules these enforce.
+  |
+  | A .vbproj edit broke one of the repository guardrails. Fix the project
+  | file rather than weakening the check ...
+
+VERDICT: PASS. Layer 2 is registered, fires on .vbproj, sweeps the whole
+repository rather than only the edited file, and - post-fix - names the
+failing guardrail and path.
+
+---------------------------------------------------------------------------
+POST-CONDITION - REPOSITORY LEFT CLEAN
+---------------------------------------------------------------------------
+Every probe deleted. Verified, not assumed:
+
+  .cs files under src\   : 0
+  files under src\       : 1
+  src\ contents          : .gitkeep
+  scratchpad L2Probe.vbproj removed
+
+  $ pwsh ./scripts/check-no-csharp.ps1
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+    All guardrails passed.
+    exit code: 0
+
+---------------------------------------------------------------------------
+SECTION 8 SUMMARY
+---------------------------------------------------------------------------
+  Check                                    result
+  ---------------------------------------  --------------------------------
+  A1  /hooks listing                       NOT RUN - not agent-invokable.
+                                           Replaced with behavioural proof
+                                           of all three layers.
+  A2  PreToolUse blocks .cs                PASS - blocked, exit 2
+  A3  PreToolUse allows .vb                PASS - allowed, cleaned up
+  A4  /task P0-04 restates and stops       PASS - cited spec 6.3, stopped
+  A5  /phase-gate reports incomplete       PASS - FAIL verdict, 3 artifacts
+                                           named, tasks.md not regenerated
+  A6  Stop hook live + duration            PASS - blocked; 779 ms mean.
+                                           DEFECT FOUND AND FIXED.
+  A7  PostToolUse live                     PASS - blocked on .vbproj edit
+
+  settings.json changed : NO  - $CLAUDE_PROJECT_DIR expands correctly
+  hook scripts changed  : YES - 2>&1 -> *>&1 in stop-guardrails.ps1 and
+                                check-vbproj.ps1 (defect above)
+
+  All four SECTION 6.1 deferred checks are now executed and ticked.
+  The deferral opened in the previous session is closed.
+
 --- end of P0-08 guardrail proofs ---
+
+===========================================================================
+SECTION 9  CRLF SHEBANG HARDENING - PROVEN AGAINST A SIMULATED FUTURE CLONE
+===========================================================================
+
+Added at P0-07. .gitattributes marks *.ps1 as eol=crlf, so on the NEXT clean
+clone scripts/install-hooks.ps1 will be checked out with CRLF endings - and
+it embeds the pre-commit hook body as a here-string. A naive writer would
+then emit "#!/bin/sh<CR><LF>", sh would look for an interpreter named
+"/bin/sh\r", and THE GIT HOOK WOULD SILENTLY STOP RUNNING. That is the exact
+failure .gitattributes was created to prevent, reintroduced by the fix for it.
+
+install-hooks.ps1 now normalises the body to LF, writes bytes with
+WriteAllText, and asserts on the result - refusing to install a hook whose
+shebang ends CRLF.
+
+Tested by simulating the future state rather than waiting for it: the script
+was converted to fully CRLF and executed against the real repository.
+
+  simulated file CRLF pairs : 89   (fully CRLF, as a future checkout will be)
+  install exit code         : 0
+  resulting hook CRLF pairs : 0    (required)
+  resulting shebang bytes   : 23 21 2F 62 69 6E 2F 73 68 0A
+                              #  !  /  b  i  n  /  s  h  LF
+
+VERDICT: PASS. The hook survives the line-ending policy that protects it.
+
+--- end of SECTION 9 ---

@@ -49,7 +49,9 @@ try {
         exit 0
     }
 
-    $output = & $guardrails -RepoRoot $repoRoot 2>&1 | Out-String
+    # *>&1 not 2>&1 - see the note in stop-guardrails.ps1. check-no-csharp.ps1 reports via
+    # Write-Host (information stream), so 2>&1 captures nothing and the failure is relayed blank.
+    $output = & $guardrails -RepoRoot $repoRoot *>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         [Console]::Error.WriteLine(@"
 Project-file guardrail FAILED after editing:

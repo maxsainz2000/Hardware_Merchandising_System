@@ -36,7 +36,12 @@ try {
     $guardrails = Join-Path $repoRoot 'scripts/check-no-csharp.ps1'
     if (-not (Test-Path $guardrails)) { exit 0 }
 
-    $output = & $guardrails -RepoRoot $repoRoot 2>&1 | Out-String
+    # *>&1 not 2>&1: check-no-csharp.ps1 reports through Write-Host, which writes to the
+    # information stream (6), not stdout or stderr. With 2>&1 the capture came back EMPTY and
+    # this hook blocked the turn without saying which guardrail failed. Verified in a live
+    # session on 2026-08-15 (P0-07 Part A6) - see evidence/phase-0/p0-08-guardrail-proofs.txt
+    # SECTION 8. Do not narrow this redirection.
+    $output = & $guardrails -RepoRoot $repoRoot *>&1 | Out-String
     $failed = ($LASTEXITCODE -ne 0)
 
     $started.Stop()

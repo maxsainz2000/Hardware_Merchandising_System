@@ -39,7 +39,7 @@ Every pinned version and irreversible choice for the Merchandising System.
 | A | `Sdk="Microsoft.NET.Sdk.Web"`, `OutputType=Exe`, controller-based, `Module Program` / `Sub Main` |
 | B | `Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`, self-hosted Kestrel |
 
-**Decision:** _(record after P1-02)_
+**Decision:** _(record after P1-02 — still PENDING, deliberately)_
 
 **Reasoning:** _(record the exact build behaviour observed, including any warnings suppressed or properties needed beyond the standard template — this determines whether the P1-02a insurance spike runs)_
 
@@ -47,23 +47,48 @@ Every pinned version and irreversible choice for the Merchandising System.
 
 ---
 
+**P0-07 pre-flight note — advance information, NOT a decision.**
+
+A disposable rung A probe was built, run and published **outside the repository** on 2026-08-15 and then deleted. It is recorded here because it changes what P1-02 should expect, but it **does not resolve this ADR** — P1-02 runs in-repo, under `Directory.Build.props`, alongside ten sibling projects, and records the decision itself.
+
+What the probe established:
+
+- A hand-authored `.vbproj` on `Sdk="Microsoft.NET.Sdk.Web"` with `OutputType=Exe` and `TargetFramework=net10.0` **built clean on the first attempt: 0 warnings, 0 errors.**
+- `Module Program` / `Sub Main` works as an ASP.NET Core entry point. `dotnet run` started Kestrel; `GET /health` returned `200` with `{"status":"ok","version":"0.0.1-probe","utcTime":"…"}`.
+- Controller-based routing, attribute routing and DI all work from Visual Basic.
+- Reflection-based `System.Text.Json` correctly serialised a **VB anonymous type** (`VB$AnonymousType_0`) — the exact combination required, since source generation is C#-only.
+- Both `win-x64` publishes succeeded and **both published executables were run and served `/health`**: framework-dependent (7 files, 0.2 MB) and self-contained (341 files, 105.0 MB).
+- **The Web SDK generated zero `.cs` files** for a VB project — 4 `.vb` intermediates in `obj/`, no C# anywhere. Guardrail G-A will not fight the build.
+
+**Friction: none.** `<EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>` was removed and the project rebuilt from scratch — it still built clean, because the Request Delegate Generator only applies to minimal APIs and this design uses controllers. The property is therefore **defence in depth, not a workaround**. Keep it set; do not count it as friction.
+
+**Consequence for P1-02a:** on this evidence the insurance spike should be **skipped**, per its own trigger condition. If P1-02 in-repo behaves differently from the probe, *that difference is the friction* and P1-02a triggers on it.
+
+**Evidence:** `evidence/phase-0/p0-07-rung-a-preflight.txt`
+
+---
+
 ## ADR-002 · MariaDB and .NET connector versions
 
-**Status:** PENDING — MariaDB rows resolved at P0-04; XAMPP version, .NET connector, and .NET SDK rows still pending P0-03, P1-05, P0-01
+**Status:** PENDING — **one row only.** Every row below is resolved except the MySqlConnector package version, which legitimately belongs to P1-05. Do not read this PENDING as "versions unknown"; read it as "the connector is not chosen yet."
 **Decides:** the exact database and data-access versions the whole project is built and tested against. Closes gap G-04.
 
 | Item | Value | Source |
 |---|---|---|
-| XAMPP version | _(record)_ | P0-03 |
+| XAMPP version | `8.2.12-0`, Windows x64 (`properties.ini` → `base_stack_version`), installed at `C:\xampp` | P0-03 |
 | MariaDB server version (`mariadb --version`) | `10.4.32-MariaDB` for Win64/AMD64 (mariadb.org binary distribution) — captured via `mysqld.exe --version`; this XAMPP distro ships no `mariadb.exe` binary | P0-04 |
 | Dump tool available (`mariadb-dump` / `mysqldump`) | **`mysqldump.exe`** at `C:\xampp\mysql\bin\mysqldump.exe`, Ver 10.19 Distrib 10.4.32-MariaDB. No `mariadb-dump.exe` exists in this distribution, despite the card's stated preference — P1-17 must build on `mysqldump` | P0-04 |
 | MariaDB config file path | `C:\xampp\mysql\bin\my.ini` | P0-04 |
 | Data directory | `C:/xampp/mysql/data` | P0-04 |
 | Port | `3306` | P0-04 |
 | `bind-address` | `127.0.0.1` (loopback) — previously unset, server listened on wildcard `::`; changed and restart-verified | P0-04 |
-| .NET connector package | MySqlConnector _(pin exact version)_ | P1-05 |
-| .NET SDK version (`dotnet --info`) | _(record)_ | P0-01 |
+| Character set / collation / engine | `utf8mb4` / `utf8mb4_unicode_ci` / InnoDB — **see ADR-003, which is ACCEPTED and carries the measured 10.4 constraints** | P0-07 |
+| `sql_mode` as shipped | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — **not strict**, must be corrected. See ADR-003.2 | P0-07 |
+| .NET connector package | MySqlConnector — **← the only unresolved row in this ADR** | P1-05 |
+| .NET SDK version (`dotnet --info`) | `10.0.301` (commit `96856fd726`) | P0-01 |
+| .NET runtimes installed | `Microsoft.AspNetCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.NETCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.WindowsDesktop.App` 8.0.28 / 9.0.17 / **10.0.9** | P0-01 |
 | Target framework | `net10.0` / `net10.0-windows` | `Directory.Build.props` |
+| Visual Studio | Community 2026, `18.7.1+11911.148`, workloads `ManagedDesktop` + `NetWeb` | P0-01, re-verified P0-07 |
 
 **Reasoning.** MariaDB's own documentation recommends MySqlConnector for MariaDB Server. EF Core is deliberately **not** an MVP dependency — the transaction design uses explicit provider transactions and parameterized ADO.NET, so no unverified EF Core + MariaDB provider combination sits under the correctness guarantees. Closes gap G-05.
 
@@ -71,13 +96,84 @@ Every pinned version and irreversible choice for the Merchandising System.
 
 ---
 
-## ADR-003 · Character set, collation, and storage engine
+## ADR-003 · Character set, collation, storage engine, and MariaDB 10.4 server constraints
 
-**Status:** PENDING — resolve at task P1-04
+**Status:** ACCEPTED
+**Date:** 2026-08-15
+**Decides:** the exact charset, collation, and engine every migration declares, plus the MariaDB 10.4.32 server behaviours that SQL written against MySQL 8 or MariaDB 11 will get wrong.
 
-**Decision:** _(record — baseline is InnoDB, `utf8mb4`, with the collation confirmed against the installed MariaDB version)_
+**Decision.**
 
-**Reasoning.** Hardware product names include punctuation and possibly non-ASCII characters. `utf8mb4` avoids a class of silent truncation. InnoDB is required for the transaction and row-locking behaviour the entire correctness design depends on — MyISAM would make ADR-006 unimplementable.
+| Item | Pinned value |
+|---|---|
+| Character set | `utf8mb4` |
+| Collation | `utf8mb4_unicode_ci` — **stated explicitly on every `CREATE DATABASE` and `CREATE TABLE`** |
+| Storage engine | `InnoDB` — stated explicitly |
+| Row format | `DYNAMIC` (server default here; do not rely on it silently) |
+
+Every migration declares all four. Never inherit them from the server.
+
+**Reasoning.** Hardware product names include punctuation and possibly non-ASCII characters; `utf8mb4` avoids a class of silent truncation. InnoDB is required for the transaction and row-locking behaviour the whole correctness design depends on — MyISAM would make ADR-006 unimplementable.
+
+The collation must be stated explicitly because **the server default is not the value we want**: `@@collation_server` is `utf8mb4_general_ci`, not `utf8mb4_unicode_ci`. A `CREATE TABLE` that omits `COLLATE` silently gets `general_ci`, and a schema with mixed collations produces `Illegal mix of collations` errors on joins that will look inexplicable months later.
+
+---
+
+### ADR-003.1 · MariaDB 10.4 constraints — measured, not assumed
+
+All values below were captured from the installed server on 2026-08-15, not read from documentation. Training data skews heavily toward MySQL 8 and MariaDB 11; every row here is a place that skew produces SQL which fails at apply time.
+
+| Fact | Measured value | Consequence |
+|---|---|---|
+| Server version | `10.4.32-MariaDB` | — |
+| `uca1400` collation family | **0 collations exist** (`SELECT COUNT(*) FROM information_schema.COLLATIONS WHERE COLLATION_NAME LIKE '%uca1400%'` → `0`) | `utf8mb4_uca1400_ai_ci` is **MariaDB 11.x only**. A migration using it fails at apply time. Never reach for it. |
+| `utf8mb4_unicode_ci` | present | The collation we pin. |
+| `@@innodb_default_row_format` | `dynamic` | Index key prefix limit is 3072 bytes. `VARCHAR(255)` utf8mb4 = 1020 bytes → a unique index on SKU or barcode is safe with ~3× headroom. **Verified by building the real table**, not calculated. |
+| `@@innodb_page_size` | `16384` | Confirms the 3072-byte limit applies. |
+| `@@lower_case_table_names` | `1` (Windows) | Table names are folded to **lowercase** and compared case-insensitively. `CREATE TABLE StockBalances` is stored as `stockbalances`. Harmless here — the system is Windows-only per spec — but it means a schema dumped from this host would break on a case-sensitive Linux server. Recorded so it is never discovered by accident. |
+| Isolation variable name | `tx_isolation` — **`transaction_isolation` does not exist** (`ERROR 1193 Unknown system variable`) | `transaction_isolation` is the MySQL 8 / MariaDB 11.1+ spelling. Code or scripts using it fail on this server. |
+| Default isolation level | `REPEATABLE-READ` | ADR-006 specifies `READ COMMITTED`. It is **not** the default and must be set explicitly per connection or in config. Do not assume. |
+| `UUID` column type | does not exist (`ERROR 1064` syntax error) | Added in MariaDB 10.7. Use `CHAR(36)` or `BINARY(16)` for correlation and idempotency keys. |
+| Dump tool | `C:\xampp\mysql\bin\mysqldump.exe`, `Ver 10.19 Distrib 10.4.32-MariaDB, for Win64 (AMD64)` | **`mariadb-dump.exe` does not exist in this distribution**, nor does `mariadb.exe`. P1-17 builds on `mysqldump.exe`. Any document preferring `mariadb-dump` is wrong and is corrected. |
+| `innodb_buffer_pool_size` | `16M` | XAMPP default, very small. Not a Phase 1 problem; revisit before the Phase 7 load test. |
+
+**Decimal precision verified on this server.** A `DECIMAL(19,4)` / `DECIMAL(19,3)` table round-tripped `12345678901234.5678` and `0.001` exactly, with a `DATETIME(6)` UTC timestamp. ADR-004's types are implementable here as written.
+
+---
+
+### ADR-003.2 · `sql_mode` is NOT strict on this server — must be fixed at P1-04
+
+**This is the most consequential finding of the P0-07 close-out and it is not cosmetic.**
+
+XAMPP's `C:\xampp\mysql\bin\my.ini` line 157 sets:
+
+```ini
+sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+```
+
+`STRICT_TRANS_TABLES` is **absent**. XAMPP has actively weakened MariaDB 10.4's own default, which does include it. Without strict mode the server silently coerces bad data instead of rejecting it. Demonstrated on this server:
+
+```
+-- Non-strict (as shipped):
+INSERT INTO t VALUES ('THIS-SKU-IS-FAR-TOO-LONG', 1.9999);   -- into VARCHAR(8), DECIMAL(19,3)
+  stored Sku=[THIS-SKU]   stored Qty=[2.000]                  -- accepted, silently mangled
+
+-- With STRICT_TRANS_TABLES:
+  ERROR 1406 (22001): Data too long for column 'Sku' at row 1  -- rejected
+```
+
+A truncated SKU and a silently rounded quantity, with no error returned to the API. In a merchandising system whose entire value proposition is an accurate stock ledger, that is a correctness failure the application layer cannot see and the audit log would faithfully record as success.
+
+**Decision.** The API must not depend on the server being strict, and must not silently benefit from it either. Both of the following, belt and braces:
+
+1. **Set it server-side** at P1-04: add `STRICT_TRANS_TABLES` to `sql_mode` in `my.ini` and restart. This is an environment change — record it in the environment manifest change log.
+2. **Set it per connection** in the `Infrastructure` connection factory at P1-05, so a rebuilt or reinstalled XAMPP cannot quietly revert the guarantee. The connection is the only thing the application controls.
+
+Column widths and decimal scales are then enforced by the database, which is where they belong — an application-only check is one forgotten `Try/Catch` away from being no check at all.
+
+**Rejected:** relying on API-side validation alone. The API re-validates everything that matters (CLAUDE.md §5), but a defence that exists in exactly one layer is not a defence, and the failure mode here is silent.
+
+**Evidence.** `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
 
 ---
 

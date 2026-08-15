@@ -110,6 +110,42 @@ Package versions, the MariaDB version, the connector version, and the .NET targe
 
 If you need a package or version that is not recorded there, **stop and ask**. Do not pick "latest". Do not guess. A version drift between the dev machine and the classroom host is exactly the class of bug this project cannot afford.
 
+### 6.1 The pins, in context every session
+
+Measured on this machine, not quoted from documentation. Full detail and the evidence behind each row is in `docs/adr.md` ADR-002 and ADR-003.
+
+```
+MariaDB       10.4.32 (XAMPP 8.2.12-0) — utf8mb4 / utf8mb4_unicode_ci / InnoDB
+              NOT uca1400 — that collation family is MariaDB 11.x only, 0 exist here
+Dump tool     C:\xampp\mysql\bin\mysqldump.exe (Ver 10.19 Distrib 10.4.32-MariaDB)
+              mariadb-dump.exe does NOT exist in this distribution. Neither does mariadb.exe.
+.NET SDK      10.0.301 — runtimes 10.0.9 (AspNetCore, NETCore, WindowsDesktop)
+TFMs          net10.0 / net10.0-windows
+Visual Studio Community 2026, 18.7.1+11911.148 (ManagedDesktop + NetWeb workloads)
+```
+
+### 6.2 Write SQL for MariaDB 10.4, not MySQL 8 or MariaDB 11
+
+**Your training data skews heavily toward MySQL 8 and MariaDB 11. Features from those versions fail on this server.** These were confirmed by querying the installed instance:
+
+| Do not use | Because | Use instead |
+|---|---|---|
+| `utf8mb4_uca1400_*` collations | MariaDB 11.x only — zero exist here | `utf8mb4_unicode_ci` |
+| `transaction_isolation` | `ERROR 1193 Unknown system variable` on 10.4 | `tx_isolation` |
+| `UUID` column type | Added in 10.7 — `ERROR 1064` syntax error here | `CHAR(36)` or `BINARY(16)` |
+| `mariadb-dump` / `mariadb` CLI | Not present in this XAMPP build | `mysqldump.exe` / `mysql.exe` |
+
+Two more that bite silently rather than loudly:
+
+- **The server default collation is `utf8mb4_general_ci`, not `unicode_ci`.** State `COLLATE utf8mb4_unicode_ci` explicitly on every `CREATE DATABASE` and `CREATE TABLE`. Inheriting it gets you the wrong one and a later `Illegal mix of collations` error on a join.
+- **The default isolation level is `REPEATABLE-READ`, not `READ COMMITTED`.** ADR-006 requires `READ COMMITTED`; set it explicitly. Never assume it.
+
+### 6.3 `sql_mode` is not strict here — never rely on the server rejecting bad data
+
+XAMPP ships `sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION`. **`STRICT_TRANS_TABLES` is absent**, so this server silently truncates over-long strings and rounds over-precision decimals and reports success. Demonstrated: `'THIS-SKU-IS-FAR-TOO-LONG'` stored as `'THIS-SKU'`, `1.9999` stored as `2.000`, no error.
+
+Until P1-04 and P1-05 fix this in `my.ini` **and** in the connection factory, treat every write as unprotected by the database and validate server-side in the API. See ADR-003.2.
+
 ---
 
 ## 7. Stop conditions — halt and ask

@@ -1,0 +1,131 @@
+===========================================================================
+P0-07  MariaDB 10.4.32 CONSTRAINTS - MEASURED ON THE INSTALLED SERVER
+Merchandising System for a Mid-Scale Hardware Store
+===========================================================================
+
+Captured  : 2026-08-15 19:17:56 +08:00
+Machine   : LAPTOP-3HH6OHHE
+Server    : XAMPP 8.2.12-0 -> MariaDB 10.4.32, port 3306, bind 127.0.0.1
+Task      : P0-07 close-out, Part B1
+Purpose   : pin the 10.4 realities that MySQL-8 / MariaDB-11 shaped SQL gets wrong.
+Nothing below is quoted from documentation. Every value was queried.
+
+---------------------------------------------------------------------------
+1  VERSION, CHARSET, ENGINE DEFAULTS
+---------------------------------------------------------------------------
+VERSION()
+10.4.32-MariaDB
+*************************** 1. row ***************************
+     @@character_set_server: utf8mb4
+         @@collation_server: utf8mb4_general_ci
+   @@default_storage_engine: InnoDB
+@@innodb_default_row_format: dynamic
+         @@innodb_page_size: 16384
+   @@lower_case_table_names: 1
+             @@tx_isolation: REPEATABLE-READ
+                 @@sql_mode: NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+
+---------------------------------------------------------------------------
+2  uca1400 COLLATION FAMILY - MariaDB 11.x ONLY, ABSENT HERE
+---------------------------------------------------------------------------
+uca1400_collations
+0
+utf8mb4_unicode_ci_present
+1
+
+  => 0 uca1400 collations. utf8mb4_uca1400_ai_ci WILL FAIL at apply time.
+     Pin utf8mb4_unicode_ci. Note the server default is utf8mb4_general_ci,
+     so the collation must be stated explicitly on every CREATE.
+
+---------------------------------------------------------------------------
+3  transaction_isolation DOES NOT EXIST ON 10.4 (it is tx_isolation)
+---------------------------------------------------------------------------
+ERROR 1193 (HY000) at line 1: Unknown system variable 'transaction_isolation'
+
+---------------------------------------------------------------------------
+4  UUID COLUMN TYPE DOES NOT EXIST ON 10.4 (added 10.7)
+---------------------------------------------------------------------------
+ERROR 1064 (42000) at line 1: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near ')' at line 1
+
+  => use CHAR(36) or BINARY(16) for correlation / idempotency keys.
+
+---------------------------------------------------------------------------
+5  VARCHAR(255) utf8mb4 UNIQUE INDEXES + DECIMAL PRECISION - REAL TABLE
+---------------------------------------------------------------------------
+TABLE_NAME	ENGINE	ROW_FORMAT	TABLE_COLLATION
+products	InnoDB	Dynamic	utf8mb4_unicode_ci
+Sku	UnitPrice	Quantity	CreatedAtUtc
+SKU-001	12345678901234.5678	0.001	2026-08-15 11:18:37.251776
+
+  => two VARCHAR(255) utf8mb4 unique indexes created without error.
+     ROW_FORMAT=Dynamic, 3072-byte prefix limit, 255*4=1020 bytes used.
+     DECIMAL(19,4) and DECIMAL(19,3) round-tripped EXACTLY. Table name
+     came back lowercase - lower_case_table_names=1 on Windows.
+
+---------------------------------------------------------------------------
+6  sql_mode IS NOT STRICT - SILENT DATA CORRUPTION DEMONSTRATED
+---------------------------------------------------------------------------
+
+my.ini line 157 as shipped by XAMPP:
+  sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+
+STRICT_TRANS_TABLES is absent. MariaDB 10.4 includes it by default;
+XAMPP has actively removed it. Consequence, demonstrated:
+
+  NOTE ON ORDERING: the mysql batch client writes errors to stderr and
+  results to stdout, and PowerShell interleaves the two streams by the time
+  they are captured. The ERROR line below belongs to the LAST statement -
+  the strict-mode INSERT - not the first. Read it in the order labelled by
+  the "phase" markers, not top to bottom.
+
+ERROR 1406 (22001) at line 10: Data too long for column 'Sku' at row 1
+phase
+--- as shipped (non-strict) ---
+silently_mangled
+stored Sku=[THIS-SKU]  stored Qty=[2.000]
+phase
+--- with STRICT_TRANS_TABLES ---
+  (no row returned - the INSERT was rejected with the ERROR 1406 above,
+   so the "strict mode did NOT reject" SELECT never executed)
+
+  => Non-strict: SKU truncated to 8 chars, quantity 1.9999 rounded to 2.000,
+     INSERT reported SUCCESS. The API would never know.
+     Strict:      ERROR 1406 (22001) Data too long for column - rejected.
+
+  ACTION (P1-04 + P1-05): add STRICT_TRANS_TABLES to my.ini AND set it per
+  connection in the Infrastructure connection factory. See ADR-003.2.
+
+---------------------------------------------------------------------------
+7  DUMP TOOLING
+---------------------------------------------------------------------------
+Everything matching *dump* in C:\xampp\mysql\bin:
+
+  aria_dump_log.exe        4073896 bytes
+  aria_ftdump.exe          4309416 bytes
+  myisam_ftdump.exe        3603368 bytes
+  mysqldump.exe            3774888 bytes   <-- the only usable dump tool
+  mysqldumpslow.pl            8478 bytes
+  sst_dump.exe             1482664 bytes
+
+  mariadb-dump.exe exists : False
+  mariadb.exe exists      : False
+  mysqldump --version     : mysqldump.exe  Ver 10.19 Distrib 10.4.32-MariaDB, for Win64 (AMD64)
+
+  => P1-17 must be built on mysqldump.exe. mariadb-dump does not exist here.
+
+---------------------------------------------------------------------------
+8  DATABASES PRESENT ON THIS SERVER
+---------------------------------------------------------------------------
+Database
+information_schema
+merchsys_central
+mysql
+performance_schema
+phpmyadmin
+
+  NOTE: merchsys_central is pre-existing and NOT part of this project.
+  Flagged for Max - see PHASE-0-READINESS.md.
+
+  All probe databases (merch_probe, merch_probe3, merch_probe4) dropped.
+
+--- end of P0-07 MariaDB 10.4 constraints ---

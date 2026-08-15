@@ -168,7 +168,7 @@ No application code is written in Phase 0.
 | P0-01 | Install VS 2026 with **.NET desktop development** + **ASP.NET and web development** workloads; verify the .NET 10 component. | `dotnet --info` output captured to `docs/environment-manifest.md`. |
 | P0-02 | Record Windows edition + build for the host laptop and **each** client laptop. | Table in environment manifest, one row per machine. |
 | P0-03 | Install XAMPP on host. Stop and disable Apache, FileZilla, Mercury, Tomcat. Keep MariaDB only. | Services list screenshot; only MariaDB running. |
-| P0-04 | Record exact MariaDB version (`mariadb --version`), data directory, config file path, and whether `mariadb-dump` or `mysqldump` ships with it. | Environment manifest + first ADR entry. |
+| P0-04 | Record exact MariaDB version, data directory, config file path, and which dump tool ships with it. **Resolved: 10.4.32, `mysqldump.exe` only — no `mariadb.exe` or `mariadb-dump.exe` in this build, so capture the version via `mysqld.exe --version`.** | Environment manifest + first ADR entry. |
 | P0-05 | Reserve host IP on the LAN; choose and record the host name `MERCH-HOST`; confirm resolution from each client (hosts file or DNS). | `ping MERCH-HOST` succeeds from every client; output captured. |
 | ~~P0-06~~ | ~~Obtain professor confirmation~~ — **RESOLVED.** Manual VB ASP.NET Core API is acceptable; XAMPP/MariaDB is mandatory, not merely permitted. | Capture the confirmation (email/message//written note) into `docs/professor-approvals.md` so it can be cited at acceptance. Do this even though the answer is known — an undocumented approval is one you cannot point to during sign-off. |
 | P0-07 | Initialise repo: folder structure (§2), `.gitignore`, `.editorconfig`, `Directory.Build.props`, `CLAUDE.md` (§4), empty `docs/adr.md`. | `git log` shows initial commit; agent session reads CLAUDE.md correctly. |
@@ -304,7 +304,7 @@ Acceptance: service starts; **host reboots and the API is serving without human 
 Evidence: `p1-16-service-config.txt`, `p1-16-post-reboot-health.txt`, `p1-16-recovery.png` (**closes G-09**).
 
 **P1-17 · Backup via the maintenance utility**
-Deliverable: `Merchandising.Maintenance backup` using the version-appropriate dump command (`mariadb-dump` preferred) under the `merch_backup` account; writes to a protected directory outside the binaries and not served by the API; records file size, checksum, timestamp, source DB version, result; copies to a separate physical drive; registered in Windows Task Scheduler for the daily window; failure produces a recorded error and an operational warning.
+Deliverable: `Merchandising.Maintenance backup` using **`C:\xampp\mysql\bin\mysqldump.exe`** (P0-04 confirmed this distribution ships no `mariadb-dump.exe`; the earlier "`mariadb-dump` preferred" wording named a binary that does not exist here — see ADR-003.1) under the `merch_backup` account; writes to a protected directory outside the binaries and not served by the API; records file size, checksum, timestamp, source DB version, result; copies to a separate physical drive; registered in Windows Task Scheduler for the daily window; failure produces a recorded error and an operational warning.
 Acceptance: scheduled run produces a valid dump plus an off-host copy plus a `BackupLogs` row; a deliberately broken run (wrong credentials) records failure and warns rather than failing silently.
 Evidence: `p1-17-backup-success.log`, `p1-17-backup-failure.log`, checksum listing (**closes G-15**).
 

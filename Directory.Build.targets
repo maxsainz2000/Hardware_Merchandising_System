@@ -10,6 +10,34 @@
     This is a safety net, not the primary mechanism. The primary mechanism is
     the git pre-commit hook installed by scripts/install-hooks.ps1, which
     catches violations before they can be committed at all.
+
+    ========================================================================
+    STATUS AS OF P0-07 (2026-08-15): THIS TARGET IS DEAD CODE. IT HAS NEVER
+    RUN, AND THAT IS EXPECTED - NOT A DEFECT.
+    ========================================================================
+
+    The Condition below requires MSBuildProjectName == 'Merchandising.Api'.
+    That project does not exist yet: src/ contains only .gitkeep in Phase 0,
+    and there is nothing in the repository for MSBuild to build. Verified,
+    not assumed.
+
+    IT ACTIVATES AT P1-02, the task that hand-authors
+    src/Merchandising.Api/Merchandising.Api.vbproj. (P1-01 creates the eleven
+    project shells; P1-02 is the first point at which a project named
+    Merchandising.Api is actually built.) Until then, do not read this file
+    as evidence that guardrails run during a build - they do not, because no
+    build happens. Layers L1-L4 in CLAUDE.md section 11 are what is actually
+    protecting the repository today.
+
+    First real exercise of this target is a build acceptance check on P1-02.
+    If it misfires there, that is expected first-run work in the same way
+    check-no-csharp.ps1 needed its first execution at P0-08.
+
+    On the interpreter: this deliberately invokes 'powershell' (Windows
+    PowerShell 5.1) rather than 'pwsh'. pwsh is roughly 3x faster and is what
+    the Claude Code hooks use, but it is not guaranteed present on a machine
+    that only has Visual Studio installed. This target runs once per solution
+    build, so correctness on an unprepared machine beats ~1.2 seconds.
   -->
 
   <Target Name="MerchGuardrails"

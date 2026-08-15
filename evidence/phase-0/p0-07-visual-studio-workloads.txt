@@ -1,0 +1,62 @@
+===========================================================================
+P0-07  VISUAL STUDIO 2026 INSTALLATION AND WORKLOADS (Part C1)
+===========================================================================
+
+Captured : 2026-08-15 19:20:13 +08:00
+Machine  : LAPTOP-3HH6OHHE
+Why      : P0-01 was marked done, but dotnet --info cannot prove Visual Studio
+           is installed at all, let alone which workloads. This closes that gap
+           with vswhere -requires, which queries the installer catalog directly.
+
+---------------------------------------------------------------------------
+ALL VISUAL STUDIO FAMILY INSTANCES  (vswhere -all -products *)
+---------------------------------------------------------------------------
+  instanceId       : 0f44142b
+  displayName      : SQL Server Management Studio 21
+  installationName : SSMS/21.5.14+36429.23
+  catalog version  : 21.5.14
+  installationVer  : 21.5.36429.23
+  installDate      : 09/20/2025 08:48:37
+  installationPath : C:\Program Files\Microsoft SQL Server Management Studio 21\Release
+  productId        : Microsoft.VisualStudio.Product.Ssms
+  isComplete       : True   isLaunchable: True
+  ---
+  instanceId       : d1e3d03c
+  displayName      : Visual Studio Community 2026
+  installationName : VisualStudio/18.7.1+11911.148
+  catalog version  : 18.7.1
+  installationVer  : 18.7.11911.148
+  installDate      : 04/30/2026 10:55:29
+  installationPath : C:\Program Files\Microsoft Visual Studio\18\Community
+  productId        : Microsoft.VisualStudio.Product.Community
+  isComplete       : True   isLaunchable: True
+  ---
+
+---------------------------------------------------------------------------
+REQUIRED WORKLOADS  (vswhere -requires <workloadId>)
+---------------------------------------------------------------------------
+
+  Microsoft.VisualStudio.Workload.ManagedDesktop : INSTALLED  (VisualStudio/18.7.1+11911.148)
+  Microsoft.VisualStudio.Workload.NetWeb         : INSTALLED  (VisualStudio/18.7.1+11911.148)
+  Microsoft.VisualStudio.Workload.NetCrossPlat   : not installed
+  Microsoft.VisualStudio.Workload.NativeDesktop  : not installed
+
+  ManagedDesktop = ".NET desktop development"  -> required for the three WPF clients
+  NetWeb         = "ASP.NET and web development" -> required for the API
+  Both REQUIRED workloads are present. The two "not installed" rows are not
+  required by this project and are listed only to show the query discriminates.
+
+---------------------------------------------------------------------------
+VERDICT
+---------------------------------------------------------------------------
+
+  Visual Studio Community 2026, 18.7.1+11911.148, installed and launchable.
+  Both required workloads confirmed by vswhere -requires - a direct catalog
+  query, not an inference from state.json as in the original P0-01 pass.
+  P0-01 acceptance is now genuinely evidenced.
+
+  NOTE: SQL Server Management Studio 21 also appears - vswhere reports the whole
+  Visual Studio installer family. SSMS is unrelated to this project and is not a
+  MariaDB tool. Recorded so it is not mistaken for project tooling later.
+
+--- end ---

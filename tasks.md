@@ -13,11 +13,15 @@ No application code is written in this phase.
 
 ---
 
-### ✅ P0-06 · Professor approvals — RESOLVED
+### 🟡 P0-06 · Professor approvals — decision resolved, evidence outstanding
 
-Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
+Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision is settled and ADR-000 is ACCEPTED on the strength of it.**
 
-**Remaining:** capture the original messages into `docs/professor-approvals.md` (PA-001, PA-002) and attach screenshots. An undocumented approval cannot be cited at sign-off.
+**Marker corrected at P0-07:** this card was ✅ while both of its `Done when` boxes were unticked. The *decision* is resolved; the *card* is not. An approval you cannot point to at sign-off is an approval you do not have.
+
+**Remaining:** capture the original messages into `docs/professor-approvals.md` (PA-001, PA-002) and attach screenshots.
+
+**Unblocked by:** Max locating the original message thread and saving two screenshots. No agent action possible — the agent cannot access the conversation.
 
 **Done when:**
 
@@ -36,7 +40,9 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 **Done when:**
 
-- [x] Both workloads confirmed installed (verified via `vswhere` + instance `state.json`, not a screenshot — see note above)
+> **P0-07 re-verification.** The original pass inferred workload presence partly from the instance's `state.json`. It has now been confirmed the direct way, with `vswhere -requires <workloadId>` returning the instance for both `Microsoft.VisualStudio.Workload.ManagedDesktop` and `Microsoft.VisualStudio.Workload.NetWeb`, and returning nothing for two workloads that are genuinely absent (so the query is discriminating, not always-true). Visual Studio Community 2026, `18.7.1+11911.148`, `isComplete=True`, `isLaunchable=True`. Evidence: `evidence/phase-0/p0-07-visual-studio-workloads.txt`.
+
+- [x] Both workloads confirmed installed — `vswhere -requires`, re-verified at P0-07 (see note above)
 - [x] `dotnet --info` captured to `evidence/phase-0/dotnet-info-dev.txt`
 - [x] `dotnet --list-runtimes` shows a .NET 10 ASP.NET Core runtime **and** a Desktop runtime
 - [x] Manifest §1 fully populated — no blanks
@@ -60,6 +66,8 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 - [ ] Resolution and scaling recorded per client — **not satisfied, no client machines exist**
 - [x] Host machine confirmed 64-bit; client confirmation pending client provisioning
 
+**Unblocked by:** one physical (or virtual) client laptop existing. Nothing else. No agent action can advance this card.
+
 ---
 
 ### 🟡 P0-03 · Install and strip XAMPP — phpMyAdmin cross-machine test pending client laptop
@@ -75,7 +83,11 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 - [x] Only MariaDB runs; evidence at `evidence/phase-0/xampp-services.txt` (screenshot substituted with PowerShell output, by agreement)
 - [x] Apache/FileZilla/Mercury/Tomcat confirmed not running, no OS-level autostart mechanism found
 - [ ] phpMyAdmin unreachable from a client laptop — **not verified, no client laptop provisioned; deferred with P0-02**
-- [x] XAMPP version recorded in manifest §2
+- [x] XAMPP version recorded in manifest §2 — `8.2.12-0`, now also pinned in ADR-002
+
+**Unblocked by:** a client laptop, to run the cross-machine reachability test from.
+
+> **P0-07 addition.** When this test is finally run, check the **Tailscale** interface too (`100.76.155.51`). The host has a second network path that is not the store LAN, and "unreachable from the client" must hold on both.
 
 ---
 
@@ -83,7 +95,9 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 **Spec:** §6.3 · **Closes:** G-04 (begins)
 
-**Do:** Record the exact MariaDB version, config file path, data directory, port, and **which dump tool ships with this distribution** (`mariadb-dump` preferred over `mysqldump`). Set `bind-address` to loopback.
+**Do:** Record the exact MariaDB version, config file path, data directory, port, and **which dump tool ships with this distribution**. Set `bind-address` to loopback.
+
+> **Resolved — do not re-litigate.** This build ships `mysqldump.exe` only. `mariadb-dump.exe` and `mariadb.exe` do not exist here, so the original "`mariadb-dump` preferred over `mysqldump`" wording named a binary that is not present. P1-17 builds on `C:\xampp\mysql\bin\mysqldump.exe`. See ADR-003.1.
 
 The dump tool matters more than it looks: the entire backup strategy (P1-17) is built on whichever binary actually exists, and XAMPP distributions differ.
 
@@ -91,11 +105,13 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 
 **Done when:**
 
-- [x] `mariadb --version` captured
+- [x] MariaDB version captured — via `mysqld.exe --version`, since `mariadb.exe` does not exist in this build
 - [x] Dump tool identified, path recorded, `--version` captured
 - [x] `bind-address` set to loopback; config excerpt at `evidence/phase-0/mariadb-config.txt`
 - [x] MariaDB restarted and still serving locally after the bind change
 - [x] Values transferred into `docs/adr.md` ADR-002
+
+> **P0-07 extension.** The 10.4-specific realities behind these values are now measured and pinned in **ADR-003 (ACCEPTED)**: `uca1400` collations do not exist here (11.x only), `transaction_isolation` is `tx_isolation` on 10.4, there is no `UUID` type, `innodb_default_row_format=dynamic` so `VARCHAR(255)` utf8mb4 unique indexes are safe, and — most importantly — **`sql_mode` is not strict**, so the server silently truncates and rounds. Evidence: `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`. P1-04 and P1-05 inherit an action from this.
 
 ---
 
@@ -114,6 +130,15 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 - [x] Subnet recorded in manifest §4
 - [x] Name choice recorded in ADR-011 (confirmation note only; ADR itself stays PENDING for P1-09)
 
+**Unblocked by:** (a) a client laptop to resolve `MERCH-HOST` from, and (b) router admin access to clear the conflict risk below. Neither is an agent action.
+
+> **P0-07 additions — two things this card now also owes.**
+>
+> 1. **The static IP is very likely inside the router's DHCP pool.** Live neighbours were observed at `.1, .6, .74, .83, .149, .174, .175, .187, .191` — on both sides of `.165` and up to `.191`, all randomised MACs typical of phones cycling through a pool. Windows DAD said `Preferred` at assignment, so there is no conflict *today*; that is not a guarantee. A duplicate address handed out mid-demo is the most likely way this bites. **Max: open `http://192.168.100.1` and answer "is 192.168.100.165 inside the DHCP pool, and what is the range?"** Then move the host IP out of the pool, shrink the pool, or convert to a MAC reservation.
+> 2. **The host's own hosts-file entry was not applied.** It needs an elevated shell; the agent session was not elevated and self-elevation was refused by the tooling's permission boundary. The one-line command is in `docs/installation-guide.md` §1.2. Applying it does **not** close this card — the card requires resolution *from a client*.
+>
+> Also recorded: this whole configuration is bound to the `HUAWEI-5G-fP2f 2` network and must be redone on the classroom or store network.
+
 ---
 
 ### 🟡 P0-07 · Initialise the repository
@@ -129,7 +154,17 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 - [x] `pwsh ./scripts/install-hooks.ps1` run; pre-commit hook installed
 - [x] A test commit confirms the hook fires
 
-> **Left open deliberately.** The directory skeleton exists (`src/`, `db/migrations/`, `evidence/phase-0..7/`, `.claude/`), but `plan.md` §2 also lists seven `docs/*.md` documents that do not exist yet (`database-design.md`, `api-specification.md`, `role-permission-matrix.md`, `ui-specification.md`, `installation-guide.md`, `backup-restore-guide.md`, `user-guide.md`, `test-plan.md`), plus `scripts/publish-release.ps1` and `Merchandising.sln`. The eleven `src/` project directories are P1-01's job. Tick the structure box when those exist — not before.
+> **Left open deliberately.** The directory skeleton exists (`src/`, `db/migrations/`, `evidence/phase-0..7/`, `.claude/`), but `plan.md` §2 also lists `docs/*.md` documents that do not exist yet (`database-design.md`, `api-specification.md`, `role-permission-matrix.md`, `ui-specification.md`, `backup-restore-guide.md`, `user-guide.md`, `test-plan.md`), plus `scripts/publish-release.ps1` and `Merchandising.sln`. The eleven `src/` project directories are P1-01's job. Tick the structure box when those exist — not before.
+>
+> **P0-07 progress:** `docs/installation-guide.md` now exists (created for the `MERCH-HOST` procedure), so one of the eight is done. `.gitattributes` — which `plan.md` §2 does *not* list but should — was also created; see the P0-07 close-out note below.
+
+> **P0-07 close-out — what this session added to the scaffold.**
+>
+> - **`.gitattributes` created.** It was missing, and `core.autocrlf=true` with no attributes file meant git decided line endings by guesswork. The git pre-commit hook is a `#!/bin/sh` script: a CRLF shebang makes `sh` look for an interpreter named `/bin/sh\r`, fail, and **the hook stops running without saying anything**. That hook is the only layer that catches Visual Studio edits.
+> - **A trap in the fix itself.** Marking `*.ps1` as `eol=crlf` would have converted `scripts/install-hooks.ps1`, whose here-string *contains* the hook body — reintroducing the exact CRLF shebang the file exists to prevent. `install-hooks.ps1` now normalises the body to LF, writes bytes directly, and **refuses to install** a hook whose shebang ends CRLF. Verified: reinstalled hook has 0 CRLF pairs and still blocked a commit containing a `.cs` file.
+> - **`git add --renormalize .` run** — no unexpected churn; stored content was already LF.
+> - **Two hook scripts fixed** (`2>&1` → `*>&1`) after a live run showed them blocking with an empty message. See P0-08 SECTION 8.
+> - **`Directory.Build.targets` confirmed dead code** and commented as such — its guardrail target is conditioned on `Merchandising.Api`, which does not exist until P1-02.
 
 > **Environment note.** `git init` had not been run in this directory. `git rev-parse` was resolving to a stray repository at `C:\.git` (someone ran `git init` at the drive root), which would have made `git add -A` catastrophic. A repository now exists at the project root and shadows it. **The stray `C:\.git` was left in place — deleting it is your call, not the agent's.**
 
@@ -156,16 +191,46 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 
 > **Result of the first execution: 9 of 9 cases correct, no fixes needed.** Beyond the six boxes above, the run also proved a `MySqlConnector` `PackageReference` trips G-B, `<PublishAot>true</PublishAot>` trips G-D, and `.cs`/`.csproj` files under `bin/`, `obj/`, and `.vs/` are correctly ignored. `src/` was empty, so minimal stub `.vbproj` files were created to make cases 3–7 honest, then removed; `src/` is empty again. `git commit --no-verify` was confirmed to still work as the deliberate escape hatch.
 >
-> **One item is deferred, not done.** Claude Code loads hooks and skills at *session start*, so `.claude/settings.json` and the two skills — created in the same session — could not be exercised through the runtime. Their scripts were verified directly against the real stdin payload shape (14 of 14 cases correct), and the git hook was verified fully end-to-end. §6.1 of the evidence file lists the four checks to re-run at the next session start.
+> **One item was deferred — it is now closed.** Claude Code loads hooks and skills at *session start*, so `.claude/settings.json` and the two skills — created in the same session — could not be exercised through the runtime. §6.1 of the evidence file listed four checks to re-run at the next session start.
+>
+> **All four executed live at P0-07 and all four pass.** SECTION 8 of the evidence file records them verbatim. Headlines:
+>
+> - **PreToolUse genuinely blocks.** A `Write` of `src/Merchandising.Domain/Scratch.cs` was refused with exit 2. The predicted failure mode — `$CLAUDE_PROJECT_DIR` being bash-only syntax that PowerShell leaves unexpanded, turning a block into a silent allow — **did not occur.** Claude Code substitutes the variable before invoking the shell. `.claude/settings.json` needed no change and was not changed.
+> - **All three layers proven behaviourally**, each by making it block a real tool call: L1 on a `.cs` write, L2 on a `.vbproj` write, L3 by planting a violation with PowerShell (bypassing L1 exactly as a Visual Studio edit would) and ending the turn.
+> - **A real defect was found and fixed.** Both hook scripts captured the guardrail run with `2>&1`, but `check-no-csharp.ps1` reports through `Write-Host` — the *information* stream. The capture was always empty, so the hooks blocked correctly while reporting **nothing about what failed**. Changed to `*>&1`; the failing guardrail and offending path are now named. Earlier tests could not have caught this: they asserted on exit codes, and the git hook runs the script inline where `Write-Host` reaches the console anyway.
+> - **Stop hook measured:** mean 779 ms wall clock over 5 runs (guardrail sweep ~213 ms, pwsh startup ~566 ms fixed). Loop protection re-confirmed. Re-measure at the Phase 1 gate.
+>
+> `/hooks` itself was **not** run: it is an interactive CLI command with no agent-invokable form. Recorded as not-run rather than assumed — the behavioural proof above is stronger than a listing anyway, since a hook can be listed and still be broken.
 
 ---
 
 ## Phase 0 exit gate
 
-- [ ] Manifest complete for dev machine, host, and **every** client
-- [ ] ADR-002 populated with real versions
-- [ ] Approvals documented with evidence
-- [ ] Repo scaffolded, hooks installed, guardrails proven to fail correctly
+- [ ] Manifest complete for dev machine, host, and **every** client — **host and dev complete; blocked on client provisioning**
+- [x] ADR-002 populated with real versions — every row except MySqlConnector, which belongs to P1-05. ADR-003 additionally ACCEPTED with the measured 10.4 constraints.
+- [ ] Approvals documented with evidence — **blocked on Max attaching two screenshots (P0-06)**
+- [x] Repo scaffolded, hooks installed, guardrails proven to fail correctly — all four layers now proven **live**, not just by script (P0-08 SECTION 8)
+
+**Gate verdict: FAIL — 2 of 4 criteria unmet.** Both remaining criteria are blocked on things no agent can do: a client laptop existing, and two screenshots being attached. Nothing is blocked on engineering work.
+
+> **Phase 0 does not gate Phase 1.** P1-01 through P1-08 and P1-11 through P1-14 need none of the outstanding items. Only P1-09, P1-10, P1-15 and one sub-check of P1-04 need the client laptop. Do not treat this FAIL as a reason to wait — see `evidence/phase-0/PHASE-0-READINESS.md`.
+
+---
+
+## P0-07 close-out session — what changed (2026-08-15)
+
+One session, no application code, no project created under `src/`. Full account in `evidence/phase-0/PHASE-0-READINESS.md`.
+
+| Area | Outcome |
+|---|---|
+| Hook wiring | All 4 deferred checks executed live and passing. **One real defect found and fixed** (empty guardrail relay). `settings.json` needed no change. |
+| MariaDB 10.4 | ADR-003 **ACCEPTED** with 8 measured constraints. **`sql_mode` is not strict — silent truncation demonstrated.** |
+| ADR-002 | Completed; only the connector row remains, owed by P1-05. |
+| `CLAUDE.md` §6 | Version pins + a MariaDB-10.4-vs-MySQL-8 "do not use" table now in context every session. |
+| `.gitattributes` | Created. Fixed a trap in its own fix (`install-hooks.ps1` CRLF shebang). |
+| Visual Studio | Re-verified properly with `vswhere -requires`. Both workloads present. |
+| Backup directory | `C:\MerchandisingBackups` created, ACL tightened, write-proven. Off-host destination still Max's call. |
+| **Rung A pre-flight** | **Built, ran, served `/health`, published both ways — 0 warnings, first attempt, zero friction. P1-02a should be skipped.** |
 
 ---
 
@@ -226,6 +291,10 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 
 **Run only if P1-02 showed friction** (a workaround, a suppressed warning, a non-standard property). If rung A built cleanly first try, **skip this** — proving a fallback you have no reason to need is busywork.
 
+> **P0-07 pre-flight says: expect to SKIP this card.** A disposable rung A probe was built outside the repo on 2026-08-15. It built with **0 warnings and 0 errors on the first attempt**, ran under `dotnet run`, served `GET /health` → `200`, and published both framework-dependent and self-contained `win-x64` — with **both published executables actually run and serving**. No SDK target needed a workaround, nothing was suppressed, and `EnableRequestDelegateGenerator=false` was proven to be precaution rather than necessity (removed, rebuilt, still clean — the RDG only affects minimal APIs and this design uses controllers). The Web SDK also generated **zero `.cs` files** for a VB project.
+>
+> That is advance information, not a result for P1-02. Run P1-02 properly in-repo. **If it behaves differently from the probe, that difference is itself the friction and this card triggers on it.** Evidence: `evidence/phase-0/p0-07-rung-a-preflight.txt`, ADR-001 pre-flight note.
+
 If it did show friction, the calculus changes: friction now suggests a future SDK update could break rung A outright, and PA-001 granted no C# escape hatch, so rung B is the last self-service option.
 
 **Do:** On a scratch branch, build the same `/health` endpoint with `Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`.
@@ -272,7 +341,16 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] `merch_api` **cannot** `DROP DATABASE` — attempt recorded
 - [ ] `merch_backup` **cannot** write — attempt recorded
 - [ ] Root login from a client machine fails
-- [ ] ADR-003 records charset, collation, engine
+- [x] ADR-003 records charset, collation, engine — **already ACCEPTED at P0-07 with measured values.** This card now *consumes* ADR-003 rather than deciding it.
+- [ ] **`STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted, and the change logged in the manifest §6**
+
+> **P0-07 hands this card a defect to fix, not just a decision to record.**
+>
+> XAMPP ships `sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — **`STRICT_TRANS_TABLES` is absent**, which is weaker than MariaDB 10.4's own default. Demonstrated on this server: inserting `'THIS-SKU-IS-FAR-TOO-LONG'` into `VARCHAR(8)` stored `'THIS-SKU'`, and `1.9999` into `DECIMAL(19,3)` stored `2.000` — **both reported as success**. With strict mode the same insert is rejected with `ERROR 1406 (22001)`.
+>
+> A silently truncated SKU and a silently rounded quantity, invisible to the API, in a system whose entire value is an accurate ledger. Fix it here in `my.ini` **and** again per-connection at P1-05, so a XAMPP reinstall cannot quietly revert the guarantee. See ADR-003.2.
+>
+> Also inherit from ADR-003: state `utf8mb4` / `utf8mb4_unicode_ci` / `InnoDB` **explicitly** on every object — the server default collation is `utf8mb4_general_ci`, not what we want. And do not reach for `uca1400` collations; zero of them exist on 10.4.
 
 **Evidence:** `p1-04-grants.txt`, `p1-04-negative-tests.txt`
 
@@ -291,8 +369,10 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] API connects to the pinned MariaDB
 - [ ] Connection string appears in **no** committed file (G-C passes)
 - [ ] Connection string appears in **no** client project
-- [ ] MySqlConnector version pinned in ADR-002
+- [ ] MySqlConnector version pinned in ADR-002 — **the only row still PENDING in that ADR**
 - [ ] Config file location documented for the installation guide
+- [ ] **Connection factory sets `sql_mode` to include `STRICT_TRANS_TABLES` on every connection** — belt and braces with the `my.ini` change at P1-04, so a XAMPP reinstall cannot silently revert it (ADR-003.2)
+- [ ] Connection sets isolation level explicitly — the server default is `REPEATABLE-READ`, but ADR-006 requires `READ COMMITTED`. On 10.4 the variable is **`tx_isolation`**; `transaction_isolation` does not exist and raises `ERROR 1193`.
 
 **Evidence:** `p1-05-connection-test.log`
 
@@ -333,6 +413,10 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] `0.001` and `12345678901234.5678` round-trip exactly
 - [ ] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
 - [ ] PA-003 raised with the professor
+
+> **P0-07 pre-checks — these were proven on the real server, so 0001 should not surprise you.** A table with two `VARCHAR(255)` utf8mb4 **unique** indexes (SKU and barcode) created without error: `innodb_default_row_format=dynamic`, 16 KB pages, 3072-byte key prefix limit, 255×4 = 1020 bytes used — roughly 3× headroom. `DECIMAL(19,4)` and `DECIMAL(19,3)` round-tripped `12345678901234.5678` and `0.001` exactly alongside a `DATETIME(6)`.
+>
+> Two 10.4 constraints to write around: there is **no `UUID` column type** (added in 10.7) — use `CHAR(36)` or `BINARY(16)` for correlation and idempotency keys; and `lower_case_table_names=1` on Windows, so `StockBalances` is stored as `stockbalances`. Harmless on a Windows-only system, but a dump from this host would not restore cleanly onto a case-sensitive Linux server.
 
 **Evidence:** `p1-07-audit-immutability.txt`, `p1-07-precision-check.txt`
 
@@ -513,7 +597,11 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Spec:** §15 · **Closes:** G-15
 
-**Do:** `Merchandising.Maintenance backup` using the dump tool identified in P0-04, under `merch_backup`. Write to a protected directory outside the binaries and **not** served by the API. Record size, checksum, timestamp, source DB version, result. Copy off-host. Register in Task Scheduler.
+**Do:** `Merchandising.Maintenance backup` using **`C:\xampp\mysql\bin\mysqldump.exe`** (P0-04: no `mariadb-dump.exe` exists in this distribution), under `merch_backup`. Write to a protected directory outside the binaries and **not** served by the API. Record size, checksum, timestamp, source DB version, result. Copy off-host. Register in Task Scheduler.
+
+> **P0-07 groundwork.** The protected directory already exists: **`C:\MerchandisingBackups`** — outside the repo, outside `C:\xampp`, inheritance disabled, `Authenticated Users: Modify` removed (a dump contains every password hash), create/read/delete proven after the ACL change. Recorded in manifest §2.
+>
+> **The off-host destination is still not chosen** — it needs a physical drive Max selects, and this card cannot complete without it. Revisit the ACL when P1-16 defines the service identity: the backup account should end up with the narrowest grant that still lets the scheduled job run.
 
 **Done when:**
 
