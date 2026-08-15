@@ -39,15 +39,15 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 | .NET runtimes present | _(record)_ | `dotnet --list-runtimes` |
 | ASP.NET Core runtime present | _(yes/no + version)_ | `dotnet --list-runtimes` |
 | .NET Desktop Runtime present | _(yes/no + version)_ | `dotnet --list-runtimes` |
-| XAMPP version | _(record)_ | XAMPP Control Panel → About |
-| XAMPP install path | _(record)_ | — |
+| XAMPP version | 8.2.12-0, Windows x64 | `properties.ini` → `base_stack_version` |
+| XAMPP install path | `C:\xampp` | — |
+| XAMPP components disabled (Apache, FileZilla, Mercury, Tomcat) | Stopped via Control Panel GUI; confirmed not running (only `mysqld.exe`), no autostart registry/Startup-folder entries, ports 80/443/21/25/110/8080 not listening | `evidence/phase-0/xampp-services.txt` |
 | MariaDB server version | _(record)_ | `mariadb --version` |
 | MariaDB config file path | _(record — usually my.ini)_ | XAMPP Control Panel → MySQL → Config |
 | MariaDB data directory | _(record)_ | From config file |
 | Dump tool available | _(`mariadb-dump` / `mysqldump` + version)_ | `mariadb-dump --version` |
 | MariaDB bind address | _(expect loopback only)_ | From config file |
 | MariaDB port | _(record — default 3306)_ | From config file |
-| XAMPP components disabled | Apache, FileZilla, Mercury, Tomcat | XAMPP Control Panel screenshot |
 | Backup directory path | _(record — must be outside the binaries)_ | — |
 | Off-host backup destination | _(record — separate physical drive or approved cloud)_ | — |
 | API HTTPS port | 8443 | Chosen |
@@ -55,7 +55,7 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 **Attach:**
 
-- `evidence/phase-0/xampp-services.png` — only MariaDB running
+- `evidence/phase-0/xampp-services.txt` — only MariaDB running (PowerShell process/service/port evidence substituted for a screenshot, by agreement)
 - `evidence/phase-0/mariadb-config.txt` — bind address and port
 - `evidence/phase-0/dotnet-info-host.txt`
 

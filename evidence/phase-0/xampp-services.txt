@@ -1,0 +1,22 @@
+=== XAMPP version ===
+8.2.12-0 (base_stack_version in C:\xampp\properties.ini), Windows x64
+
+=== Running processes matching XAMPP components ===
+Checked: mysqld, httpd/apache, filezilla, mercury, tomcat, java
+Result: only mysqld.exe is running (PID 25392). No Apache, FileZilla, Mercury, or Tomcat process found.
+
+=== Windows services matching XAMPP components ===
+Result: none registered. This XAMPP install runs components as plain processes launched from the Control Panel, not as Windows services.
+
+=== XAMPP Control Panel autostart configuration ===
+C:\xampp\xampp-control.ini [EnableModules] section still lists Apache/FileZilla/Mercury/Tomcat=1 -- this key controls module VISIBILITY in the panel UI, not autostart or running state. Could not be edited directly (file locked by the running xampp-control.exe process); user stopped/unchecked the modules via the Control Panel GUI instead.
+
+=== OS-level autostart check ===
+No XAMPP entries in HKCU/HKLM Run registry keys, no XAMPP shortcuts in the current-user or all-users Startup folders. XAMPP Control Panel itself is not configured to launch at Windows boot, so none of its modules can auto-start with the OS.
+
+=== Listening port check (dashboard/Apache/FileZilla/Mercury) ===
+Checked ports 80 (Apache HTTP/dashboard), 443 (Apache HTTPS), 21 (FileZilla FTP), 25/110 (Mercury mail), 8080 (Tomcat): none listening.
+Only 127.0.0.1:3306 (MariaDB, loopback-only per P0-04) is active among XAMPP-related ports.
+
+=== phpMyAdmin reachability from a client laptop ===
+NOT VERIFIED. No client laptop is provisioned yet (see P0-02). Apache itself is confirmed not running and port 80/443 confirmed not listening from this host's own perspective, which makes phpMyAdmin unreachable by construction (it depends on Apache serving it) -- but a genuine cross-machine LAN reachability test is deferred until a client laptop exists, consistent with P0-02's status.

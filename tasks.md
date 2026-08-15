@@ -62,18 +62,20 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 ---
 
-### ⬜ P0-03 · Install and strip XAMPP
+### 🟡 P0-03 · Install and strip XAMPP — phpMyAdmin cross-machine test pending client laptop
 
 **Spec:** §3, §17 · **Closes:** G-03 (partially)
 
 **Do:** Install XAMPP on the host. Stop **and disable** Apache, FileZilla, Mercury, and Tomcat. Keep MariaDB only. Confirm the XAMPP dashboard and phpMyAdmin are not reachable from the store LAN.
 
+> **Result.** XAMPP 8.2.12-0 was already installed (found during P0-04). Apache/FileZilla/Mercury/Tomcat were stopped by the user via the Control Panel GUI (the `xampp-control.ini` `[EnableModules]` key was locked by the running control-panel process and, on inspection, only governs UI visibility, not autostart — so editing it would not have proven anything). Confirmed only `mysqld.exe` is running; no Windows services registered for any XAMPP component; no autostart entries in HKCU/HKLM Run keys or Startup folders; ports 80/443/21/25/110/8080 not listening. XAMPP version and this evidence recorded in manifest §2. Evidence captured as `evidence/phase-0/xampp-services.txt` (PowerShell process/service/port output substituted for a GUI screenshot, by agreement — see manifest §2 note). **phpMyAdmin unreachable from an actual client laptop is not verified** — no client laptop exists yet (same gap as P0-02). Apache being stopped and port 80/443 not listening makes it unreachable by construction from this host's perspective, but a genuine cross-machine LAN test is deferred until a client is provisioned.
+
 **Done when:**
 
-- [ ] Only MariaDB runs; screenshot at `evidence/phase-0/xampp-services.png`
-- [ ] Apache/FileZilla/Mercury/Tomcat set to not auto-start
-- [ ] phpMyAdmin unreachable from a client laptop — attempt recorded
-- [ ] XAMPP version recorded in manifest §2
+- [x] Only MariaDB runs; evidence at `evidence/phase-0/xampp-services.txt` (screenshot substituted with PowerShell output, by agreement)
+- [x] Apache/FileZilla/Mercury/Tomcat confirmed not running, no OS-level autostart mechanism found
+- [ ] phpMyAdmin unreachable from a client laptop — **not verified, no client laptop provisioned; deferred with P0-02**
+- [x] XAMPP version recorded in manifest §2
 
 ---
 
