@@ -31,8 +31,8 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 | Item | Value | How to capture |
 |---|---|---|
-| Machine name | _(record)_ | `hostname` |
-| Windows edition + build | _(record)_ | `systeminfo` |
+| Machine name | `LAPTOP-3HH6OHHE` — this is the dev machine, also serving as the host laptop for this solo prototype | `hostname` |
+| Windows edition + build | Windows 11 Home Single Language, build 26200 (10.0.26200), 64-bit (x64) | `systeminfo` |
 | Reserved LAN IP | _(record)_ | Router DHCP reservation or static config |
 | Host name for clients | `MERCH-HOST` | Chosen — must match the certificate SAN |
 | Name resolution method | _(hosts file / DNS)_ | Record which, per client |
@@ -64,6 +64,8 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 ## 3. Client laptops
 
 Copy this block once **per client machine**. Every client is part of the tested system, not an assumption.
+
+**Status as of P0-02 (2026-08-15): no client laptops are provisioned yet.** This is a solo-developer prototype at this stage; the blocks below remain unfilled placeholders until physical/virtual client machines exist. Do not tick the P0-02 client acceptance boxes until real machines are captured here — a copy of the host row is not a substitute.
 
 ### Client 1 — _(role: Procurement / Inventory / POS)_
 

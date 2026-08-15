@@ -45,18 +45,20 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 ---
 
-### ⬜ P0-02 · Capture Windows baseline for host and every client
+### 🔴 P0-02 · Capture Windows baseline for host and every client — BLOCKED, no clients provisioned
 
 **Spec:** §3 · **Closes:** G-30
 
 **Do:** Record Windows edition, build, and architecture for the host laptop and **each** client laptop. Also record each client's screen resolution and display scaling — the UI baseline is 1366×768 and must stay usable at 125%.
 
+> **Result.** User confirmed the dev machine (`LAPTOP-3HH6OHHE`, Windows 11 Home Single Language build 26200, 64-bit x64) doubles as the host laptop at this stage. That row is filled in manifest §2. **No client laptops are provisioned yet** — this is currently a solo-developer setup. Manifest §3 is left as unfilled placeholders with an explicit status note rather than faked/duplicated data. Card stays open until real client machines exist and are captured individually — no "same as above" shortcuts, per the card's own instruction.
+
 **Done when:**
 
-- [ ] Host row complete in manifest §2
-- [ ] One complete block per client in manifest §3 — no "same as above" shortcuts
-- [ ] Resolution and scaling recorded per client
-- [ ] All machines confirmed 64-bit
+- [x] Host row complete in manifest §2 (Windows edition/build/architecture/machine name only — other host-row fields belong to P0-03/P0-04/P0-05 and are filled by those cards)
+- [ ] One complete block per client in manifest §3 — **not satisfied, no client machines exist**
+- [ ] Resolution and scaling recorded per client — **not satisfied, no client machines exist**
+- [x] Host machine confirmed 64-bit; client confirmation pending client provisioning
 
 ---
 
