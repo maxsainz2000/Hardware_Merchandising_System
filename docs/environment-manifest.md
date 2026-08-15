@@ -17,7 +17,7 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 | Windows build | 10.0.26200 | `Get-CimInstance Win32_OperatingSystem` |
 | Architecture | 64-bit (x64) | `Get-CimInstance Win32_OperatingSystem` |
 | Visual Studio version | Visual Studio Community 2026, 18.7.1+11911.148 | `vswhere -all -products *` |
-| VS workloads installed | **.NET desktop development: ✅ installed** (`Microsoft.VisualStudio.Workload.ManagedDesktop`). **ASP.NET and web development: ❌ NOT installed** (`Microsoft.VisualStudio.Workload.NetWeb` absent — only `CoreEditor` + `ManagedDesktop` present in the instance state). **Action needed: open VS Installer → Modify → add the ASP.NET and web development workload before P1-02.** | `vswhere -requires <workloadId>`, cross-checked against `_Instances\d1e3d03c\state.json` |
+| VS workloads installed | **.NET desktop development: ✅ installed** (`Microsoft.VisualStudio.Workload.ManagedDesktop`). **ASP.NET and web development: ✅ installed** (`Microsoft.VisualStudio.Workload.NetWeb`) — added after the initial P0-01 pass, re-verified. Both workloads now confirmed present. | `vswhere -requires <workloadId>`, cross-checked against `_Instances\d1e3d03c\state.json` (now lists `CoreEditor`, `ManagedDesktop`, `NetWeb`) |
 | .NET SDK version | 10.0.301 (commit 96856fd726) | `dotnet --info` |
 | .NET runtimes present | AspNetCore.App 8.0.28 / 9.0.17 / **10.0.9**; NETCore.App 8.0.28 / 9.0.17 / **10.0.9**; WindowsDesktop.App 8.0.28 / 9.0.17 / **10.0.9** — a .NET 10 ASP.NET Core runtime and a .NET 10 Desktop runtime are both present | `dotnet --list-runtimes` |
 | Git version | git version 2.53.0.windows.3 | `git --version` |
