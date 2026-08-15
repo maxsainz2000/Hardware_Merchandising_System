@@ -4,8 +4,8 @@
 
 The spec is explicit that "works on the developer's machine" is not acceptance. This file is what makes that testable — every version below must be captured from the **actual** classroom machines, not assumed.
 
-**Status:** ⬜ Incomplete — Phase 0 in progress
-**Last updated:** _(date)_
+**Status:** ⬜ Incomplete — Phase 0 in progress (P0-01 done; P0-02, P0-03, P0-05 outstanding)
+**Last updated:** 2026-08-15
 
 ---
 
@@ -13,17 +13,17 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 | Item | Value | How to capture |
 |---|---|---|
-| Windows edition | _(record)_ | `winver` or `systeminfo` |
-| Windows build | _(record)_ | `systeminfo \| findstr /B /C:"OS"` |
-| Architecture | _(expect x64)_ | `systeminfo` |
-| Visual Studio version | _(record full build number)_ | Help → About Microsoft Visual Studio |
-| VS workloads installed | .NET desktop development; ASP.NET and web development | VS Installer → Modify |
-| .NET SDK version | _(record)_ | `dotnet --info` |
-| .NET runtimes present | _(record all listed)_ | `dotnet --list-runtimes` |
-| Git version | _(record)_ | `git --version` |
-| PowerShell version | _(record)_ | `$PSVersionTable.PSVersion` |
+| Windows edition | Windows 11 Home Single Language | `Get-CimInstance Win32_OperatingSystem` |
+| Windows build | 10.0.26200 | `Get-CimInstance Win32_OperatingSystem` |
+| Architecture | 64-bit (x64) | `Get-CimInstance Win32_OperatingSystem` |
+| Visual Studio version | Visual Studio Community 2026, 18.7.1+11911.148 | `vswhere -all -products *` |
+| VS workloads installed | **.NET desktop development: ✅ installed** (`Microsoft.VisualStudio.Workload.ManagedDesktop`). **ASP.NET and web development: ❌ NOT installed** (`Microsoft.VisualStudio.Workload.NetWeb` absent — only `CoreEditor` + `ManagedDesktop` present in the instance state). **Action needed: open VS Installer → Modify → add the ASP.NET and web development workload before P1-02.** | `vswhere -requires <workloadId>`, cross-checked against `_Instances\d1e3d03c\state.json` |
+| .NET SDK version | 10.0.301 (commit 96856fd726) | `dotnet --info` |
+| .NET runtimes present | AspNetCore.App 8.0.28 / 9.0.17 / **10.0.9**; NETCore.App 8.0.28 / 9.0.17 / **10.0.9**; WindowsDesktop.App 8.0.28 / 9.0.17 / **10.0.9** — a .NET 10 ASP.NET Core runtime and a .NET 10 Desktop runtime are both present | `dotnet --list-runtimes` |
+| Git version | git version 2.53.0.windows.3 | `git --version` |
+| PowerShell version | 7.6.4 | `$PSVersionTable.PSVersion` |
 
-**Attach:** full `dotnet --info` output to `evidence/phase-0/dotnet-info-dev.txt`.
+**Attach:** full `dotnet --info` output at `evidence/phase-0/dotnet-info-dev.txt`.
 
 ---
 

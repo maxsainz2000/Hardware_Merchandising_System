@@ -26,18 +26,20 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 ---
 
-### ⬜ P0-01 · Capture development machine baseline
+### 🔴 P0-01 · Capture development machine baseline — BLOCKED on missing VS workload
 
 **Spec:** §3 · **Closes:** G-30
 
 **Do:** Verify VS 2026 has the **.NET desktop development** and **ASP.NET and web development** workloads plus the .NET 10 component. Capture versions into `docs/environment-manifest.md` §1.
 
+> **Result.** VS Community 2026 (18.7.1+11911.148) has **.NET desktop development** installed but **not ASP.NET and web development** — confirmed both via `vswhere -requires Microsoft.VisualStudio.Workload.NetWeb` (no match) and by reading the instance's `state.json` directly (only `Workload.CoreEditor` + `Workload.ManagedDesktop` present). This blocks P1-02 (the Web SDK API project) until the workload is added through VS Installer → Modify. Everything command-line-capturable (`dotnet --info`, `--list-runtimes`, Windows/Git/PowerShell versions) is recorded in manifest §1. Screenshot evidence of the VS Installer state was out of scope for this pass — user confirmed proceeding via command line only.
+
 **Done when:**
 
-- [ ] Both workloads confirmed installed (VS Installer → Modify screenshot)
-- [ ] `dotnet --info` captured to `evidence/phase-0/dotnet-info-dev.txt`
-- [ ] `dotnet --list-runtimes` shows a .NET 10 ASP.NET Core runtime **and** a Desktop runtime
-- [ ] Manifest §1 fully populated — no blanks
+- [ ] Both workloads confirmed installed (VS Installer → Modify screenshot) — **ASP.NET and web development is missing; not satisfied**
+- [x] `dotnet --info` captured to `evidence/phase-0/dotnet-info-dev.txt`
+- [x] `dotnet --list-runtimes` shows a .NET 10 ASP.NET Core runtime **and** a Desktop runtime
+- [x] Manifest §1 fully populated — no blanks
 
 **Evidence:** `evidence/phase-0/dotnet-info-dev.txt`
 
