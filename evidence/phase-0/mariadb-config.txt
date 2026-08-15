@@ -1,0 +1,26 @@
+=== mariadb --version ===
+Note: this XAMPP distro (10.4.32) ships no mariadb.exe binary; mysqld.exe --version is the equivalent.
+C:\xampp\mysql\bin\mysqld.exe  Ver 10.4.32-MariaDB for Win64 on AMD64 (mariadb.org binary distribution)
+
+=== Dump tool identification ===
+This distribution does NOT ship mariadb-dump.exe. Only mysqldump.exe is present.
+Path: C:\xampp\mysql\bin\mysqldump.exe
+mysqldump.exe  Ver 10.19 Distrib 10.4.32-MariaDB, for Win64 (AMD64)
+
+=== Config file path ===
+C:\xampp\mysql\bin\my.ini
+
+=== Data directory ===
+C:/xampp/mysql/data  (datadir= line in my.ini)
+
+=== Port ===
+3306 (port= line in [mysqld] section)
+
+=== bind-address change (before -> after) ===
+Before: bind-address was commented out; mysqld listened on wildcard '::' (all interfaces), confirmed via Get-NetTCPConnection.
+After:  bind-address="127.0.0.1" set in [mysqld] section; after restart mysqld (new PID) listens only on 127.0.0.1:3306, confirmed via Get-NetTCPConnection.
+
+=== [mysqld] section, bind-address lines ===
+45:# Change here for bind listening
+46-bind-address="127.0.0.1"
+47-# bind-address = ::1          # for ipv6

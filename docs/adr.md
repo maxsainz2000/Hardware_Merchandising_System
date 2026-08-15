@@ -49,16 +49,18 @@ Every pinned version and irreversible choice for the Merchandising System.
 
 ## ADR-002 · MariaDB and .NET connector versions
 
-**Status:** PENDING — resolve at tasks P0-04 and P1-05
+**Status:** PENDING — MariaDB rows resolved at P0-04; XAMPP version, .NET connector, and .NET SDK rows still pending P0-03, P1-05, P0-01
 **Decides:** the exact database and data-access versions the whole project is built and tested against. Closes gap G-04.
 
 | Item | Value | Source |
 |---|---|---|
 | XAMPP version | _(record)_ | P0-03 |
-| MariaDB server version (`mariadb --version`) | _(record)_ | P0-04 |
-| Dump tool available (`mariadb-dump` / `mysqldump`) | _(record)_ | P0-04 |
-| MariaDB config file path | _(record)_ | P0-04 |
-| Data directory | _(record)_ | P0-04 |
+| MariaDB server version (`mariadb --version`) | `10.4.32-MariaDB` for Win64/AMD64 (mariadb.org binary distribution) — captured via `mysqld.exe --version`; this XAMPP distro ships no `mariadb.exe` binary | P0-04 |
+| Dump tool available (`mariadb-dump` / `mysqldump`) | **`mysqldump.exe`** at `C:\xampp\mysql\bin\mysqldump.exe`, Ver 10.19 Distrib 10.4.32-MariaDB. No `mariadb-dump.exe` exists in this distribution, despite the card's stated preference — P1-17 must build on `mysqldump` | P0-04 |
+| MariaDB config file path | `C:\xampp\mysql\bin\my.ini` | P0-04 |
+| Data directory | `C:/xampp/mysql/data` | P0-04 |
+| Port | `3306` | P0-04 |
+| `bind-address` | `127.0.0.1` (loopback) — previously unset, server listened on wildcard `::`; changed and restart-verified | P0-04 |
 | .NET connector package | MySqlConnector _(pin exact version)_ | P1-05 |
 | .NET SDK version (`dotnet --info`) | _(record)_ | P0-01 |
 | Target framework | `net10.0` / `net10.0-windows` | `Directory.Build.props` |

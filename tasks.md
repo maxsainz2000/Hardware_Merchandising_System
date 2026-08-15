@@ -73,7 +73,7 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 ---
 
-### ⬜ P0-04 · Pin MariaDB details
+### ✅ P0-04 · Pin MariaDB details
 
 **Spec:** §6.3 · **Closes:** G-04 (begins)
 
@@ -81,13 +81,15 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory.
 
 The dump tool matters more than it looks: the entire backup strategy (P1-17) is built on whichever binary actually exists, and XAMPP distributions differ.
 
+> **Result.** This XAMPP distribution (MariaDB 10.4.32) ships no `mariadb`/`mariadb-dump` binaries at all — only the `mysql*.exe` family. P1-17 must be built on `mysqldump.exe`, not the preferred `mariadb-dump`. `bind-address` was previously unset (server listened on wildcard `::`); it is now `127.0.0.1`, confirmed by restart and a fresh `Get-NetTCPConnection` check.
+
 **Done when:**
 
-- [ ] `mariadb --version` captured
-- [ ] Dump tool identified, path recorded, `--version` captured
-- [ ] `bind-address` set to loopback; config excerpt at `evidence/phase-0/mariadb-config.txt`
-- [ ] MariaDB restarted and still serving locally after the bind change
-- [ ] Values transferred into `docs/adr.md` ADR-002
+- [x] `mariadb --version` captured
+- [x] Dump tool identified, path recorded, `--version` captured
+- [x] `bind-address` set to loopback; config excerpt at `evidence/phase-0/mariadb-config.txt`
+- [x] MariaDB restarted and still serving locally after the bind change
+- [x] Values transferred into `docs/adr.md` ADR-002
 
 ---
 
