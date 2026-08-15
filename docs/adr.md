@@ -187,10 +187,12 @@ UPDATE StockBalances
 
 ## ADR-011 · Certificate strategy
 
-**Status:** PENDING — resolve at task P1-09
+**Status:** PENDING — cert strategy resolves at task P1-09; host name choice confirmed at P0-05
 **Decides:** how HTTPS is trusted on client laptops. Closes gaps G-07 and G-25.
 
 **Baseline lean:** self-signed certificate with subject/SAN covering the host name `MERCH-HOST` (and the reserved IP if client configuration will use it), with a documented manual trust-installation procedure per client.
+
+**P0-05 note:** host name `MERCH-HOST` confirmed as the name to use (matches the baseline lean above — no reason found to deviate). Host's current LAN address is `192.168.100.165` (static, see environment manifest §4), which the SAN should also cover per the baseline lean, since P1-09 hasn't yet ruled that out. `MERCH-HOST` → `192.168.100.165` resolution is **not yet configured on any client** — no client laptops are provisioned (same gap as P0-02/P0-03).
 
 **Decision:** _(record after P1-09)_
 

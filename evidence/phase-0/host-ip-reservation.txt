@@ -1,0 +1,17 @@
+=== Static IP configuration applied via elevated PowerShell ===
+Adapter: Wi-Fi (InterfaceIndex 14, Intel(R) Wi-Fi 6 AX101), network 'HUAWEI-5G-fP2f 2'
+IPv4 Address: 192.168.100.165/24 (was DHCP-assigned, now static)
+Gateway: 192.168.100.1
+DNS: 192.168.100.1
+
+=== DHCP status ===
+Dhcp: Disabled (confirmed via Get-NetIPInterface)
+
+=== Post-change connectivity check ===
+Test-Connection to gateway 192.168.100.1: 2/2 successful, ~1ms latency
+
+=== Commands run (in an elevated PowerShell session) ===
+Set-NetIPInterface -InterfaceIndex 14 -Dhcp Disabled
+Remove-NetIPAddress -InterfaceIndex 14 -AddressFamily IPv4 -Confirm:$false
+New-NetIPAddress -InterfaceIndex 14 -IPAddress 192.168.100.165 -PrefixLength 24 -DefaultGateway 192.168.100.1
+Set-DnsClientServerAddress -InterfaceIndex 14 -ServerAddresses 192.168.100.1

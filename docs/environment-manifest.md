@@ -92,10 +92,10 @@ Copy this block once **per client machine**. Every client is part of the tested 
 
 | Item | Value |
 |---|---|
-| Network type | Private store LAN / Wi-Fi |
-| Subnet | _(record)_ |
-| Router / AP model | _(record)_ |
-| Host IP reservation method | _(static / DHCP reservation)_ |
+| Network type | Wi-Fi (network "HUAWEI-5G-fP2f 2") — solo-prototype stand-in for the eventual private store LAN |
+| Subnet | `192.168.100.0/24`, gateway `192.168.100.1` |
+| Router / AP model | _(record)_ — not yet identified; not required to complete the host addressing itself |
+| Host IP reservation method | Static IP configured directly on the host's Wi-Fi adapter (`192.168.100.165/24`, DHCP disabled) via elevated PowerShell — not a router-side DHCP reservation, since no client laptops or router access exist yet to make that meaningful |
 | Internet access required | No — the system is LAN-only |
 
 ---

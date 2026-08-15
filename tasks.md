@@ -99,18 +99,20 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 
 ---
 
-### ⬜ P0-05 · Network and host addressing
+### 🔴 P0-05 · Network and host addressing — BLOCKED, no clients to verify resolution from
 
 **Spec:** §8 · **Closes:** G-25 (begins)
 
 **Do:** Reserve the host's LAN IP. Establish `MERCH-HOST` name resolution from every client (hosts file or DNS). This name must match the certificate SAN in P1-09 — decide it now, not later.
 
+> **Result.** Host IP reserved as a static address on the Wi-Fi adapter (`192.168.100.165/24`, DHCP disabled), applied via an elevated PowerShell session since the working session isn't admin-elevated; post-change connectivity to the gateway verified (2/2 successful). Subnet `192.168.100.0/24` recorded in manifest §4. Host name choice `MERCH-HOST` confirmed and noted in ADR-011 (without resolving the ADR — the certificate-strategy decision itself is still P1-09's job). **`MERCH-HOST` resolution cannot be established or tested from any client** — no client laptops are provisioned yet, same gap as P0-02/P0-03. Card stays open until a client exists to configure and ping.
+
 **Done when:**
 
-- [ ] Host IP reserved; method recorded
-- [ ] `ping MERCH-HOST` succeeds from **every** client; outputs at `evidence/phase-0/ping-<client>.txt`
-- [ ] Subnet recorded in manifest §4
-- [ ] Name choice recorded in ADR-011
+- [x] Host IP reserved; method recorded (static IP on host adapter, not a router DHCP reservation — see manifest §4 for why)
+- [ ] `ping MERCH-HOST` succeeds from **every** client — **not satisfied, no client machines exist**
+- [x] Subnet recorded in manifest §4
+- [x] Name choice recorded in ADR-011 (confirmation note only; ADR itself stays PENDING for P1-09)
 
 ---
 
