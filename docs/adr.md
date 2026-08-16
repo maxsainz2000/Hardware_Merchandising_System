@@ -380,16 +380,39 @@ Second, the template writes `MSTestSettings.vb` containing:
 
 ## ADR-010 · Deployment model
 
-**Status:** PENDING — resolve at task P1-03
-**Decides:** framework-dependent vs self-contained publishing. Closes gap G-16.
+**Status:** ACCEPTED
+**Date:** 2026-08-16
+**Decides:** framework-dependent vs self-contained publishing. **Begins** closing gap G-16 — it does not close it (see *Still open* below).
 
-| Component | Decision |
-|---|---|
-| WPF clients | _(baseline: framework-dependent `win-x64` + .NET 10 Desktop Runtime prerequisite check)_ |
-| API Windows Service | _(baseline: self-contained `win-x64` if host runtime installation proves fragile)_ |
-| Maintenance utility | _(match the API's choice)_ |
+| Component | Decision | Measured |
+|---|---|---|
+| **API Windows Service** | **Self-contained `win-x64`** | 347 files, 105.1 MB |
+| **Maintenance utility** | **Self-contained `win-x64`** | 202 files, 76.6 MB |
+| **WPF clients** | **Framework-dependent `win-x64`** + .NET 10 Desktop Runtime prerequisite | 15 files, 0.2 MB |
 
-**Fixed:** `win-x64` runtime identifier throughout. Never `PublishAot` or `PublishTrimmed` — neither works with Visual Basic.
+Both modes were published **and run** before deciding. The framework-dependent API is 17 files / 0.2 MB — a factor of roughly 525 smaller — and both served `GET /health` from a folder copied outside the repository with no build tree and no source in it.
+
+**Reasoning — API.** Spec §18 permits framework-dependent *"only with verified host runtime"*. This host does have `Microsoft.AspNetCore.App 10.0.9` — **but only because the .NET SDK is installed on it**, since the host laptop is currently also the development machine. A classroom or store host built from scratch has no SDK and therefore no ASP.NET Core runtime, so the condition is not met for the deployment this decision is actually for. Reading today's dev machine as "the host" would be verifying the wrong computer.
+
+P1-16 raises the stakes: the API runs as a **Windows Service** with automatic restart and must serve after an unattended reboot. A missing runtime there is not an error message someone reads and fixes — it is a service that silently fails to start, discovered when a client cannot connect, plausibly mid-demonstration. 105 MB on a laptop is an acceptable price for removing that entire failure class.
+
+**Reasoning — Maintenance.** Symmetry with the API is the weaker argument. The stronger one: this utility owns **backup and restore** (P1-17, P1-18). It is the tool you reach for when the system is already broken, and a recovery tool that depends on a correctly installed runtime can fail for the same reason you are running it.
+
+**Reasoning — WPF clients.** Spec §18 is explicit, and nothing measured here contradicts it. Self-contained would cost roughly 150 MB per client across three clients to avoid one documented install step per laptop. The prerequisite is declared by the package itself — `Merchandising.Inventory.runtimeconfig.json` names `Microsoft.WindowsDesktop.App 10.0.0` as a hard requirement — so a client without it fails at launch rather than misbehaving subtly.
+
+**Also established at P1-03:** a Visual Basic **WPF** application publishes `win-x64` and runs (window opens, responds, closes cleanly). That was untested before — P0-07's probe covered the API only, and P1-01 built the clients without publishing or launching one.
+
+**Fixed:** `win-x64` runtime identifier throughout, applied at publish time by `scripts/publish-release.ps1` and never set globally in `Directory.Build.props`. Never `PublishAot` or `PublishTrimmed` — neither works with Visual Basic. The publish script **refuses to run** if either resolves to `true`, which covers the hole G-D cannot see: G-D reads `.vbproj` text and cannot detect `-p:PublishAot=true` passed on a command line.
+
+**Still open — G-16 is begun, not closed.** Its required evidence is a *release manifest* and a *clean-machine installation test*. Neither exists yet:
+
+- **No machine without the .NET runtime has been tested.** The self-contained choice above is reasoned from the spec's condition, not proven by a runtime-free host.
+- **The WPF Desktop Runtime prerequisite *check* is unvalidated** and cannot be validated here — this machine has the Desktop Runtime, so a framework-dependent client runs whether or not the check works. Carried to **P1-15**.
+- **The full release manifest** (version, commit identifier, migration list, release notes, rollback instructions, package hashes) is Phase 6/7. `publish-release.ps1` produces a package hash only, and says so in its own header.
+
+**Rejected: framework-dependent API.** It works today and is 525× smaller, but it is only safe on a host whose runtime someone has deliberately installed and verified — and it fails in the worst available way, as a service that does not start, on a host where nobody did.
+
+**Evidence:** `evidence/phase-1/p1-03-publish.log`
 
 ---
 

@@ -1,0 +1,309 @@
+===========================================================================
+P1-03  PUBLISH win-x64 AND RUN THE PUBLISHED OUTPUT
+Framework-dependent and self-contained, both run from a clean folder
+===========================================================================
+
+Captured : 2026-08-16
+Machine  : LAPTOP-3HH6OHHE
+SDK      : 10.0.301
+RID      : win-x64  (spec section 18 names it explicitly; never inherited)
+
+  Spec section 18 makes this card a decision point, not a formality:
+
+    "The API may be framework-dependent if the appropriate ASP.NET
+     Core/.NET runtime is deliberately installed and verified on the
+     host; otherwise, the API will use a self-contained win-x64 publish
+     to reduce runtime-installation risk. This decision is made during
+     the Foundation Proof-of-Concept and recorded in the release
+     manifest."
+
+  So both modes are published and RUN here, and the choice is recorded in
+  ADR-010 with the reasoning, rather than assumed from the baseline.
+
+###########################################################################
+#  VERDICT: BOTH MODES PUBLISH AND BOTH RUN FROM A CLEAN FOLDER.
+#  ADR-010: API self-contained, Maintenance self-contained,
+#           WPF clients framework-dependent. ACCEPTED.
+###########################################################################
+
+---------------------------------------------------------------------------
+1  scripts/publish-release.ps1 - CREATED BY THIS CARD
+---------------------------------------------------------------------------
+
+  It did not exist, but two documents already assumed it did:
+
+    Directory.Build.props line 99
+      "win-x64 is passed at publish time by scripts/publish-release.ps1"
+      - which is the stated reason RuntimeIdentifier is NOT set globally.
+    plan.md section 2       lists it in the repository layout
+    plan.md P1-03           deliverable: "publish profile / script"
+
+  The tasks.md card does not mention it. Created here, so the props file's
+  claim becomes true and P0-07's folder-structure box loses one blocker.
+
+  WHAT IT DOES:
+    - applies the win-x64 RID at publish time and nowhere else
+    - takes -Component (Api|Maintenance|Procurement|Inventory|POS) and
+      -Mode (FrameworkDependent|SelfContained)
+    - REFUSES TO PUBLISH if PublishAot or PublishTrimmed resolve to true
+    - deletes the target directory first, so a stale file from an earlier
+      run cannot enter the package or corrupt the reported file count
+    - records file count, size, and a package hash (section 5)
+
+  WHAT IT DELIBERATELY DOES NOT DO. Spec section 18's "Versioning" row
+  wants a full release: version number, commit identifier, migration list,
+  release notes, rollback instructions, tested package hashes. This script
+  produces a published folder and its hash, and stops. The rest is Phase
+  6/7 packaging. A stub claiming to emit a release manifest would be worse
+  than one that does not pretend to, and the script's own header says so.
+
+  ONE GUARDRAIL WORTH NAMING. The AOT/trimming refusal is not decoration.
+  Guardrail G-D reads .vbproj TEXT, so it cannot see -p:PublishAot=true
+  passed on a command line, nor a value injected through an environment
+  variable or a Directory.Build.props edit made after G-D last ran. The
+  script checks the value MSBuild actually RESOLVED for this publish, with
+  the RID and self-contained flags applied - the only number that decides
+  what gets built. Neither works with Visual Basic (CLAUDE.md section 3).
+
+---------------------------------------------------------------------------
+2  WHAT WAS PUBLISHED
+---------------------------------------------------------------------------
+
+  PACKAGE           FILES        SIZE   PACKAGE SHA-256 (first 16)
+  Api-fd               17      0.2 MB   562F2FDF8BB593CC
+  Api-sc              347    105.1 MB   FDD9582C4BA88E5A
+  Maintenance-fd       15      0.2 MB   3710AF319B7A2AFD
+  Maintenance-sc      202     76.6 MB   0E647CE2E8AA8DC3
+  Inventory-fd         15      0.2 MB   B115EFA787236759
+
+  Every publish reported PublishAot=false and PublishTrimmed=false before
+  producing anything.
+
+  THE SIZE DELTA IS THE ADR-010 INPUT: 0.2 MB vs 105.1 MB for the API, a
+  factor of roughly 525. Self-contained buys the removal of a host runtime
+  prerequisite and costs that.
+
+  Output goes to artifacts/publish/, which .gitignore already excludes:
+
+    $ git check-ignore -v artifacts/publish/Api-fd/Merchandising.Api.exe
+      .gitignore:8:[Pp]ublish/   artifacts/publish/Api-fd/Merchandising.Api.exe
+
+  Nothing published enters the working tree. Confirmed by git status: the
+  only untracked path after all five publishes was the new script itself.
+
+  WPF was published FRAMEWORK-DEPENDENT ONLY, deliberately. That is spec
+  section 18's baseline for clients, and a self-contained WPF package would
+  be roughly 150 MB per client across three clients for a prerequisite that
+  the installation guide already documents.
+
+---------------------------------------------------------------------------
+3  BOTH API PACKAGES RUN FROM A CLEAN FOLDER
+---------------------------------------------------------------------------
+
+  "Clean folder" is taken strictly: each package was COPIED OUT OF THE
+  REPOSITORY ENTIRELY, to a temp directory with no build tree and no source,
+  and run from there. Publishing into a folder that still sits inside the
+  solution would not test what this box is asking about.
+
+    Api-fd   files=17    build-tree=False   vb-source=False
+    Api-sc   files=347   build-tree=False   vb-source=False
+
+  FRAMEWORK-DEPENDENT
+    $ .\Merchandising.Api.exe        (ASPNETCORE_URLS=http://127.0.0.1:5201)
+      Now listening on: http://127.0.0.1:5201
+      GET /health -> 200 OK
+      {"status":"ok","version":"0.1.0","utcTime":"2026-08-16T10:14:42.2701832Z"}
+      stderr: empty
+
+  SELF-CONTAINED
+    $ .\Merchandising.Api.exe        (ASPNETCORE_URLS=http://127.0.0.1:5202)
+      Now listening on: http://127.0.0.1:5202
+      GET /health -> 200 OK
+      {"status":"ok","version":"0.1.0","utcTime":"2026-08-16T10:14:45.1232660Z"}
+      stderr: empty
+
+  Both stopped afterwards; no orphan Merchandising.Api process remained.
+
+---------------------------------------------------------------------------
+4  MAINTENANCE AND THE WPF CLIENT
+---------------------------------------------------------------------------
+
+  MAINTENANCE (framework-dependent, from the clean folder)
+    $ .\Merchandising.Maintenance.exe
+      Hello World!
+      exit 0
+
+    That is still the dotnet new console template body - P1-06 replaces it
+    with the migration runner. What this proves is the PUBLISH PATH, not
+    the utility.
+
+  INVENTORY - WPF, framework-dependent, from the clean folder
+      process running : yes
+      main window     : 'MainWindow'
+      responding      : True
+      closed cleanly  : yes
+
+    FIRST PROOF IN THIS PROJECT THAT A VISUAL BASIC WPF APPLICATION
+    PUBLISHES win-x64 AND RUNS. It was genuinely unknown before this card:
+    P0-07's probe covered the API only, and P1-01 built the clients but
+    never published or launched one. It de-risks P1-15, which would
+    otherwise have met this for the first time while also debugging HTTPS,
+    auth and a typed API client.
+
+  THE DESKTOP RUNTIME PREREQUISITE, DECLARED BY THE PACKAGE ITSELF:
+
+    Merchandising.Inventory.runtimeconfig.json
+      "frameworks": [
+        { "name": "Microsoft.NETCore.App",       "version": "10.0.0" },
+        { "name": "Microsoft.WindowsDesktop.App", "version": "10.0.0" }
+      ]
+
+    That second entry IS the prerequisite spec section 18 requires be
+    verified on every client. It is a hard requirement of the package, not
+    advice, and a client without it fails at launch.
+
+---------------------------------------------------------------------------
+5  A DEFECT FOUND AND FIXED WHILE READING THE OUTPUT
+---------------------------------------------------------------------------
+
+  The script's first version recorded the SHA-256 of the primary
+  executable, which is the obvious reading of spec section 18's "tested
+  package hashes". The first two publishes returned:
+
+    Api-fd\Merchandising.Api.exe   BBBFD640ADF26B33...   162,816 bytes
+    Api-sc\Merchandising.Api.exe   BBBFD640ADF26B33...   162,816 bytes
+
+  IDENTICAL. Checked further, and the managed assembly is identical too:
+
+    Api-fd\Merchandising.Api.dll   0CC44E4A00DF1868...     7,680 bytes
+    Api-sc\Merchandising.Api.dll   0CC44E4A00DF1868...     7,680 bytes
+
+  WHY. The .exe is only the apphost shim, and the .dll is byte-identical
+  because Directory.Build.props sets Deterministic=true. Everything that
+  distinguishes the two packages lives elsewhere:
+
+    Api-fd runtimeconfig.json:  "frameworks":         [...10.0.0]   <- REQUIRES
+    Api-sc runtimeconfig.json:  "includedFrameworks": [...10.0.9]   <- CARRIES
+
+  plus the ~330 runtime files present in one and absent from the other.
+
+  A 0.2 MB package that requires a runtime on the host and a 105 MB package
+  that carries its own would have been reported as THE SAME ARTIFACT. In a
+  release process where the hash is what you check before deploying, that
+  is the failure that ships the wrong package and looks verified.
+
+  FIX. Package identity is now the SHA-256 over a sorted manifest of every
+  file's hash and relative path. Paths are included because a package that
+  moved a file is a different package; sorted so the result does not depend
+  on directory enumeration order. The manifest is written BESIDE the
+  package (Api-fd.sha256), never inside it - a manifest stored in the
+  directory it describes changes the thing it describes.
+
+  After the fix the two packages hash differently, as they must:
+
+    Api-fd  562F2FDF8BB593CCA9FE40F9BDED814320E66E10F62905A0D6CD9AF87B58A1DB
+    Api-sc  FDD9582C4BA88E5A84CA77E2BD0159B160D62C013E5754B0BE0720F32D86B29B
+
+  Round-trip verified: recomputing the package hash from the written
+  manifest reproduces the value the script printed.
+
+---------------------------------------------------------------------------
+6  THE ADR-010 DECISION, AND THE REASONING BEHIND IT
+---------------------------------------------------------------------------
+
+  API -> SELF-CONTAINED win-x64
+
+    Spec section 18 permits framework-dependent "only with verified host
+    runtime". This host does have Microsoft.AspNetCore.App 10.0.9 - BUT
+    ONLY BECAUSE THE .NET SDK IS INSTALLED ON IT. The host laptop is
+    currently also the development machine. A classroom or store host set
+    up from scratch has no SDK and therefore no ASP.NET Core runtime, so
+    the condition is not met in the deployment this decision is actually
+    for. Reading the current dev machine as "the host" would be verifying
+    the wrong computer.
+
+    P1-16 raises the stakes: the API is installed as a WINDOWS SERVICE
+    with automatic restart and must serve after an unattended reboot. A
+    missing runtime there is not a startup error someone reads and fixes
+    - it is a service that silently fails to start, discovered when a
+    client cannot connect, plausibly during the demonstration.
+
+    105 MB against 0.2 MB is a real cost, and on a laptop with a hard disk
+    it is an acceptable one. It buys the removal of an entire class of
+    deployment failure.
+
+  MAINTENANCE UTILITY -> SELF-CONTAINED win-x64
+
+    ADR-010's own rule is "match the API's choice", and there is a second
+    reason that is stronger than symmetry: this utility owns BACKUP AND
+    RESTORE (P1-17, P1-18). It is the tool you reach for when the system
+    is already broken. A recovery tool that itself depends on a runtime
+    being correctly installed is a recovery tool that can fail for the
+    same reason you are running it.
+
+  WPF CLIENTS -> FRAMEWORK-DEPENDENT win-x64, per the spec baseline
+
+    Spec section 18 is explicit: "Versioned win-x64 framework-dependent
+    packages, with .NET 10 Desktop Runtime prerequisite verification."
+    Self-contained would be roughly 150 MB per client across three
+    clients, to avoid one documented install step per laptop. The
+    prerequisite is declared by the package itself (section 4) and belongs
+    in the installation guide.
+
+    OPEN VALIDATION, CARRIED TO P1-15 AND STATED PLAINLY. The prerequisite
+    CHECK cannot be honestly tested on this machine, because this machine
+    has the Desktop Runtime - a framework-dependent client runs here
+    whether or not the check works. Proving it needs a client laptop
+    without the runtime installed. What IS proven here is that the package
+    publishes, launches, and declares the dependency correctly.
+
+  FIXED REGARDLESS OF MODE: win-x64 throughout; PublishAot and
+  PublishTrimmed never set, refused by the publish script and by G-D.
+
+---------------------------------------------------------------------------
+7  DONE-WHEN BOXES, MAPPED TO EVIDENCE
+---------------------------------------------------------------------------
+
+  [x] Framework-dependent publish runs from a clean folder and serves
+      /health
+          -> section 3, copied outside the repository, 200 with the
+             expected body, stderr empty
+
+  [x] Self-contained publish also succeeds
+          -> section 2 (347 files, 105.1 MB) and section 3 - it was RUN
+             and served /health, not merely produced
+
+  [x] Neither sets PublishAot or PublishTrimmed
+          -> section 1, refusal built into the publish script; every
+             publish in section 2 reported both false, evaluated with the
+             RID and self-contained flags applied rather than read off
+             Directory.Build.props
+
+  [x] ADR-010 records the choice and why
+          -> section 6, and docs/adr.md ADR-010, ACCEPTED
+
+---------------------------------------------------------------------------
+8  WHAT THIS SETTLES AND WHAT IT DOES NOT
+---------------------------------------------------------------------------
+
+SETTLES:
+  - ADR-010 ACCEPTED with a decision per component and reasoning.
+  - Both publish modes work for a hand-authored VB Web SDK API, and both
+    published binaries serve from a folder with no build tree and no source.
+  - A VB WPF application publishes win-x64 and runs. Previously untested.
+  - scripts/publish-release.ps1 exists, so Directory.Build.props no longer
+    references a missing file.
+  - Package identity is measured correctly rather than by executable hash.
+
+DOES NOT SETTLE:
+  - G-16 is only BEGUN. Its evidence is "release manifest and clean-machine
+    installation test". Neither exists: no machine without the .NET runtime
+    has been tested, and the full release manifest is Phase 6/7.
+  - The WPF Desktop Runtime prerequisite CHECK is unvalidated - needs a
+    client laptop (P1-15).
+  - Nothing here touches HTTPS (P1-09), the Windows Service registration
+    or reboot recovery (P1-16), MariaDB (P1-04/P1-05), or auth (P1-08).
+  - Procurement and POS were not published. Inventory is representative -
+    all three are the same project shape from the same template.
+
+--- end of P1-03 publish log ---

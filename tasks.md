@@ -159,6 +159,8 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 > **P0-07 progress:** `docs/installation-guide.md` now exists (created for the `MERCH-HOST` procedure), so one of the eight is done. `.gitattributes` — which `plan.md` §2 does *not* list but should — was also created; see the P0-07 close-out note below.
 >
 > **P1-01 progress:** the eleven `src/` project directories and `Merchandising.sln` now exist, so those parts of `plan.md` §2 are satisfied. **Box still unticked** — seven `docs/*.md` documents (`database-design`, `api-specification`, `role-permission-matrix`, `ui-specification`, `backup-restore-guide`, `user-guide`, `test-plan`) and `scripts/publish-release.ps1` do not exist yet. `src/.gitkeep` was removed, having served its purpose.
+>
+> **P1-03 progress:** `scripts/publish-release.ps1` now exists — created there because `Directory.Build.props` already referenced it. **Box still unticked:** the seven `docs/*.md` documents remain. They are written as their subject matter lands (`api-specification` after P1-08, `database-design` after P1-07, and so on), so this box realistically ticks at P1-20, not before.
 
 > **P0-07 close-out — what this session added to the scaffold.**
 >
@@ -465,7 +467,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-03 · Publish `win-x64` and run the published output
+### ✅ P1-03 · Publish `win-x64` and run the published output
 
 **Spec:** §18 · **Closes:** G-16 (begins) · **Decides:** ADR-010
 
@@ -473,12 +475,38 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Framework-dependent publish runs from a clean folder and serves `/health`
-- [ ] Self-contained publish also succeeds
-- [ ] Neither sets `PublishAot` or `PublishTrimmed`
-- [ ] ADR-010 records the choice and why
+- [x] Framework-dependent publish runs from a clean folder and serves `/health` — 200, package **copied outside the repository** first, `stderr` empty
+- [x] Self-contained publish also succeeds — and was **run and served `/health`**, not merely produced
+- [x] Neither sets `PublishAot` or `PublishTrimmed` — evaluated **with the RID and self-contained flags applied**, not read off `Directory.Build.props`; the publish script refuses to run if either is `true`
+- [x] ADR-010 records the choice and why — **ACCEPTED**, one decision per component
 
 **Evidence:** `p1-03-publish.log`
+
+> **Result. Both modes publish, both run from a clean folder. ADR-010 ACCEPTED: API self-contained, Maintenance self-contained, WPF clients framework-dependent.**
+>
+> | Package | Files | Size |
+> |---|---|---|
+> | `Api-fd` | 17 | 0.2 MB |
+> | `Api-sc` | 347 | **105.1 MB** |
+> | `Maintenance-fd` | 15 | 0.2 MB |
+> | `Maintenance-sc` | 202 | 76.6 MB |
+> | `Inventory-fd` | 15 | 0.2 MB |
+>
+> **"Clean folder" was taken strictly** — each package was copied *out of the repository entirely* and run from a temp directory with no build tree and no source. Publishing into a folder still inside the solution would not test what the box asks.
+>
+> **The decision hinged on one fact worth stating plainly.** This host has `Microsoft.AspNetCore.App 10.0.9`, so framework-dependent looks viable — but **only because the .NET SDK is installed on it**, the host laptop being today's dev machine. A classroom or store host has no SDK and no ASP.NET Core runtime. Spec §18 permits framework-dependent "only with verified host runtime", and reading this machine as "the host" would be verifying the wrong computer. P1-16 then runs the API as a Windows Service that must serve after an unattended reboot, where a missing runtime is a service that silently fails to start.
+>
+> **Two things this card produced beyond its boxes:**
+>
+> **`scripts/publish-release.ps1` created** (confirmed with Max before writing). `Directory.Build.props` line 99 already claimed it existed — it is the stated reason `RuntimeIdentifier` is not set globally — and `plan.md` §2 listed it. It applies the RID, and **refuses to publish if `PublishAot`/`PublishTrimmed` resolve true**, covering a real hole: G-D reads `.vbproj` *text* and cannot see `-p:PublishAot=true` on a command line. It deliberately does **not** produce spec §18's full release manifest; that is Phase 6/7 and the script's header says so.
+>
+> **A VB WPF app publishes `win-x64` and runs** — window opens, responds, closes cleanly. Genuinely untested before: P0-07's probe was API-only and P1-01 never launched a client. De-risks P1-15.
+>
+> **A defect found by reading the output, not by a test.** The script first hashed the primary `.exe`, the obvious reading of §18's "tested package hashes". Both API packages returned **the same hash** — and so did the `.dll`: the `.exe` is only the apphost shim and `Deterministic=true` makes the assembly byte-identical. A 0.2 MB package *requiring* a runtime and a 105 MB package *carrying* one were being reported as the same artifact; the only real differences are `runtimeconfig.json` (`frameworks` vs `includedFrameworks`) and ~330 files. In a release process where the hash is what you check before deploying, that ships the wrong package and looks verified. Package identity is now a SHA-256 over a sorted manifest of every file's hash and path.
+>
+> **G-16 is begun, not closed** — its evidence is a release manifest and a **clean-machine installation test**, and no machine without the .NET runtime has been tested. The WPF Desktop Runtime prerequisite *check* is unvalidated and cannot be validated here (this machine has the runtime); carried to **P1-15**.
+>
+> Procurement and POS were not published — Inventory is representative, all three being the same project shape from the same template.
 
 > **Decision point.** P1-02 + P1-03 passing retires the project's dominant risk. Record it in the ADR before moving on.
 
