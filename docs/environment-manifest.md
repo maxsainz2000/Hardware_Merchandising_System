@@ -49,7 +49,7 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 | MariaDB bind address | `127.0.0.1` (loopback) | From config file |
 | MariaDB port | `3306` | From config file |
 | MariaDB collation / engine | Server default is `utf8mb4_general_ci` — **not** what we want. Pinned value is `utf8mb4_unicode_ci` on InnoDB, stated explicitly per object (ADR-003) | `SELECT @@collation_server` |
-| MariaDB `sql_mode` | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — ⚠️ **`STRICT_TRANS_TABLES` absent; silent truncation demonstrated.** Must be fixed at P1-04/P1-05 (ADR-003.2) | `SELECT @@sql_mode` |
+| MariaDB `sql_mode` | `STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — fixed at P1-04 (was `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` as shipped; `STRICT_TRANS_TABLES` absent, silent truncation demonstrated at P0-07). Per-connection belt-and-braces still owed by P1-05 (ADR-003.2) | `SELECT @@sql_mode` |
 | Other databases on this server | `merchsys_central` exists and is **not part of this project** — pre-existing, origin unknown | `SHOW DATABASES` |
 | Backup directory path | **`C:\MerchandisingBackups`** — outside the repo, outside `C:\xampp`, outside any application binary directory. Created and write-proven at P0-07 | — |
 | Backup directory ACL | Inheritance **disabled**; explicit rules only: `NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, `LAPTOP-3HH6OHHE\Admin` Modify. The inherited `Authenticated Users: Modify` was **removed** — a dump contains every password hash | `Get-Acl` |
@@ -122,7 +122,7 @@ Phase 0 is not complete until every box is ticked. A box is ticked only when the
 
 **Two additions to this checklist, found at P0-07 and not anticipated when it was written:**
 
-- [ ] `sql_mode` includes `STRICT_TRANS_TABLES`, server-side **and** per connection → **not done, and it matters.** As shipped this server silently truncates over-long strings and rounds over-precision decimals while reporting success. Demonstrated. See ADR-003.2. Owed by P1-04 and P1-05.
+- [ ] `sql_mode` includes `STRICT_TRANS_TABLES`, server-side **and** per connection → **half done.** Server-side half fixed at P1-04 (`my.ini`, restarted, re-verified — `evidence/phase-1/p1-04-grants.txt`). The per-connection half (belt-and-braces against a future XAMPP reinstall reverting it) is still owed by P1-05, per ADR-003.2.
 - [ ] Host static IP confirmed **outside** the router's DHCP pool → **not done, needs router admin access.** See §4.
 
 ---
@@ -138,3 +138,5 @@ Any change to this environment after Phase 0 goes through a tested change proced
 | 2026-08-15 | `C:\MerchandisingBackups` | did not exist | created; ACL inheritance disabled, `Authenticated Users: Modify` removed | P0-07 — backups contain every password hash and must not be world-modifiable | ✅ create/read/delete proven after the ACL change |
 | 2026-08-15 | `.claude/hooks/stop-guardrails.ps1`, `check-vbproj.ps1` | captured guardrail output with `2>&1` | `*>&1` | P0-07 — `Write-Host` goes to the information stream, so the hooks blocked with an **empty** failure message | ✅ re-run against a planted violation; failing guardrail and path now named |
 | 2026-08-15 | `scripts/install-hooks.ps1` | `Set-Content` | LF-normalised `WriteAllText` + shebang assertion | P0-07 — `.gitattributes` marks `*.ps1` as `eol=crlf`, which would have produced a CRLF shebang and silently disabled the git hook | ✅ hook reinstalled, 0 CRLF, blocked a `.cs` commit |
+| 2026-08-16 | `C:\xampp\mysql\bin\my.ini` `sql_mode` | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` | `STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` | P1-04 / ADR-003.2 — server was silently truncating over-long strings and rounding over-precision decimals while reporting success | ✅ restarted (`mysqladmin shutdown` + `mysql_start.bat`), re-ran the ADR-003.2 truncation demo: now `ERROR 1406 (22001)` instead of a silent accept — `evidence/phase-1/p1-04-grants.txt` |
+| 2026-08-16 | MariaDB accounts | none for this project (only pre-existing, unrelated `%`-host accounts) | `merchandising` database created (`utf8mb4`/`utf8mb4_unicode_ci`); `merch_api`@`localhost` (DML + CREATE/ALTER/INDEX/REFERENCES, no DROP) and `merch_backup`@`localhost` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER`) created | P1-04 — least-privilege API and backup accounts, root used by no application | ✅ `merch_api` denied `DROP DATABASE`; `merch_backup` denied `INSERT`/`UPDATE`/`DELETE`/`CREATE`, `SELECT` succeeds — `evidence/phase-1/p1-04-negative-tests.txt` |

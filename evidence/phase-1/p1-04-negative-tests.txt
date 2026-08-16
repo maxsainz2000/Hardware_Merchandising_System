@@ -1,0 +1,88 @@
+P1-04 · MariaDB setup and least-privilege accounts — negative-test evidence
+Captured 2026-08-16 against the live host MariaDB, after the accounts in p1-04-grants.txt
+were created. Every test below is a real command run as the named account through
+mysql.exe, judged on the actual server response — nothing here is read off a GRANT
+statement and assumed to work.
+
+=== Test 1: merch_api cannot DROP DATABASE ===
+
+$ mysql -u merch_api -p*** -e "DROP DATABASE merchandising;"
+ERROR 1044 (42000) at line 1: Access denied for user 'merch_api'@'localhost' to database 'merchandising'
+exit code: 1
+
+$ mysql -u root -e "SHOW DATABASES LIKE 'merchandising';"
+Database (merchandising)
+merchandising
+  -- database confirmed intact after the denied attempt.
+
+=== Test 2: merch_backup cannot write, and its SELECT grant is real (not just absent) ===
+
+Setup — scratch table created as root (dropped again at the end of this test):
+$ mysql -u root -e "CREATE TABLE merchandising.scratch_probe (Id INT PRIMARY KEY,
+    Val VARCHAR(20)) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+2a. INSERT:
+$ mysql -u merch_backup -p*** -e "INSERT INTO merchandising.scratch_probe VALUES (1, 'x');"
+ERROR 1142 (42000) at line 1: INSERT command denied to user 'merch_backup'@'localhost' for table `merchandising`.`scratch_probe`
+exit code: 1
+
+2b. UPDATE:
+$ mysql -u merch_backup -p*** -e "UPDATE merchandising.scratch_probe SET Val='y' WHERE Id=1;"
+ERROR 1142 (42000) at line 1: UPDATE command denied to user 'merch_backup'@'localhost' for table `merchandising`.`scratch_probe`
+exit code: 1
+
+2c. DELETE:
+$ mysql -u merch_backup -p*** -e "DELETE FROM merchandising.scratch_probe WHERE Id=1;"
+ERROR 1142 (42000) at line 1: DELETE command denied to user 'merch_backup'@'localhost' for table `merchandising`.`scratch_probe`
+exit code: 1
+
+2d. CREATE TABLE (DDL — merch_backup should have none):
+$ mysql -u merch_backup -p*** -e "CREATE TABLE merchandising.scratch_probe2 (Id INT);"
+ERROR 1142 (42000) at line 1: CREATE command denied to user 'merch_backup'@'localhost' for table `merchandising`.`scratch_probe2`
+exit code: 1
+
+2e. SELECT (control — proves the grant genuinely works, the account isn't just broadly
+    denied everything, e.g. by a typo in the GRANT statement):
+$ mysql -u merch_backup -p*** -e "SELECT * FROM merchandising.scratch_probe;"
+exit code: 0   -- (0 rows, table was empty — the point is the query was accepted, not denied)
+
+Cleanup — scratch table dropped as root, merchandising confirmed empty again:
+$ mysql -u root -e "DROP TABLE merchandising.scratch_probe;"
+$ mysql -u root -e "SHOW TABLES IN merchandising;"
+(no output — 0 tables. Database left clean for P1-06/P1-07.)
+
+=== Test 3: root login from a client machine — BLOCKED, no client laptop exists ===
+
+Same gap as P0-02 / P0-03 / P0-05: this is a solo-developer setup with no second physical
+or virtual machine to attempt the connection from. The literal acceptance check ("root
+login from a client machine fails") cannot be executed and this box is left unticked.
+
+What IS verified from the host side, as partial/structural evidence:
+
+  1. bind-address=127.0.0.1 (P0-04, re-confirmed live after this card's restart) — the
+     server does not accept a TCP connection from any non-loopback source, for ANY
+     account, root included. This alone already makes "root from a client" fail, by
+     construction, once a client exists to test it from.
+
+  2. root's own account grants add a second, independent layer on top of (1):
+     $ mysql -u root -e "SELECT User, Host FROM mysql.user WHERE User='root';"
+     User   Host
+     root   ::1
+     root   127.0.0.1
+     root   localhost
+     No 'root'@'%' entry exists. Even if bind-address were ever loosened in the future,
+     root's host grants would still refuse a connection whose apparent source is not
+     localhost/127.0.0.1/::1.
+
+  Neither (1) nor (2) is a substitute for the real test — a firewall or NAT quirk on the
+  actual classroom/store network could behave differently than assumed here, which is
+  exactly why the card wants the test run from a real second machine. Recorded as
+  BLOCKED, not skipped: unblocked only by a client laptop existing, same as P0-02/03/05.
+
+=== Unrelated pre-existing accounts — confirmed untouched ===
+
+merchsys_owner@%, merchsys_sync@%, merchsys_sync_role, vista_app@% pre-date this project
+(see docs/environment-manifest.md §2 — "merchsys_central exists and is not part of this
+project, pre-existing, origin unknown"). None were modified, granted against, or tested
+here; out of this card's scope. Their '%' host pattern is functionally inert regardless,
+since bind-address restricts the whole server to loopback.

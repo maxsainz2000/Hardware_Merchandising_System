@@ -205,6 +205,8 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 
 **Evidence.** `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
 
+> **Item 1 (server-side) done at P1-04 (2026-08-16).** `STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted (`mysqladmin shutdown` + `mysql_start.bat` — `mysql_stop.bat` itself did not reliably terminate the process), and the truncation demo re-run: `'THIS-SKU-IS-FAR-TOO-LONG'` into `VARCHAR(8)` now raises `ERROR 1406 (22001)` instead of silently storing `'THIS-SKU'`. **This does not close the decimal-scale half** — `1.9999` rounding to `2.000` on an over-scale insert is still silent under strict mode, by design (see ADR-004.1, which correctly assigns that half to the API, not the database). Evidence: `evidence/phase-1/p1-04-grants.txt`. **Item 2 (per-connection, belt-and-braces) remains owed by P1-05.**
+
 ---
 
 ## ADR-004 · Numeric precision

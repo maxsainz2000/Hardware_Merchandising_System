@@ -514,7 +514,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track B — Database and migrations
 
-### ⬜ P1-04 · MariaDB setup and least-privilege accounts
+### 🟡 P1-04 · MariaDB setup and least-privilege accounts — root-from-client box blocked, no client laptop
 
 **Spec:** §17 · **Closes:** G-03, G-10 (begins) · **Decides:** ADR-003
 
@@ -522,12 +522,12 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Both accounts created with least privilege
-- [ ] `merch_api` **cannot** `DROP DATABASE` — attempt recorded
-- [ ] `merch_backup` **cannot** write — attempt recorded
-- [ ] Root login from a client machine fails
+- [x] Both accounts created with least privilege — `merch_api`@`localhost` (`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` — deliberately no `DROP`, no admin privileges); `merch_backup`@`localhost` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only, verbatim). Confirmed with Max before implementing: "limited DDL" read as CREATE/ALTER/INDEX/REFERENCES, no DROP — see evidence
+- [x] `merch_api` **cannot** `DROP DATABASE` — attempt recorded, `ERROR 1044 (42000): Access denied`, database confirmed intact afterward
+- [x] `merch_backup` **cannot** write — `INSERT`/`UPDATE`/`DELETE`/`CREATE` all denied against a scratch table; `SELECT` succeeds alongside, proving the denial is real privilege enforcement and not a broken account
+- [ ] Root login from a client machine fails — **blocked, no client laptop exists** (same gap as P0-02/P0-03/P0-05). Structural evidence recorded instead: `bind-address=127.0.0.1` (P0-04) plus `root` having no `%`-host entry (only `localhost`/`127.0.0.1`/`::1`) — two independent layers, neither a substitute for the real cross-machine test
 - [x] ADR-003 records charset, collation, engine — **already ACCEPTED at P0-07 with measured values.** This card now *consumes* ADR-003 rather than deciding it.
-- [ ] **`STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted, and the change logged in the manifest §6**
+- [x] **`STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted, and the change logged in the manifest §6** — re-ran the ADR-003.2 truncation demo under strict mode: `ERROR 1406 (22001)` where it previously silently stored a mangled value. The decimal-*scale* rounding half of that demo is **not** fixed by strict mode (expected — that's ADR-004.1's job, at the API layer, not here)
 
 > **P0-07 hands this card a defect to fix, not just a decision to record.**
 >
@@ -538,6 +538,16 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > Also inherit from ADR-003: state `utf8mb4` / `utf8mb4_unicode_ci` / `InnoDB` **explicitly** on every object — the server default collation is `utf8mb4_general_ci`, not what we want. And do not reach for `uca1400` collations; zero of them exist on 10.4.
 
 **Evidence:** `p1-04-grants.txt`, `p1-04-negative-tests.txt`
+
+> **Result.** Database and both accounts created; `sql_mode` fixed server-side; 3 of 4 testable boxes closed, the 4th blocked on hardware that doesn't exist yet — same shape as every other card in this gap (P0-02/03/05).
+>
+> **Credentials were never written to any committed file.** `SHOW GRANTS` embeds a password hash inline in MariaDB 10.4 (unlike MySQL 8, which suppresses it) — redacted before the evidence file was written. The generated passwords were handed to Max directly and stashed in the session scratchpad, outside the repo. `check-no-csharp.ps1`'s G-C confirmed clean afterward. Persistent secure storage is P1-05's deliverable, not this one's.
+>
+> **One operational surprise, unrelated to the schema work.** `mysql_stop.bat` did not actually stop the server — its `killprocess.bat` call ran async and the old `mysqld.exe` PID was still listed 3 seconds later. `mysqladmin -u root shutdown` was used instead and worked cleanly. Not a defect in this card's deliverable, but worth knowing for P1-16 (Windows Service hosting) and any future restart.
+>
+> **A pre-existing, unrelated set of accounts was found and deliberately left alone**: `merchsys_owner@%`, `merchsys_sync@%`, `merchsys_sync_role`, `vista_app@%` — tied to the `merchsys_central` database already flagged as out-of-project at P0-04/manifest §2. Confirmed unmodified after this card's changes. Functionally inert regardless of their `%` host pattern, since `bind-address=127.0.0.1` restricts the whole server to loopback.
+>
+> **Card stays 🟡, not ✅.** The root-from-a-client box is the only thing outstanding, and it needs a client laptop, not more engineering — closes automatically once one exists, same as the P0-02/03/05 pattern this project has already established.
 
 ---
 

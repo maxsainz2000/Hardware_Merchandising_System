@@ -1,0 +1,102 @@
+P1-04 · MariaDB setup and least-privilege accounts — grants evidence
+Captured 2026-08-16 against the live host MariaDB (10.4.32-MariaDB, C:\xampp\mysql).
+
+=== sql_mode change (ADR-003.2 fix) ===
+
+Before (P0-07 measurement): NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+  -- STRICT_TRANS_TABLES absent; silent truncation/rounding demonstrated at P0-07.
+
+C:\xampp\mysql\bin\my.ini, line 157, changed:
+  from: sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+  to:   sql_mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+
+MariaDB stopped via `mysqladmin -u root shutdown` (graceful; mysql_stop.bat's killprocess.bat
+did not actually terminate the process — old PID 25392 was still listed 3s after mysql_stop.bat
+ran, so mysqladmin shutdown was used instead) and restarted via C:\xampp\mysql_start.bat
+(new PID 17616, confirmed running).
+
+$ mysql -u root -e "SELECT @@sql_mode;"
+@@sql_mode
+STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+
+Re-run of the ADR-003.2 truncation demonstration, against a disposable scratch database
+(p1_04_scratch, dropped immediately after):
+
+$ mysql -u root
+  CREATE DATABASE p1_04_scratch ...;
+  CREATE TABLE t (Sku VARCHAR(8), Qty DECIMAL(19,3)) ENGINE=InnoDB ...;
+  INSERT INTO t VALUES ('THIS-SKU-IS-FAR-TOO-LONG', 1.9999);
+ERROR 1406 (22001) at line 4: Data too long for column 'Sku' at row 1
+
+  -- Non-strict (P0-07): silently stored 'THIS-SKU' / 2.000, reported success.
+  -- Strict (now):        rejected outright. The string-truncation half of ADR-003.2 is fixed.
+  -- The decimal-SCALE half (1.9999 -> 2.000 rounding) is NOT fixed by strict mode — this is
+  --    documented, expected, upstream behaviour (MySQL bug #87678, open). ADR-004.1 assigns
+  --    that half to the API (Decimal.Round to storage scale before the parameter is bound),
+  --    not the database. Not retested here because the insert never got that far (it failed
+  --    on the Sku column first); P1-07/P1-11's own precision tests cover it directly.
+
+=== Database created ===
+
+$ mysql -u root -e "SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME
+                     FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='merchandising';"
+SCHEMA_NAME     DEFAULT_CHARACTER_SET_NAME   DEFAULT_COLLATION_NAME
+merchandising   utf8mb4                      utf8mb4_unicode_ci
+
+CREATE DATABASE merchandising CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  -- charset/collation stated explicitly, per ADR-003 (server default is utf8mb4_general_ci,
+  -- confirmed still the case: collation-server=utf8mb4_general_ci in my.ini line 161).
+
+=== Accounts created ===
+
+merch_api  — DML + limited DDL (CREATE, ALTER, INDEX, REFERENCES). Deliberately NO DROP:
+  DROP is a database-scoped privilege in MariaDB, so granting it on merchandising.* would
+  also authorize DROP DATABASE merchandising — the opposite of what this card requires.
+  Migrations are forward-only (ADR-008), so DROP was never needed for that either.
+  No admin privileges (GRANT OPTION, SUPER, FILE, PROCESS, RELOAD, SHUTDOWN, CREATE USER).
+
+merch_backup — exactly SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER, per the card and
+  plan.md, verbatim. Nothing else.
+
+Both accounts scoped @'localhost' only, matching the loopback bind-address already set at
+P0-04. MariaDB documents 'localhost' as covering TCP-loopback connections on Windows (no
+Unix socket on this platform), which is how MySqlConnector will connect at P1-05.
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';"
+Grants for merch_api@localhost
+GRANT USAGE ON *.* TO `merch_api`@`localhost` IDENTIFIED BY PASSWORD '<redacted — password hash, not committed>'
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, REFERENCES, INDEX, ALTER ON `merchandising`.* TO `merch_api`@`localhost`
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_backup'@'localhost';"
+Grants for merch_backup@localhost
+GRANT USAGE ON *.* TO `merch_backup`@`localhost` IDENTIFIED BY PASSWORD '<redacted — password hash, not committed>'
+GRANT SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER ON `merchandising`.* TO `merch_backup`@`localhost`
+
+Note on credentials: both passwords are strong, randomly generated (24 random bytes, base64).
+Neither appears in this file, in any other committed file, or in my.ini. They were handed to
+Max directly and stashed in the session scratchpad (outside the repo, outside C:\xampp).
+Persistent secure storage — an ACL-protected host configuration location outside the repo and
+outside the binaries — is explicitly P1-05's deliverable (plan.md P1-05), not this card's.
+
+=== Full account list after this card (unrelated pre-existing accounts untouched) ===
+
+$ mysql -u root -e "SELECT User, Host FROM mysql.user ORDER BY User;"
+User                  Host
+merch_api             localhost
+merch_backup          localhost
+merchsys_owner        %            <- pre-existing, not part of this project (see manifest §2:
+merchsys_sync         %               merchsys_central db, "origin unknown"). Left untouched;
+merchsys_sync_role                    out of this card's scope, and functionally harmless
+pma                   localhost       regardless since bind-address is loopback-only.
+root                  ::1
+root                  127.0.0.1
+root                  localhost
+vista_app             %
+
+=== Root account — no application uses it ===
+
+root exists only with loopback-restricted hosts: localhost, 127.0.0.1, ::1. No 'root'@'%'
+entry exists. This is a second, independent barrier on top of bind-address=127.0.0.1
+(P0-04) — even if bind-address were ever loosened, root's own host grants would still
+refuse a remote connection. No application account (merch_api, merch_backup) uses root;
+neither was created with root-equivalent privileges.
