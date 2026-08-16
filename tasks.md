@@ -344,7 +344,7 @@ One session, no application code, no project created under `src/`. Full account 
 
 ---
 
-### ⬜ P1-02 · Hand-author the API on the Web SDK (rung A) 🎯
+### ✅ P1-02 · Hand-author the API on the Web SDK (rung A) 🎯
 
 **Spec:** §6.2 · **Closes:** G-01, G-02 · **Decides:** ADR-001
 
@@ -362,20 +362,57 @@ One session, no application code, no project created under `src/`. Full account 
 
 **Done when:**
 
-- [ ] `.vbproj` uses the Web SDK; no C# files anywhere in the project
-- [ ] `dotnet run` starts Kestrel
-- [ ] `GET /health` returns 200 with the expected JSON shape
-- [ ] Health response contains no secrets, DB status detail, or environment strings
-- [ ] `EnableRequestDelegateGenerator=false` inherited from `Directory.Build.props`
-- [ ] ADR-001 recorded with the rung reached and **any** friction encountered
+- [x] `.vbproj` uses the Web SDK; no C# files anywhere in the project — `UsingMicrosoftNETSdkWeb=true` evaluated from the resolved SDK, not read off the `Sdk` attribute. **0** `.cs`/`.csproj`/`.cshtml`/`.razor` under the project with `bin/` and `obj/` deliberately included in the scan
+- [x] `dotnet run` starts Kestrel — `Now listening on: http://127.0.0.1:5199`, `stderr` empty
+- [x] `GET /health` returns 200 with the expected JSON shape — `{"status":"ok","version":"0.1.0","utcTime":"2026-08-16T09:37:27.8769798Z"}`, exactly three fields
+- [x] Health response contains no secrets, DB status detail, or environment strings — body **and all four response headers** checked
+- [x] `EnableRequestDelegateGenerator=false` inherited from `Directory.Build.props` — proven in two halves: evaluated `false` against the project, **and** shown not to be set locally
+- [x] ADR-001 recorded with the rung reached and **any** friction encountered — **ACCEPTED, rung A**, friction audit on all four triggers
 
 **Evidence:** `p1-02-health-response.txt`, `p1-02-project-file.txt`
 
 **Blocker protocol:** if the Web SDK fails on a C#-assuming target, attempt rung B **once**, record the exact error, log it in ADR-001. **Do not spend more than one session fighting rung A.**
 
+> **Result: rung A confirmed in-repo. ADR-001 ACCEPTED. The project's dominant risk is retired.**
+>
+> **No P1-01 scope violation to record** — checked before any edit, as the card requires. The shell was genuinely still on `Sdk="Microsoft.NET.Sdk"` with no `Program.vb` and no controller, so the conversion was observed happening here.
+>
+> Three changes, nothing else: SDK swapped, `OutputType=Exe` added, two `.vb` files written. `RootNamespace`, `$(MerchNetTfm)` and all three project references untouched. **The finished project file sets exactly three properties** — everything else comes from the Web SDK or `Directory.Build.props`. That brevity *is* the result: a hand-authored VB project needed no compensating property anywhere.
+>
+> Build clean at **0 warnings** twice: the API alone, and all eleven projects with `--no-incremental`. `Merchandising.Tests.Integration` builds against the API now that it is an `Exe`, so P1-19's `WebApplicationFactory` seam is not blocked. The `MerchGuardrails` target still fires inline, unaffected by the SDK swap.
+>
+> **Two risks closed by observation rather than assumption.** A **VB anonymous type** (`VB$AnonymousType_0`) serialised correctly through reflection-based `System.Text.Json` — the required path, since source generation is C#-only. And the Web SDK generated **zero C#** for a VB project: two intermediates in `obj/`, both `.vb`. G-A will not fight the build.
+>
+> **The inheritance box was the one worth getting right.** Restating `EnableRequestDelegateGenerator` in the `.vbproj` would have ticked it while proving the opposite of what it asks. It is deliberately absent, and the only occurrence of the name in the file is a comment saying why.
+>
+> **One build failed, and it was not rung A.** First attempt died on `MSB4025: An XML comment cannot contain '--'` — hyphen rules used as separators in the new file's comment block. It failed at XML parse time, before SDK resolution or compilation, and would have failed identically on the plain SDK. Counting it as friction would have triggered P1-02a against a fallback there is no reason to need, on the strength of a typo. **It is the third occurrence of that defect** (`Directory.Build.props` at P1-01, twice more while fixing it) — the P1-01 warning lived only in the file already bitten, so it did not stop a fresh instance in a new file. The note now sits in `Merchandising.Api.vbproj` too.
+>
+> **Deliberately not created:** `appsettings.json` and `Properties/launchSettings.json`. Config comes from an ACL-protected host location at P1-05 and Kestrel endpoints are P1-09, so `ASPNETCORE_URLS` supplied the address and no development URL entered the repository.
+>
+> **No failing-test-first step, stated rather than skipped quietly.** `/health` carries no business rule, and the API test seam (`WebApplicationFactory`, `InternalsVisibleTo`) is P1-19's deliverable. The proof here is the captured live HTTP call, which is what the card asks for. The two green tests in the run are P1-01's scaffold assertions and are **not** a test of this endpoint.
+
 ---
 
-### ⬜ P1-02a · Rung B insurance spike — conditional, 30 minutes
+### ✅ P1-02a · Rung B insurance spike — **SKIPPED, trigger condition not met**
+
+> **Closed at P1-02, not done — the distinction matters.** This card is conditional, and its condition did not fire. Rung A showed **zero friction** on all four triggers, so the spike was never run and rung B was never attempted.
+>
+> **Its two `Done when` boxes are left unticked on purpose.** They describe outcomes of *running* the spike (`/health` responds under rung B, or the failure mode is recorded). Ticking them would claim a result that does not exist. A conditional card whose condition was not met is closed by the condition, not by evidence.
+>
+> **Friction audit that closed it** — recorded in `evidence/phase-1/p1-02-project-file.txt` §7 and in ADR-001, checked one trigger at a time rather than concluded from the clean build:
+>
+> | Trigger | Result |
+> |---|---|
+> | An SDK target needing a workaround | None. No target overridden, no `Import` added, no property routing around a C#-assuming target |
+> | A warning that had to be suppressed | None. 0 warnings on both builds; no `NoWarn` exists anywhere in the repo |
+> | A property beyond the standard | None. The file sets exactly three: `OutputType`, `RootNamespace`, `TargetFramework` |
+> | Any difference from the P0-07 probe | None attributable to rung A |
+>
+> The `MSB4025` XML-comment failure on P1-02's first build is **not** friction and did not trigger this card: it failed at XML parse time, before SDK resolution, and would have failed identically on the plain SDK. See ADR-001.
+>
+> **Phase 1 gate implication:** the "Partial — descended to rung B" branch does **not** apply. Nothing here needs telling the professor.
+>
+> **If a future SDK update breaks rung A, this card comes back.** Rung B is still the next step and PA-001 grants no C# escape hatch — ADR-000 records rung C as effectively closed.
 
 **Run only if P1-02 showed friction** (a workaround, a suppressed warning, a non-standard property). If rung A built cleanly first try, **skip this** — proving a fallback you have no reason to need is busywork.
 

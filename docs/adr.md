@@ -29,7 +29,8 @@ Every pinned version and irreversible choice for the Merchandising System.
 
 ## ADR-001 · API project SDK — rung A vs rung B
 
-**Status:** PENDING — resolve at task P1-02
+**Status:** ACCEPTED
+**Date:** 2026-08-16
 **Decides:** how `Merchandising.Api.vbproj` is constructed, given that no Visual Basic ASP.NET Core template exists.
 
 **Options.**
@@ -39,11 +40,35 @@ Every pinned version and irreversible choice for the Merchandising System.
 | A | `Sdk="Microsoft.NET.Sdk.Web"`, `OutputType=Exe`, controller-based, `Module Program` / `Sub Main` |
 | B | `Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`, self-hosted Kestrel |
 
-**Decision:** _(record after P1-02 — still PENDING, deliberately)_
+**Decision. RUNG A.** `Merchandising.Api.vbproj` is a hand-authored project on `Sdk="Microsoft.NET.Sdk.Web"` with `OutputType=Exe`, a `Public Module Program` / `Public Sub Main` entry point, and controller-based endpoints. **Rung B was not attempted, because it is only reached when rung A fails, and rung A did not fail.**
 
-**Reasoning:** _(record the exact build behaviour observed, including any warnings suppressed or properties needed beyond the standard template — this determines whether the P1-02a insurance spike runs)_
+**This retires the project's dominant risk.** Spec §6.2 built the whole plan around an unproven assumption — that a Visual Basic project could sit on an SDK whose tooling is written for C#, with no template to fall back on. It can, and now it has, in-repo.
 
-**Evidence:** `evidence/phase-1/p1-02-project-file.txt`
+**Reasoning — the exact behaviour observed at P1-02.**
+
+| Question | Result |
+|---|---|
+| Does the Web SDK accept a hand-authored `.vbproj`? | Yes, unmodified. No target overridden, no `Import` added, no property set to route around a C#-assuming target. |
+| Build result, API project alone (`--no-incremental`) | **0 warnings, 0 errors**, exit 0 |
+| Build result, all eleven projects | **0 warnings, 0 errors**, exit 0. `Merchandising.Tests.Integration` builds against the API as an `Exe` without complaint, so P1-19's `WebApplicationFactory` seam is not blocked. |
+| Was anything suppressed to get 0 warnings? | No. There is no `NoWarn` anywhere in the repository, and `WarningsAsErrors` is in force for `BC42104`, `BC42030`, `BC42016`. |
+| Properties needed beyond the ordinary? | **None.** The file sets exactly three: `OutputType`, `RootNamespace`, `TargetFramework`. |
+| Does `Module Program` / `Sub Main` work as an ASP.NET Core entry point? | Yes. Kestrel started, `stderr` empty. |
+| Do angle-bracket attributes route? | Yes — `<ApiController>` / `<Route("health")>` / `<HttpGet>` produced `{action = "GetHealth", controller = "Health"}`. |
+| Does reflection-based JSON handle VB? | Yes. A **VB anonymous type** (`VB$AnonymousType_0`) serialised correctly via `ObjectResultExecutor` — the required combination, since source generation is C#-only. |
+| Did the SDK generate any C#? | **No.** Zero `.cs`/`.csproj` under the project including `obj/`; two generated intermediates, both `.vb`. Guardrail G-A will not fight the build. |
+
+**The project file does not restate `EnableRequestDelegateGenerator`, `PublishAot` or `PublishTrimmed`** — all three are inherited from `Directory.Build.props`. Proven in two halves: `dotnet msbuild -getProperty:` evaluated `EnableRequestDelegateGenerator=false` against the project, and a text search showed the only occurrence of the name in the `.vbproj` is inside a comment explaining its absence. Restating it locally would have satisfied a naive reading of the acceptance box while proving the opposite of what it asks.
+
+**Friction: NONE.** All four P1-02a triggers checked explicitly — no workaround, no suppressed warning, no non-standard property, and no behavioural difference from the P0-07 pre-flight probe. **P1-02a is therefore skipped**, on a recorded audit rather than on the pre-flight's prediction alone.
+
+**One build did fail, and it is deliberately not counted as friction.** The first attempt died with `MSB4025: An XML comment cannot contain '--'` — a run of hyphens used as a separator inside the new project file's comment block. It failed at XML parse time, before SDK resolution, restore or compilation, and would have failed identically on the plain `Microsoft.NET.Sdk`. It says nothing about rung A. Logging it as friction would have triggered the insurance spike against a fallback there is no reason to need, on the strength of a typo in a comment.
+
+It is worth recording for a different reason: **this is the third occurrence of that same defect.** P1-01 found it in `Directory.Build.props`, where it had broken every MSBuild invocation in the repository and survived the whole of Phase 0 undetected, then reintroduced it twice while fixing it. The warning written at P1-01 lived only in the file that had already been bitten, so it did not prevent a fresh occurrence in a new file. The note is now repeated in `Merchandising.Api.vbproj` itself.
+
+**Rejected: rung B** (`Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`). Not on its merits — it was never tested, and does not need to be. It exists as insurance against rung A failing, and it costs a hand-managed framework reference, a hand-built Kestrel host, and divergence from every piece of ASP.NET Core documentation the team will read. With rung A clean at 0 warnings, taking that on would be pure cost. **If a future SDK update breaks rung A, rung B is still the next step and PA-001 grants no C# escape hatch** — ADR-000 records that rung C is effectively closed.
+
+**Evidence:** `evidence/phase-1/p1-02-project-file.txt` (project file, inheritance proof, build output, zero-C# scan, friction audit), `evidence/phase-1/p1-02-health-response.txt` (Kestrel startup, `GET /health` 200, response and header disclosure check).
 
 ---
 
@@ -65,6 +90,8 @@ What the probe established:
 **Consequence for P1-02a:** on this evidence the insurance spike should be **skipped**, per its own trigger condition. If P1-02 in-repo behaves differently from the probe, *that difference is the friction* and P1-02a triggers on it.
 
 **Evidence:** `evidence/phase-0/p0-07-rung-a-preflight.txt`
+
+> **Outcome, recorded at P1-02 (2026-08-16).** The probe held. In-repo behaviour matched it on every point checked — same 0/0 build, same `200`, same `VB$AnonymousType_0` serialisation path, same zero generated C# — with `Directory.Build.props` and the `MerchGuardrails` target additionally in play and neither changing the outcome. **P1-02a skipped**, on P1-02's own friction audit rather than on this prediction. The probe's value was that it moved the project's dominant risk from "unknown" to "very likely fine" a day before Phase 1 needed the answer; it did not, and could not, resolve the ADR.
 
 ---
 

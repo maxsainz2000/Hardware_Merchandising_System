@@ -1,0 +1,403 @@
+===========================================================================
+P1-02  HAND-AUTHORED VB API ON THE ASP.NET CORE WEB SDK  (RUNG A)
+Part 1 of 2 - the project file, the conversion, and the inheritance proof
+===========================================================================
+
+Captured : 2026-08-16
+Machine  : LAPTOP-3HH6OHHE
+SDK      : 10.0.301
+Location : IN-REPO. src/Merchandising.Api/, under Directory.Build.props,
+           alongside ten sibling projects. This is the real thing, not the
+           P0-07 scratch probe.
+
+  Spec section 6.2 is the reason this card exists and the reason it is
+  scored the way it is:
+
+    "The project must not assume that selecting the standard C# Web API
+     template and changing files is sufficient; the manual project
+     structure, package references, startup code, controller/endpoint
+     code, build, publish, and hosting behavior are explicit
+     proof-of-concept items."
+
+  So the evidence has to show a project file that was WRITTEN, not one
+  that was generated and then edited. Every element below was typed.
+
+###########################################################################
+#  VERDICT: RUNG A CONFIRMED IN-REPO. ADR-001 RESOLVES TO RUNG A.
+#  Build: 0 warnings, 0 errors, all eleven projects.
+#  Rung A friction: NONE. P1-02a is therefore SKIPPED.
+###########################################################################
+
+---------------------------------------------------------------------------
+1  WHAT P1-01 LEFT BEHIND, AND WHAT THIS CARD CHANGED
+---------------------------------------------------------------------------
+
+  P1-01's scope boundary was checked FIRST, before any edit, because the
+  card requires it: "If you arrive at this card and the Web SDK is already
+  set, that is a P1-01 scope violation."
+
+  State on arrival, read from the file at commit 7418db4:
+
+    <Project Sdk="Microsoft.NET.Sdk">          <- plain shell, correct
+      <PropertyGroup>
+        <RootNamespace>Merchandising.Api</RootNamespace>
+        <TargetFramework>$(MerchNetTfm)</TargetFramework>
+      </PropertyGroup>
+      ... three ProjectReference entries ...
+    </Project>
+
+    No Program.vb. No Controllers/. No OutputType.
+
+  NO P1-01 SCOPE VIOLATION TO RECORD. The shell was genuinely left
+  unconverted, so the conversion below is observed happening here, under
+  this card's acceptance checks, which is what makes ADR-001 evidence
+  rather than inference.
+
+  The three changes this card made, and nothing else:
+
+    a) Sdk="Microsoft.NET.Sdk"  ->  Sdk="Microsoft.NET.Sdk.Web"
+    b) added <OutputType>Exe</OutputType>
+    c) added Program.vb and Controllers/HealthController.vb
+
+  RootNamespace, TargetFramework and all three ProjectReference entries are
+  untouched. The TFM is still the $(MerchNetTfm) variable, never a literal.
+
+---------------------------------------------------------------------------
+2  THE PROJECT FILE AS AUTHORED  (comment block elided, see the file)
+---------------------------------------------------------------------------
+
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- 60 lines of comment: why this file is hand authored, what is
+       deliberately absent from it, and the two traps in editing it.
+       Read src/Merchandising.Api/Merchandising.Api.vbproj for the full
+       text. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Merchandising.Api</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+    <ProjectReference Include="..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
+  </ItemGroup>
+
+</Project>
+
+  THREE PROPERTIES AND THREE REFERENCES. That is the whole file. The
+  brevity is the result: everything else an ASP.NET Core project normally
+  carries either comes from the Web SDK or is inherited from
+  Directory.Build.props, and a hand-authored VB project needs no
+  compensating property to make that work.
+
+  NOTE WHAT IS NOT PRESENT:
+
+    - No PackageReference of any kind. ASP.NET Core arrives through the
+      Web SDK's implicit framework reference. The API currently needs zero
+      NuGet packages, so there is nothing here to pin in docs/adr.md yet.
+    - No appsettings.json, no Properties/launchSettings.json. Runtime
+      config comes from an ACL-protected host location at P1-05; Kestrel
+      endpoints and HTTPS are P1-09. No development URL is committed.
+    - No EnableRequestDelegateGenerator / PublishAot / PublishTrimmed.
+      See section 3 - their absence is the point.
+
+---------------------------------------------------------------------------
+3  INHERITANCE PROOF - EnableRequestDelegateGenerator AND FRIENDS
+---------------------------------------------------------------------------
+
+  The Done-when box reads: "EnableRequestDelegateGenerator=false INHERITED
+  from Directory.Build.props". Inherited is the operative word. Restating
+  the property in Merchandising.Api.vbproj would have satisfied a naive
+  reading of that box while proving the opposite of what it asks - only
+  that this file is capable of setting the property itself.
+
+  So it is deliberately NOT set locally, and the proof is done in two
+  halves: evaluate the property against the project, then show the project
+  file does not set it.
+
+  HALF ONE - evaluate the property MSBuild actually resolved:
+
+  $ dotnet msbuild src\Merchandising.Api\Merchandising.Api.vbproj \
+        -getProperty:<name> -nologo
+
+    EnableRequestDelegateGenerator     = false     <- the box
+    PublishAot                         = false
+    PublishTrimmed                     = false
+    OptionStrict                       = On
+    OptionExplicit                     = On
+    OptionCompare                      = Binary
+    OutputType                         = Exe
+    TargetFramework                    = net10.0
+    UsingMicrosoftNETSdkWeb            = true      <- Web SDK confirmed
+
+  HALF TWO - the project file does not set any of them:
+
+  $ Select-String -Path <the .vbproj> -Pattern
+        'EnableRequestDelegateGenerator|PublishAot|PublishTrimmed|OptionStrict'
+
+    line 30: NO EnableRequestDelegateGenerator, PublishAot OR PublishTrimmed.
+
+  ONE match, and it is the sentence inside the comment block explaining
+  why they are absent. Nothing sets them here. The values above therefore
+  came from Directory.Build.props and nowhere else.
+
+  Note that UsingMicrosoftNETSdkWeb=true is read from the resolved SDK,
+  not from the Sdk attribute string. It confirms the Web SDK genuinely
+  loaded, rather than confirming that the file says it should.
+
+  ALSO CONFIRMED BY THE SAME QUERY: TargetFramework resolved to net10.0
+  from the $(MerchNetTfm) variable, and OptionStrict/Explicit/Compare came
+  through as On/On/Binary. The P1-01 rule that no .vbproj may hard-code a
+  TFM still holds after the conversion.
+
+---------------------------------------------------------------------------
+4  BUILD - THE API PROJECT ALONE
+---------------------------------------------------------------------------
+
+  $ dotnet build src\Merchandising.Api\Merchandising.Api.vbproj \
+        -v minimal --no-incremental
+
+    Determining projects to restore...
+    Restored ...\Merchandising.Api.vbproj (in 283 ms).
+    3 of 4 projects are up-to-date for restore.
+    Merchandising.Domain -> ...\Merchandising.Domain.dll
+    Merchandising.Contracts -> ...\Merchandising.Contracts.dll
+    Merchandising.Infrastructure -> ...\Merchandising.Infrastructure.dll
+    Merchandising.Api -> ...\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+
+    All guardrails passed.
+
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+    Time Elapsed 00:00:18.17
+    EXIT CODE: 0
+
+  --no-incremental was used so this is a genuine full compile of the
+  converted project, not a skipped up-to-date check.
+
+  ZERO warnings. No NU* restore warning, no MSB* target warning, no BC*
+  compiler warning. Nothing was suppressed to achieve it: there is no
+  NoWarn anywhere in the project file or in Directory.Build.props, and
+  WarningsAsErrors is in force for BC42104, BC42030 and BC42016.
+
+  The four guardrail lines in the middle of the build output are the
+  MerchGuardrails target in Directory.Build.targets running inline. It
+  keys on the project NAME, so it has been firing since P1-01; it is
+  recorded here to show the SDK swap did not disturb it.
+
+---------------------------------------------------------------------------
+5  BUILD - THE WHOLE SOLUTION, ALL ELEVEN PROJECTS
+---------------------------------------------------------------------------
+
+  A converted API is only useful if the other ten projects still build
+  against it. Merchandising.Tests.Integration references the API, and that
+  reference is now to an Exe rather than a library - the one place this
+  conversion could plausibly have broken something downstream.
+
+  $ dotnet build -v minimal --no-incremental
+
+    Merchandising.Domain            -> ...\net10.0\Merchandising.Domain.dll
+    Merchandising.Contracts         -> ...\net10.0\Merchandising.Contracts.dll
+    Merchandising.ClientCommon      -> ...\net10.0-windows\Merchandising.ClientCommon.dll
+    Merchandising.Infrastructure    -> ...\net10.0\Merchandising.Infrastructure.dll
+    Merchandising.Tests.Unit        -> ...\net10.0\Merchandising.Tests.Unit.dll
+    Merchandising.Maintenance       -> ...\net10.0\Merchandising.Maintenance.dll
+    Merchandising.POS               -> ...\net10.0-windows\Merchandising.POS.dll
+    Merchandising.Inventory         -> ...\net10.0-windows\Merchandising.Inventory.dll
+    Merchandising.Procurement       -> ...\net10.0-windows\Merchandising.Procurement.dll
+    Merchandising.Api               -> ...\net10.0\Merchandising.Api.dll
+    G-A/G-B/G-C/G-D  pass ... All guardrails passed.
+    Merchandising.Tests.Integration -> ...\net10.0\Merchandising.Tests.Integration.dll
+
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+    Time Elapsed 00:00:39.58
+    EXIT CODE: 0
+
+  ELEVEN projects, 0 warnings. Merchandising.Tests.Integration built last,
+  after the API, with no complaint about referencing an Exe. The
+  WebApplicationFactory seam P1-19 needs is therefore not blocked by
+  anything this card did.
+
+---------------------------------------------------------------------------
+6  ZERO C# - INCLUDING GENERATED CODE
+---------------------------------------------------------------------------
+
+  The Done-when box says "no C# files anywhere in the project". The
+  interesting half of that is obj/, not the authored source: an SDK that
+  emitted C# intermediates for a VB project would put guardrail G-A in
+  permanent conflict with the build. bin/ and obj/ were therefore INCLUDED
+  in this scan, unlike in G-A's own sweep.
+
+  $ Get-ChildItem -Path src\Merchandising.Api -Recurse -File \
+        -Include *.cs,*.csproj,*.cshtml,*.razor
+
+    count: 0
+
+  Intermediates the Web SDK generated into obj/, by extension:
+
+    .cache         9      .dll           3      .props         1
+    .json          6      .vb            2      .targets       1
+    .editorconfig  1      .exe           1      .txt           1
+    .pdb           1      .Up2Date       1      .xml           1
+
+  The two .vb files:
+
+    .NETCoreApp,Version=v10.0.AssemblyAttributes.vb
+    Merchandising.Api.AssemblyInfo.vb
+
+  TWO GENERATED FILES, BOTH VISUAL BASIC. ZERO C#. The Web SDK generates
+  its assembly-attribute intermediates in the project's own language, so
+  the ADR-000 language rule holds all the way down to code nobody wrote.
+  This was a genuine open risk against rung A and it is now closed
+  in-repo, matching the P0-07 probe result.
+
+  Repository-wide, including bin/ and obj/ under every project:
+
+    C# / Razor files under src\ : 0
+
+---------------------------------------------------------------------------
+7  FRICTION AUDIT - DOES P1-02a RUN?
+---------------------------------------------------------------------------
+
+  P1-02a triggers only on rung A friction: "a workaround, a suppressed
+  warning, a non-standard property". The card adds a second trigger for
+  this specific card: "If P1-02 in-repo behaves differently from the
+  probe, that difference is itself the friction."
+
+  a) An SDK target needing a workaround      : NONE. No target overridden,
+     no Import added, no property set to route around a C#-assuming
+     target. The Web SDK consumed an unmodified .vbproj.
+
+  b) A warning that had to be suppressed     : NONE. 0 warnings on both
+     the project build and the eleven-project solution build. No NoWarn
+     exists anywhere in the repository.
+
+  c) A property beyond the standard template : NONE. The project file sets
+     exactly three properties - OutputType, RootNamespace, TargetFramework
+     - all of which any project of this kind sets. The candidate for a
+     workaround, EnableRequestDelegateGenerator=false, is inherited rather
+     than set here, and P0-07 already established by removing it that it
+     is precaution and not necessity (the Request Delegate Generator
+     applies to minimal APIs; this design uses controllers).
+
+  d) Any difference from the P0-07 probe     : NONE THAT IS ATTRIBUTABLE
+     TO RUNG A. Compared line by line: same SDK, same OutputType, same
+     Module Program / Sub Main shape, same controller shape, same 0/0
+     build result, same 200 response, same VB$AnonymousType_0 serialisation
+     path (see part 2, section 4). The in-repo build additionally passes
+     through Directory.Build.props and the MerchGuardrails target, and
+     neither changed the outcome.
+
+  CONCLUSION: ZERO RUNG A FRICTION ON ALL FOUR COUNTS.
+  => P1-02a IS SKIPPED, per its own trigger condition and the P0-07
+     pre-flight prediction. Rung B was NOT attempted, because it is only
+     reached when rung A fails, and rung A did not fail.
+
+---------------------------------------------------------------------------
+8  ONE THING DID GO WRONG - AND IT WAS NOT RUNG A
+---------------------------------------------------------------------------
+
+  THE FIRST BUILD FAILED. Recording it because "0 warnings first try" is
+  only a useful claim if the failures are recorded too, and because the
+  failure is a repeat of a defect this repository has already been bitten
+  by twice.
+
+  $ dotnet build src\Merchandising.Api\Merchandising.Api.vbproj -v minimal
+
+    Merchandising.Api.vbproj(26,5): error MSB4025: The project file could
+    not be loaded. An XML comment cannot contain '--', and '-' cannot be
+    the last character. Line 26, position 5.
+    EXIT CODE: 1
+
+  CAUSE. The comment block used rules of hyphens as section separators.
+  A run of hyphens is illegal inside an XML comment, so MSBuild rejected
+  the file before the Visual Basic compiler was ever invoked.
+
+  WHY IT IS NOT RUNG A FRICTION, AND MUST NOT BE LOGGED AS SUCH. It has
+  nothing to do with the Web SDK, ASP.NET Core, or Visual Basic. The same
+  file would have failed identically on Sdk="Microsoft.NET.Sdk", and it
+  failed at XML parse time - before SDK resolution, before restore, before
+  compilation. Counting it as friction would have triggered the P1-02a
+  insurance spike against a fallback there is no reason to need, on the
+  strength of a typo in a comment. ADR-001 records it in the same terms.
+
+  WHY IT MATTERS ANYWAY. This is the THIRD time this exact defect has hit
+  the repository. P1-01 found it in Directory.Build.props, where it had
+  made every MSBuild invocation fail and had survived the whole of Phase 0
+  undetected, then reintroduced it twice while fixing it. The lesson from
+  P1-01 was written down in that file's own comment - and it still did not
+  prevent a fresh occurrence in a new file, because the warning lived only
+  where the bug had previously been.
+
+  FIX. Separators changed to equals signs, and the reason recorded in the
+  project file itself so the next person to edit a comment block there
+  reads it before repeating it a fourth time.
+
+  Corrected file parsed and built on the next attempt: 0 warnings,
+  0 errors, EXIT 0 (section 4).
+
+---------------------------------------------------------------------------
+9  VERIFICATION PASS
+---------------------------------------------------------------------------
+
+  $ pwsh ./scripts/check-no-csharp.ps1
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+    All guardrails passed.
+    EXIT CODE: 0
+
+  $ pwsh ./scripts/run-tests.ps1
+    === Guardrails ===        all four pass
+    === Build ===             11 projects, 0 Warning(s), 0 Error(s)
+    === Unit tests ===        Passed! Failed: 0, Passed: 1, Total: 1  (48 ms)
+    === Integration tests === Passed! Failed: 0, Passed: 1, Total: 1  (148 ms)
+    All checks passed.
+    EXIT CODE: 0
+
+  The two passing tests are P1-01's ScaffoldReferenceTests, which assert
+  that declared project references resolve to loadable assemblies. They
+  are NOT a test of the health endpoint and must not be read as one - the
+  endpoint's proof is the live HTTP call in part 2. The API-side test seam
+  (WebApplicationFactory, InternalsVisibleTo) is P1-19's deliverable.
+
+---------------------------------------------------------------------------
+10  WHAT THIS SETTLES AND WHAT IT DOES NOT
+---------------------------------------------------------------------------
+
+SETTLES:
+  - ADR-001 resolves to RUNG A, on in-repo evidence rather than the P0-07
+    probe. PENDING -> ACCEPTED.
+  - A hand-authored VB project on Microsoft.NET.Sdk.Web builds clean
+    inside this solution, under Directory.Build.props, with the guardrail
+    target active.
+  - The Web SDK generates no C# for a VB project. G-A will not fight the
+    build.
+  - EnableRequestDelegateGenerator, PublishAot and PublishTrimmed are
+    inherited, not restated.
+  - P1-02a is skipped on a recorded friction audit, not on assumption.
+
+DOES NOT SETTLE - each has its own card and its own evidence:
+  - P1-03 / ADR-010. Publishing win-x64 both ways and running the output
+    from a clean folder. The probe did this outside the repo; the real
+    solution has not been published.
+  - P1-09. HTTPS, certificates, Kestrel endpoint configuration. This card
+    served plain HTTP on loopback on the dev machine only.
+  - P1-08. Authentication. /health is the one endpoint that never
+    requires it (spec section 13).
+  - P1-05 / P1-04. Nothing here touches MariaDB or configuration loading.
+  - P1-16. Windows Service hosting, reboot recovery, Event Log.
+  - P1-19. The API test seam. There is no automated test of /health yet.
+
+--- end of P1-02 part 1: project file ---

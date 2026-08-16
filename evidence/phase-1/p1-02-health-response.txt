@@ -1,0 +1,272 @@
+===========================================================================
+P1-02  HAND-AUTHORED VB API ON THE ASP.NET CORE WEB SDK  (RUNG A)
+Part 2 of 2 - Kestrel starts, GET /health responds, and what it withholds
+===========================================================================
+
+Captured : 2026-08-16
+Machine  : LAPTOP-3HH6OHHE
+Address  : http://127.0.0.1:5199  (loopback, dev machine, plain HTTP)
+           HTTPS is P1-09. This is not a security result and does not
+           pretend to be one.
+
+  Part 1 (p1-02-project-file.txt) covers the project file, the build, the
+  inheritance proof, and the friction audit. This part covers run-time
+  behaviour: that a Visual Basic Module Program / Sub Main actually starts
+  Kestrel, that controller routing reaches a VB class, and that the
+  response body contains the three fields it should and nothing else.
+
+###########################################################################
+#  VERDICT: GET /health -> 200, correct JSON shape, no leaked detail.
+#  Serialised through the reflection-based path from a VB anonymous type.
+###########################################################################
+
+---------------------------------------------------------------------------
+1  THE ENTRY POINT AS AUTHORED - Program.vb
+---------------------------------------------------------------------------
+
+  Public Module Program
+
+      Public Sub Main(args As String())
+
+          Dim builder = WebApplication.CreateBuilder(args)
+
+          builder.Services.AddControllers()
+
+          Dim app = builder.Build()
+
+          app.MapControllers()
+
+          app.Run()
+
+      End Sub
+
+  End Module
+
+  MODULE PROGRAM / SUB MAIN, NOT TOP LEVEL STATEMENTS. Top level
+  statements are a C# language feature and do not exist in Visual Basic;
+  `Dim builder = WebApplication.CreateBuilder(args)` written at file scope
+  is the single most likely way to drift into C#-shaped code in this
+  project (CLAUDE.md section 3). It is written here as an ordinary Sub
+  body inside a Module, which is the whole point of the rung A question.
+
+  Public, not Friend, deliberately: P1-19 wires WebApplicationFactory,
+  which needs the entry point reachable from the integration test
+  assembly. The InternalsVisibleTo half of that seam is P1-19's work and
+  is NOT done here.
+
+  Sub, not Async Function ... As Task: app.Run() is the blocking overload,
+  so there is nothing to await.
+
+---------------------------------------------------------------------------
+2  THE CONTROLLER AS AUTHORED - Controllers/HealthController.vb
+---------------------------------------------------------------------------
+
+  <ApiController>
+  <Route("health")>
+  Public Class HealthController
+      Inherits ControllerBase
+
+      Private Shared ReadOnly ProductVersion As String = ResolveProductVersion()
+
+      <HttpGet>
+      Public Function GetHealth() As IActionResult
+
+          Dim payload = New With {
+              .status = "ok",
+              .version = ProductVersion,
+              .utcTime = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
+          }
+
+          Return Ok(payload)
+
+      End Function
+
+      ' ResolveProductVersion() reads AssemblyInformationalVersionAttribute
+      ' and truncates at '+'. See section 5.
+
+  End Class
+
+  ATTRIBUTES USE ANGLE BRACKETS, each on its own line above the member, per
+  CLAUDE.md section 3. Controller-based, not a minimal-API lambda.
+
+  ROUTED AT /health, NOT /api/v1/health. Spec section 13 versions the API
+  under /api/v1 but lists GET /health in the Operations row outside that
+  prefix, as the one endpoint that does not require authentication. The
+  route follows the spec, not the general rule.
+
+---------------------------------------------------------------------------
+3  KESTREL STARTS FROM A VISUAL BASIC ENTRY POINT
+---------------------------------------------------------------------------
+
+  $ $env:ASPNETCORE_URLS = 'http://127.0.0.1:5199'
+  $ dotnet run --project src\Merchandising.Api\Merchandising.Api.vbproj --no-build
+
+  info: Microsoft.Hosting.Lifetime[14]
+        Now listening on: http://127.0.0.1:5199
+  info: Microsoft.Hosting.Lifetime[0]
+        Application started. Press Ctrl+C to shut down.
+  info: Microsoft.Hosting.Lifetime[0]
+        Hosting environment: Production
+  info: Microsoft.Hosting.Lifetime[0]
+        Content root path: C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api
+
+  stderr: EMPTY.
+
+  The address is supplied by ASPNETCORE_URLS rather than by a committed
+  Properties/launchSettings.json, so no development URL enters the
+  repository. Kestrel endpoint configuration proper belongs to P1-09.
+
+---------------------------------------------------------------------------
+4  GET /health
+---------------------------------------------------------------------------
+
+  status code : 200 OK
+  content-type: application/json; charset=utf-8
+  body        : {"status":"ok","version":"0.1.0","utcTime":"2026-08-16T09:37:27.8769798Z"}
+
+  Server-side view of the same request:
+
+  info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+        Request starting HTTP/1.1 GET http://127.0.0.1:5199/health
+  info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+        Executing endpoint
+        'Merchandising.Api.Controllers.HealthController.GetHealth (Merchandising.Api)'
+  info: Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker[102]
+        Route matched with {action = "GetHealth", controller = "Health"}.
+        Executing controller action with signature
+        Microsoft.AspNetCore.Mvc.IActionResult GetHealth() on controller
+        Merchandising.Api.Controllers.HealthController (Merchandising.Api).
+  info: Microsoft.AspNetCore.Mvc.Infrastructure.ObjectResultExecutor[1]
+        Executing OkObjectResult, writing value of type
+        'VB$AnonymousType_0`3[[System.String, System.Private.CoreLib, ...],
+                              [System.String, ...],[System.String, ...]]'
+  info: Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker[105]
+        Executed action ...GetHealth (Merchandising.Api) in 65.6996ms
+  info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+        Request finished HTTP/1.1 GET /health - 200 -
+        application/json;+charset=utf-8 172.9243ms
+
+  THE LOAD-BEARING LINE IS THE ObjectResultExecutor ONE. A VISUAL BASIC
+  ANONYMOUS TYPE (VB$AnonymousType_0) was serialised to correct JSON by
+  the reflection-based System.Text.Json path. That is exactly the
+  combination the language rule forces on this project - System.Text.Json
+  source generation is C#-only (CLAUDE.md section 3) - and it is now
+  demonstrated in-repo rather than assumed. It matches the P0-07 probe
+  result exactly.
+
+  Attribute routing also confirmed working from VB: the <Route("health")>
+  and <HttpGet> angle-bracket attributes produced
+  {action = "GetHealth", controller = "Health"}.
+
+---------------------------------------------------------------------------
+5  THE THREE FIELDS, AND WHERE version COMES FROM
+---------------------------------------------------------------------------
+
+  Parsed from the response body:
+
+    status     = ok
+    version    = 0.1.0
+    utcTime    = 2026-08-16T09:37:27.8769798Z
+    field count: 3
+
+  EXACTLY THREE FIELDS. The card specifies {status, version, utcTime} and
+  the response carries those three and nothing else.
+
+  (When the body is piped through PowerShell's ConvertFrom-Json the
+  utcTime value is displayed as a coerced local DateTime, "8/16/2026
+  9:37:27 AM". That is a display artefact of the parser, not the wire
+  format. The raw body above is the wire format: ISO 8601, round-trip
+  format specifier "o", CultureInfo.InvariantCulture, trailing Z.)
+
+  version IS READ FROM THE ASSEMBLY, NOT HARD CODED. Directory.Build.props
+  owns <Version>0.1.0</Version>; a literal in the controller would drift
+  from it silently. HealthController.ResolveProductVersion() reads
+  AssemblyInformationalVersionAttribute once at type initialisation and
+  TRUNCATES ANYTHING FROM '+' ONWARDS.
+
+  That truncation is a deliberate safeguard, not tidying. The .NET SDK
+  appends a source revision identifier after '+' when one is available
+  (SourceLink, or an explicitly set SourceRevisionId). None is configured
+  today, so the value is a clean "0.1.0" - but adding SourceLink later is
+  an ordinary thing to do, and it would otherwise start publishing a
+  commit hash from an unauthenticated endpoint that anyone who can reach
+  the port may read. The strip means that cannot happen by accident.
+
+---------------------------------------------------------------------------
+6  WHAT THE RESPONSE WITHHOLDS  - the Done-when box that matters most
+---------------------------------------------------------------------------
+
+  "Health response contains no secrets, DB status detail, or environment
+  strings." For an endpoint that is unauthenticated by design, what it
+  omits is more important than what it returns.
+
+  BODY: three fields, listed above. No database status, reachability, or
+  connection detail; no configuration values; no hosting environment name;
+  no machine, user or account name; no file path; no exception, message or
+  stack trace. There is no code path in HealthController that can emit any
+  of them - it has no dependencies injected at all, so it has nothing to
+  report about.
+
+  ALL RESPONSE HEADERS, verbatim - checked because a header leaks just as
+  effectively as a body field:
+
+    Date: Sun, 16 Aug 2026 09:37:27 GMT
+    Server: Kestrel
+    Transfer-Encoding: chunked
+    Content-Type: application/json; charset=utf-8
+
+  Four headers, all protocol-level. "Server: Kestrel" names the web server
+  and nothing more - no version, no OS, no framework build. No
+  X-Powered-By, no ASP.NET version header, no correlation of any kind yet
+  (the correlation ID design is P1-08 onwards).
+
+  NOTE THE ASYMMETRY WITH THE SERVER LOG. The startup log in section 3
+  prints "Hosting environment: Production" and the full content root path.
+  Those are host-side diagnostics on the operator's console - they are NOT
+  in the response and never reach a caller. Recorded explicitly so a later
+  reader does not mistake the log excerpt for endpoint output.
+
+  FORWARD CONSTRAINT, written into the controller's own XML doc comment so
+  it is read by whoever edits it next: if a later task needs a deeper
+  readiness check - database reachable, migrations current, disk space -
+  it belongs behind authorization on a separate endpoint. It must not be
+  added to this payload.
+
+---------------------------------------------------------------------------
+7  SHUTDOWN
+---------------------------------------------------------------------------
+
+  Process stopped after the call. Verified rather than assumed, because a
+  stray listener on 5199 would quietly poison every later test run:
+
+    Merchandising.Api processes running : none
+    Port 5199 listening                 : no
+
+---------------------------------------------------------------------------
+8  DONE-WHEN BOXES, MAPPED TO EVIDENCE
+---------------------------------------------------------------------------
+
+  [x] .vbproj uses the Web SDK; no C# files anywhere in the project
+          -> part 1 sections 2, 3 (UsingMicrosoftNETSdkWeb=true), 6 (0 C#
+             files including obj/, 2 generated .vb files)
+
+  [x] dotnet run starts Kestrel
+          -> section 3 above, "Now listening on: http://127.0.0.1:5199"
+
+  [x] GET /health returns 200 with the expected JSON shape
+          -> sections 4 and 5, {status, version, utcTime}, 3 fields
+
+  [x] Health response contains no secrets, DB status detail, or
+      environment strings
+          -> section 6, body and all four headers
+
+  [x] EnableRequestDelegateGenerator=false inherited from
+      Directory.Build.props
+          -> part 1 section 3, both halves: evaluated false, not set locally
+
+  [x] ADR-001 recorded with the rung reached and any friction encountered
+          -> docs/adr.md ADR-001, ACCEPTED, rung A; friction audit in
+             part 1 section 7; the one build failure and why it is not
+             rung A friction in part 1 section 8
+
+--- end of P1-02 part 2: health response ---
