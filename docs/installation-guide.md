@@ -77,9 +77,63 @@ These sections are owned by later tasks and are deliberately absent rather than 
 | Section | Owed by |
 |---|---|
 | MariaDB accounts, grants, and `sql_mode` hardening | P1-04 |
-| Connection configuration file location and ACL | P1-05 |
 | Certificate installation and client trust procedure | P1-09 |
 | Windows Service registration and recovery settings | P1-16 |
 | Backup schedule, retention, and off-host destination | P1-17 |
 | Restore procedure and maintenance mode | P1-18 |
 | Client prerequisites (.NET 10 Desktop Runtime) and client install | Phase 6 |
+
+---
+
+## 3. Database connection configuration file (P1-05)
+
+The API's database credentials live in a single JSON file **on the host only**, outside the
+repository and outside the published binaries. `Merchandising.Infrastructure` reads it at
+startup through `DatabaseOptionsLoader`; nothing about it is ever committed (guardrail G-C).
+
+**Path:** `C:\ProgramData\MerchandisingSystem\config\database.json`
+
+`%ProgramData%` was chosen because it is machine-wide (not tied to a user profile that may not
+exist yet on a fresh install) and is the conventional location for service configuration on
+Windows. `DatabaseOptionsLoader.DefaultConfigPath` resolves it via
+`Environment.SpecialFolder.CommonApplicationData`, so it does not need to be hard-coded twice.
+
+**Contents:**
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "database": "merchandising",
+  "userId": "merch_api",
+  "password": "<the merch_api password generated at P1-04>"
+}
+```
+
+Only `host = 127.0.0.1` is correct — `bind-address` is loopback-only (P0-04), and `merch_api`
+is scoped `@'localhost'` (P1-04).
+
+**Required ACL, applied once per host:**
+
+```powershell
+$dir = "C:\ProgramData\MerchandisingSystem\config"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$acl = Get-Acl $dir
+$acl.SetAccessRuleProtection($true, $false)   # disable inheritance, drop inherited rules
+$acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) } | Out-Null
+foreach ($principal in "BUILTIN\Administrators", "NT AUTHORITY\SYSTEM") {
+    $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        $principal, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"))
+}
+# Also grant FullControl to whichever account will run the API (a named user during
+# development; the service account once P1-16 registers the Windows Service).
+Set-Acl -Path $dir -AclObject $acl
+```
+
+The directory must **not** grant `BUILTIN\Users` or `Everyone` — verify with `icacls` after
+applying. This is the only place the `merch_api` password exists outside the DBA's own record
+of it; treat the file the same way as the MariaDB root password.
+
+**Verification:** `evidence/phase-1/p1-05-connection-test.log` records a live connection
+opened through this exact file, with `STRICT_TRANS_TABLES` and `READ COMMITTED` both proven on
+the session.

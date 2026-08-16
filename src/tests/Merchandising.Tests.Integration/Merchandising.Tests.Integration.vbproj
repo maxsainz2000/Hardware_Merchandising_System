@@ -38,6 +38,8 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.0.2" />
+    <!-- Same pin as Merchandising.Infrastructure - ADR-002, task P1-05. -->
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
   </ItemGroup>
 
   <ItemGroup>

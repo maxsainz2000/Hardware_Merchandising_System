@@ -551,7 +551,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-05 · Connection layer using MySqlConnector
+### ✅ P1-05 · Connection layer using MySqlConnector
 
 **Spec:** §6.3 · **Closes:** G-04 · **Decides:** ADR-002
 
@@ -561,15 +561,24 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] API connects to the pinned MariaDB
-- [ ] Connection string appears in **no** committed file (G-C passes)
-- [ ] Connection string appears in **no** client project
-- [ ] MySqlConnector version pinned in ADR-002 — **the only row still PENDING in that ADR**
-- [ ] Config file location documented for the installation guide
-- [ ] **Connection factory sets `sql_mode` to include `STRICT_TRANS_TABLES` on every connection** — belt and braces with the `my.ini` change at P1-04, so a XAMPP reinstall cannot silently revert it (ADR-003.2)
-- [ ] Connection sets isolation level explicitly — the server default is `REPEATABLE-READ`, but ADR-006 requires `READ COMMITTED`. On 10.4 the variable is **`tx_isolation`**; `transaction_isolation` does not exist and raises `ERROR 1193`.
+- [x] API connects to the pinned MariaDB — proven live via `Merchandising.Tests.Integration/ConnectionFactoryTests.vb`, `merch_api` account
+- [x] Connection string appears in **no** committed file (G-C passes) — `git grep` for the password matched nothing; `check-no-csharp.ps1` clean
+- [x] Connection string appears in **no** client project — unchanged, still enforced by G-B; `Infrastructure` and `MySqlConnector` referenced nowhere under `ClientCommon`/`Procurement`/`Inventory`/`POS`
+- [x] MySqlConnector version pinned in ADR-002 — `2.6.2`, chosen with Max 2026-08-16; ADR-002 now ACCEPTED
+- [x] Config file location documented for the installation guide — `docs/installation-guide.md` §3
+- [x] **Connection factory sets `sql_mode` to include `STRICT_TRANS_TABLES` on every connection** — belt and braces with the `my.ini` change at P1-04, so a XAMPP reinstall cannot silently revert it (ADR-003.2) — proven live
+- [x] Connection sets isolation level explicitly — the server default is `REPEATABLE-READ`, but ADR-006 requires `READ COMMITTED`. On 10.4 the variable is **`tx_isolation`**; `transaction_isolation` does not exist and raises `ERROR 1193`. — proven live, exactly `READ-COMMITTED`
 
 **Evidence:** `p1-05-connection-test.log`
+
+> **Result.** `DatabaseOptions.vb` (plain options POCO), `DatabaseOptionsLoader.vb` (reads/parses
+> the host JSON file, throws loudly if it's missing rather than defaulting), and
+> `ConnectionFactory.vb` (opens a `MySqlConnection` via `MySqlConnectionStringBuilder`, then
+> sets both session variables before handing the connection back). Config lives at
+> `C:\ProgramData\MerchandisingSystem\config\database.json`, ACL restricted to
+> Administrators + SYSTEM + the account running the API — `BUILTIN\Users` confirmed absent.
+> Full build 0 warnings; `run-tests.ps1` green end to end (guardrails, unit, integration).
+> See ADR-002's Result note for the exact `SET SESSION` statements used.
 
 ---
 

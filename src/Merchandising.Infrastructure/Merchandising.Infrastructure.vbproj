@@ -22,4 +22,14 @@
     <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      MariaDB's own documentation recommends MySqlConnector for MariaDB
+      Server (spec section 6.3). Version pinned in docs/adr.md ADR-002 -
+      task P1-05. Do not bump without updating that ADR entry first
+      (CLAUDE.md section 6).
+    -->
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,123 @@
+P1-05 · Connection layer using MySqlConnector — evidence
+Captured 2026-08-16 against the live host MariaDB (10.4.32-MariaDB, C:\xampp\mysql),
+using the merch_api account created at P1-04.
+
+=== MySqlConnector version pinned ===
+
+src/Merchandising.Infrastructure/Merchandising.Infrastructure.vbproj:
+  <PackageReference Include="MySqlConnector" Version="2.6.2" />
+
+Chosen with Max 2026-08-16: latest stable on NuGet at the time, no preview/RC. Recorded in
+docs/adr.md ADR-002, which is now ACCEPTED (previously PENDING on exactly this row).
+
+Same pin repeated in src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj,
+which needs MySqlConnection directly to assert session state in the test below.
+
+=== Config file location and ACL ===
+
+C:\ProgramData\MerchandisingSystem\config\database.json — outside the repository and outside
+the published binaries, per plan.md P1-05 and CLAUDE.md section 4.
+
+$ icacls "C:\ProgramData\MerchandisingSystem\config"
+C:\ProgramData\MerchandisingSystem\config NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                          BUILTIN\Administrators:(OI)(CI)(F)
+                                          LAPTOP-3HH6OHHE\Admin:(OI)(CI)(F)
+Successfully processed 1 files; Failed processing 0 files
+
+Inheritance disabled ($acl.SetAccessRuleProtection($true, $false)); every inherited rule
+removed before the three explicit ones above were added. No BUILTIN\Users, no Everyone, no
+Authenticated Users entry. Documented for the installation guide in
+docs/installation-guide.md ("Connection configuration file location and ACL" row).
+
+Contents (password redacted here; the real file holds the merch_api password generated and
+handed to Max at P1-04, never committed):
+  {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "merchandising",
+    "userId": "merch_api",
+    "password": "<redacted>"
+  }
+
+=== Guardrail G-C: connection string in no committed file ===
+
+$ git grep -n "<the merch_api password>" -- .
+(no output, exit code 1 — not found anywhere in the working tree)
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Connection factory build ===
+
+$ dotnet build src/Merchandising.Infrastructure/Merchandising.Infrastructure.vbproj
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Live connection test (Merchandising.Tests.Integration/ConnectionFactoryTests.vb) ===
+
+Test opens a real connection via ConnectionFactory.CreateOpenConnectionAsync() using
+DatabaseOptionsLoader.Load() (default path = the ACL-protected file above), then queries
+@@SESSION.sql_mode and @@SESSION.tx_isolation on that same connection.
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "ConnectionFactoryTests" -v normal
+
+  Passed OpenedConnection_HasStrictModeAndReadCommittedIsolation [394 ms]
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+
+Assertions made inside the test:
+  - connection.State = Open
+  - @@SESSION.sql_mode contains "STRICT_TRANS_TABLES"
+      (appended via `SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',STRICT_TRANS_TABLES')`
+      on every connection the factory opens — belt-and-braces with the P1-04 my.ini change,
+      so a XAMPP reinstall or a reverted my.ini cannot silently bring back the truncation
+      behaviour demonstrated at P0-07/ADR-003.2)
+  - @@SESSION.tx_isolation = "READ-COMMITTED" exactly
+      (`SET SESSION tx_isolation = 'READ-COMMITTED'` — the 10.4 variable name; the MySQL 8 /
+      MariaDB 11 name `transaction_isolation` does not exist here and raises ERROR 1193,
+      confirmed not used anywhere in this code, per CLAUDE.md section 6.2)
+
+=== Full repo verification (pwsh ./scripts/run-tests.ps1) ===
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:     2, Skipped:     0, Total:     2
+
+All checks passed.
+
+(The second integration test, ScaffoldReferenceTests.ReferencedProjectAssembliesLoad, is
+P1-01's pre-existing assembly-load check and is unrelated to this card; included here only
+because both tests share the assembly.)
+
+=== Files delivered ===
+
+src/Merchandising.Infrastructure/Data/DatabaseOptions.vb        — plain options POCO
+src/Merchandising.Infrastructure/Data/DatabaseOptionsLoader.vb  — reads + parses the host config file
+src/Merchandising.Infrastructure/Data/ConnectionFactory.vb      — opens + configures MySqlConnector connections
+src/tests/Merchandising.Tests.Integration/ConnectionFactoryTests.vb — this card's live-server proof
+
+Neither Merchandising.ClientCommon nor any of the three WPF client projects reference
+Merchandising.Infrastructure or MySqlConnector — unchanged by this card, still enforced by G-B.

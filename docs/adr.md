@@ -97,7 +97,7 @@ What the probe established:
 
 ## ADR-002 · MariaDB and .NET connector versions
 
-**Status:** PENDING — **one row only.** Every row below is resolved except the MySqlConnector package version, which legitimately belongs to P1-05. Do not read this PENDING as "versions unknown"; read it as "the connector is not chosen yet."
+**Status:** ACCEPTED — every row resolved at P1-05.
 **Decides:** the exact database and data-access versions the whole project is built and tested against. Closes gap G-04.
 
 | Item | Value | Source |
@@ -111,7 +111,7 @@ What the probe established:
 | `bind-address` | `127.0.0.1` (loopback) — previously unset, server listened on wildcard `::`; changed and restart-verified | P0-04 |
 | Character set / collation / engine | `utf8mb4` / `utf8mb4_unicode_ci` / InnoDB — **see ADR-003, which is ACCEPTED and carries the measured 10.4 constraints** | P0-07 |
 | `sql_mode` as shipped | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — **not strict**, must be corrected. See ADR-003.2 | P0-07 |
-| .NET connector package | MySqlConnector — **← the only unresolved row in this ADR** | P1-05 |
+| .NET connector package | `MySqlConnector` `2.6.2` — latest stable on NuGet 2026-08-16, chosen with Max, no preview/RC | P1-05 |
 | Test framework package | `MSTest` `4.0.2` — **pinned in ADR-009, which is ACCEPTED.** Recorded here so `CLAUDE.md` §6 ("if a version is not in `docs/adr.md`, it must not appear in a `.vbproj`") is satisfied without a hunt | P1-01 |
 | .NET SDK version (`dotnet --info`) | `10.0.301` (commit `96856fd726`) | P0-01 |
 | .NET runtimes installed | `Microsoft.AspNetCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.NETCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.WindowsDesktop.App` 8.0.28 / 9.0.17 / **10.0.9** | P0-01 |
@@ -121,6 +121,18 @@ What the probe established:
 **Reasoning.** MariaDB's own documentation recommends MySqlConnector for MariaDB Server. EF Core is deliberately **not** an MVP dependency — the transaction design uses explicit provider transactions and parameterized ADO.NET, so no unverified EF Core + MariaDB provider combination sits under the correctness guarantees. Closes gap G-05.
 
 **Rejected:** MySql.Data (Oracle connector), EF Core with Pomelo or the Oracle provider.
+
+> **Result, P1-05.** `MySqlConnector 2.6.2` pinned in both `Merchandising.Infrastructure.vbproj`
+> and `Merchandising.Tests.Integration.vbproj`. `ConnectionFactory` opens every connection
+> through `MySqlConnectionStringBuilder` and, on every connection, issues
+> `SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',STRICT_TRANS_TABLES')` and
+> `SET SESSION tx_isolation = 'READ-COMMITTED'` — belt-and-braces with the P1-04 `my.ini`
+> change (ADR-003.2) and the ADR-006 isolation requirement, using the 10.4 variable name
+> `tx_isolation` (`transaction_isolation` does not exist on this server). Both settings proven
+> live against the real `merchandising` database as `merch_api`; see
+> `evidence/phase-1/p1-05-connection-test.log`. The connection string itself is assembled only
+> from an ACL-protected host file at `C:\ProgramData\MerchandisingSystem\config\database.json`,
+> outside the repo and outside the binaries — never a committed file (G-C, confirmed clean).
 
 ---
 
