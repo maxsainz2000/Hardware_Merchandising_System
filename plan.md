@@ -80,7 +80,9 @@ Hardware_Merchandising_System/
 ├─ plan.md                        ← this file
 ├─ tasks.md                       ← current phase only, regenerated per phase
 ├─ .gitignore  .editorconfig
+├─ .gitattributes                 ← line endings; the sh pre-commit hook MUST stay LF
 ├─ Directory.Build.props          ← Option Strict On, TargetFramework, LangVersion, analyzers
+├─ Directory.Build.targets        ← guardrail pre-build target (inactive until P1-01)
 ├─ Merchandising.sln
 ├─ documentations/
 │  └─ Merchandising System for a Mid-Scale Hardware Store.md   ← the spec
@@ -127,7 +129,13 @@ The line that matters most: **`ClientCommon` must never reference `Infrastructur
 
 ## 3. Guardrails — automated, not aspirational
 
-The spec's constraints only hold if violating them breaks the build. Four checks, wired into `Directory.Build.props` as a pre-build target and into `scripts/check-no-csharp.ps1`:
+The spec's constraints only hold if violating them breaks the build. Four checks live in `scripts/check-no-csharp.ps1`, invoked from three places:
+
+1. **The git pre-commit hook** — the only layer that catches Visual Studio edits. This is the load-bearing one.
+2. **Claude Code hooks** (`.claude/settings.json`) — `PreToolUse` blocks C# files before they exist, `PostToolUse` sweeps after a `.vbproj` edit, `Stop` sweeps once per turn. These fire only when Claude edits.
+3. **`Directory.Build.targets`** — a pre-build target, conditioned on the `Merchandising.Api` **project name**. It therefore **does not run until P1-01 creates that project and builds it**. The condition does not care which SDK the project uses, so the plain shell P1-01 leaves behind triggers it just as well as the Web SDK version P1-02 converts it into. Do not count it as active protection before P1-01. *(Corrected 2026-08-16 — this and the tree above previously said P1-02.)*
+
+The four checks:
 
 | # | Guardrail | Mechanism | Guards |
 |---|---|---|---|
@@ -175,6 +183,8 @@ No application code is written in Phase 0.
 | P0-08 | Write `scripts/check-no-csharp.ps1` with guardrails G-A…G-D. | Script passes on empty repo; deliberately drop a `.cs` file and confirm it fails. |
 
 **Exit criteria:** environment manifest complete for host + all clients; professor confirmation recorded in `docs/`; repo scaffolded; guardrail script proven to fail when it should.
+
+**Carry-forward rule for client-dependent criteria.** Phase 0's client-laptop criteria — the per-client manifest rows, `ping MERCH-HOST` from a client, and the cross-machine phpMyAdmin check — **may be carried into Phase 1 and must be closed before the *Phase 1* gate**, not the Phase 0 gate. This is not a relaxation; it is the plan's own sequencing-by-dependency principle applied consistently. Twelve of Phase 1's twenty tasks (P1-01→P1-08, P1-11→P1-14) touch no second machine, and they include every task carrying real design risk. Blocking them on hardware they do not use would stall the project for no safety gain. The criteria bite where they actually matter — P1-09 (certificate trust on a client), P1-10 (port denial from a client), P1-15 (WPF round trip from a client), and one sub-check of P1-04 — and all four are hard blockers there.
 
 **Standing constraint from P0-06:** because both constraints were confirmed as binding, the academic-prototype framing in spec §3 and §29 is not optional hedging — it is the accurate description of what you are delivering. Every document, the presentation, and the cover page state that XAMPP is a course requirement and that the result is not a production-readiness claim. Getting this wording right early costs nothing; retrofitting it into ten finished documents during Phase 7 is miserable.
 

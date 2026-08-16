@@ -21,17 +21,24 @@
     and there is nothing in the repository for MSBuild to build. Verified,
     not assumed.
 
-    IT ACTIVATES AT P1-02, the task that hand-authors
-    src/Merchandising.Api/Merchandising.Api.vbproj. (P1-01 creates the eleven
-    project shells; P1-02 is the first point at which a project named
-    Merchandising.Api is actually built.) Until then, do not read this file
-    as evidence that guardrails run during a build - they do not, because no
-    build happens. Layers L1-L4 in CLAUDE.md section 11 are what is actually
-    protecting the repository today.
+    IT ACTIVATES AT P1-01, the task that creates all eleven project shells -
+    including src/Merchandising.Api/Merchandising.Api.vbproj - and then runs
+    `dotnet build` as one of its acceptance checks. The Condition keys on the
+    project NAME, not on which SDK the project uses, so the plain-shell
+    Merchandising.Api that P1-01 leaves behind satisfies it just as well as
+    the Web SDK version P1-02 converts it into.
 
-    First real exercise of this target is a build acceptance check on P1-02.
-    If it misfires there, that is expected first-run work in the same way
-    check-no-csharp.ps1 needed its first execution at P0-08.
+    CORRECTED 2026-08-16. This comment previously said P1-02, reasoning that
+    P1-02 "hand-authors" the API project. That conflated authoring the API's
+    CONTENT with the project existing and being built. P1-01 builds it first,
+    so P1-01's `dotnet build` is this target's first real exercise. Until that
+    build runs, do not read this file as evidence that guardrails run during a
+    build - they do not, because no build happens. Layers L1-L4 in CLAUDE.md
+    section 11 are what is actually protecting the repository today.
+
+    If it misfires on that first P1-01 build, that is expected first-run work
+    in exactly the way check-no-csharp.ps1 needed its first execution at
+    P0-08 - fix it there rather than treating it as a defect in the plan.
 
     On the interpreter: this deliberately invokes 'powershell' (Windows
     PowerShell 5.1) rather than 'pwsh'. pwsh is roughly 3x faster and is what

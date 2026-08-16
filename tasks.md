@@ -164,7 +164,7 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 > - **A trap in the fix itself.** Marking `*.ps1` as `eol=crlf` would have converted `scripts/install-hooks.ps1`, whose here-string *contains* the hook body — reintroducing the exact CRLF shebang the file exists to prevent. `install-hooks.ps1` now normalises the body to LF, writes bytes directly, and **refuses to install** a hook whose shebang ends CRLF. Verified: reinstalled hook has 0 CRLF pairs and still blocked a commit containing a `.cs` file.
 > - **`git add --renormalize .` run** — no unexpected churn; stored content was already LF.
 > - **Two hook scripts fixed** (`2>&1` → `*>&1`) after a live run showed them blocking with an empty message. See P0-08 SECTION 8.
-> - **`Directory.Build.targets` confirmed dead code** and commented as such — its guardrail target is conditioned on `Merchandising.Api`, which does not exist until P1-02.
+> - **`Directory.Build.targets` confirmed dead code** and commented as such — its guardrail target is conditioned on `Merchandising.Api`, which does not exist yet. *(Corrected 2026-08-16: that comment said the target activates at P1-02. It activates at **P1-01**, which creates the project and builds it. The condition keys on the project name, not on the Web SDK.)*
 
 > **Environment note.** `git init` had not been run in this directory. `git rev-parse` was resolving to a stray repository at `C:\.git` (someone ran `git init` at the drive root), which would have made `git add -A` catastrophic. A repository now exists at the project root and shadows it. **The stray `C:\.git` was left in place — deleting it is your call, not the agent's.**
 
@@ -246,19 +246,35 @@ One session, no application code, no project created under `src/`. Full account 
 
 ### ⬜ P1-01 · Create the solution and all eleven empty VB projects
 
-**Spec:** §7
+**Spec:** §7 · **Consumes:** ADR-009 (ACCEPTED — MSTest 4.0.2; do not re-decide)
 
-**Files:** `Merchandising.sln`, `src/**/*.vbproj`
+**Files:** `Merchandising.sln`, `src/**/*.vbproj`, `src/tests/**/*.vbproj`
 
 **Do:** Create every project from `plan.md` §2 with the exact names in spec §7 (they are the contract — do not rename). Wire project references to match the dependency diagram. Libraries and API use `$(MerchNetTfm)`; WPF clients use `$(MerchWindowsTfm)`.
+
+> **Scope boundary with P1-02 — read this before touching `Merchandising.Api`.**
+>
+> At P1-01, **`Merchandising.Api` is a plain shell on `Sdk="Microsoft.NET.Sdk"`.** It has its project references wired and it compiles. That is all.
+>
+> Converting it to `Sdk="Microsoft.NET.Sdk.Web"`, writing `Program.vb` with `Module Program` / `Sub Main`, and adding `HealthController` is **P1-02's work and P1-02's evidence.** Do not do it early. P1-02 is the task the whole project is gated on (ADR-001, rung A vs rung B); it is only a proof if the Web SDK conversion happens *there*, under its own acceptance checks, with its own `p1-02-project-file.txt`. Folding it into P1-01 destroys the evidence trail and leaves ADR-001 resolved by a card that was not asked to resolve it.
+>
+> A shell that builds is a complete P1-01 result. It is not a partial P1-02.
+
+> **Test projects — ADR-009 is already ACCEPTED, do not re-open it.** MSTest, `MSTest` package `4.0.2`. The framework was resolved early precisely so this card is not blocked: `dotnet new` cannot create a test project without one. **ADR-009.2 lists two defects in the generated VB template that this card must fix** — the C#-only `ImplicitUsings` / `Nullable` / `<Using>` cruft, and `MSTestSettings.vb`'s method-level parallelism, which must become `<Assembly: DoNotParallelize>` in the **integration** project because it shares one real MariaDB.
 
 **Done when:**
 
 - [ ] All eleven projects exist with correct names and types
 - [ ] References match `plan.md` §2 exactly
 - [ ] `ClientCommon` references **only** `Contracts` — verified by reading the file, not assumed
+- [ ] **`Merchandising.Api` is a plain shell on `Microsoft.NET.Sdk`** — no Web SDK, no `Program.vb`, no controller. That is P1-02.
+- [ ] **Every generated `.vbproj` uses `$(MerchNetTfm)` or `$(MerchWindowsTfm)`** — not the hard-coded TFM `dotnet new` emits. Verified by reading all eleven files; a literal `net10.0` or `net10.0-windows` in any `.vbproj` fails this box.
+- [ ] **Both test projects land at `src/tests/`** — `src/tests/Merchandising.Tests.Unit/` and `src/tests/Merchandising.Tests.Integration/`, matching the paths `scripts/run-tests.ps1` already probes (lines 43 and 56). Anywhere else and the script silently reports "not created yet" instead of running them.
+- [ ] Generated test `.vbproj` files stripped of C#-only properties per ADR-009.2; integration project set to `DoNotParallelize`
 - [ ] `dotnet build` succeeds
 - [ ] `check-no-csharp.ps1` passes
+
+> **`Directory.Build.targets` fires for the first time on this card's `dotnet build`** — see the note under P1-02 and the file's own header comment. If it misfires, fix it here; that is expected first-run work.
 
 **Evidence:** `evidence/phase-1/p1-01-build.log`
 
@@ -270,7 +286,15 @@ One session, no application code, no project created under `src/`. Full account 
 
 > **This is the task the whole project is gated on.** Everything after it is ordinary engineering.
 
-**Do:** Author `Merchandising.Api.vbproj` with `Sdk="Microsoft.NET.Sdk.Web"`, `OutputType=Exe`. Write `Program.vb` using `Module Program` / `Sub Main` (**not** top-level statements). Add one controller `HealthController` exposing `GET /health` returning `{status, version, utcTime}` — and **nothing** about the database, environment, or configuration.
+**Do:** **Convert** `Merchandising.Api.vbproj` from the plain shell P1-01 left behind to `Sdk="Microsoft.NET.Sdk.Web"`, `OutputType=Exe`. Write `Program.vb` using `Module Program` / `Sub Main` (**not** top-level statements). Add one controller `HealthController` exposing `GET /health` returning `{status, version, utcTime}` — and **nothing** about the database, environment, or configuration.
+
+> **Scope boundary with P1-01 — this card owns the whole Web SDK conversion.**
+>
+> P1-01 leaves `Merchandising.Api` as a **plain shell on `Sdk="Microsoft.NET.Sdk"`** with references wired and nothing else: no Web SDK, no `Program.vb`, no controller. All three arrive **here**, and the evidence for all three is this card's (`p1-02-project-file.txt`, `p1-02-health-response.txt`).
+>
+> This matters because P1-02 is not ordinary work — it is the rung A proof that resolves ADR-001 and retires the project's dominant risk. If the SDK swap has already happened quietly at P1-01, there is no observation left to make here and the ADR gets resolved by inference rather than by evidence. **If you arrive at this card and the Web SDK is already set, that is a P1-01 scope violation: record it, and re-run the conversion's acceptance checks from a clean build before claiming the proof.**
+
+> **`Directory.Build.targets` has already fired by the time you reach this card.** Its guardrail target is conditioned on `MSBuildProjectName == 'Merchandising.Api'`, and **P1-01 creates that project and builds it** — so P1-01's `dotnet build`, not this card's, is the target's first real exercise. The file's own header comment previously said P1-02; that was wrong and is corrected. Nothing here depends on it, but do not record P1-02 as the target's first run.
 
 **Done when:**
 
@@ -641,7 +665,13 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ### ⬜ P1-19 · Wire both VB test projects
 
-**Spec:** §7, §19 · **Decides:** ADR-009
+**Spec:** §7, §19 · **Consumes:** ADR-009 (ACCEPTED at P1-01 — **this card no longer decides it**)
+
+> **ADR-009 moved to P1-01 and is ACCEPTED: MSTest, package `MSTest` 4.0.2.** P1-01 creates both test projects and `dotnet new` cannot create one without naming a framework, so the decision could not wait for this card. All three candidates were measured on this machine first — see ADR-009.1; none was a risk, so nothing here is a compromise forced by the earlier date.
+>
+> **Do not re-open the choice.** Switching frameworks at this point would rewrite every test written between P1-01 and here for no stated defect. If MSTest turns out to be genuinely unworkable for something this card needs, that is stop condition 5 in `CLAUDE.md` §7 — report it, do not swap silently.
+>
+> The projects themselves already exist. **This card wires them up**: `InternalsVisibleTo`, the `WebApplicationFactory` seam, the real-MariaDB fixtures, and the migration of P1-12/P1-13/P1-14 from manual proofs to automated tests.
 
 **Do:** Both test projects in Visual Basic. `InternalsVisibleTo` configured. Integration tests run against the **real** pinned MariaDB — never an in-memory substitute.
 
@@ -651,7 +681,8 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] P1-12, P1-13, P1-14 run as **automated tests**, not manual steps
 - [ ] All test source is VB (G-A passes)
 - [ ] `WebApplicationFactory` can reach `Program`
-- [ ] ADR-009 records the framework
+- [x] ADR-009 records the framework — **already ACCEPTED at P1-01.** This card consumes it.
+- [ ] Integration project still carries `<Assembly: DoNotParallelize>` (ADR-009.2) — MSTest's template default is method-level parallelism, which would run these tests concurrently against the one shared MariaDB instance
 
 **Evidence:** `p1-19-test-run.log`
 

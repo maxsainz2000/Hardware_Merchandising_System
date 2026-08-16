@@ -85,6 +85,7 @@ What the probe established:
 | Character set / collation / engine | `utf8mb4` / `utf8mb4_unicode_ci` / InnoDB — **see ADR-003, which is ACCEPTED and carries the measured 10.4 constraints** | P0-07 |
 | `sql_mode` as shipped | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — **not strict**, must be corrected. See ADR-003.2 | P0-07 |
 | .NET connector package | MySqlConnector — **← the only unresolved row in this ADR** | P1-05 |
+| Test framework package | `MSTest` `4.0.2` — **pinned in ADR-009, which is ACCEPTED.** Recorded here so `CLAUDE.md` §6 ("if a version is not in `docs/adr.md`, it must not appear in a `.vbproj`") is satisfied without a hunt | P1-01 |
 | .NET SDK version (`dotnet --info`) | `10.0.301` (commit `96856fd726`) | P0-01 |
 | .NET runtimes installed | `Microsoft.AspNetCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.NETCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.WindowsDesktop.App` 8.0.28 / 9.0.17 / **10.0.9** | P0-01 |
 | Target framework | `net10.0` / `net10.0-windows` | `Directory.Build.props` |
@@ -291,13 +292,58 @@ UPDATE StockBalances
 
 ## ADR-009 · Test framework
 
-**Status:** PENDING — resolve at task P1-19
+**Status:** ACCEPTED
+**Date:** 2026-08-16
+**Decides:** which test framework both VB test projects are built on. Resolved **early, at P1-01** rather than P1-19, because P1-01 creates both test projects and `dotnet new` cannot create a test project without naming a framework — leaving this PENDING would have meant either deferring two of the eleven projects or picking a framework informally and back-filling the ADR.
 
-**Options.** MSTest, NUnit, xUnit — Microsoft publishes official Visual Basic guidance for all three on .NET, so this is a preference rather than a risk.
+**Decision.** **MSTest**, package `MSTest` version **4.0.2** (single metapackage; the template pulls no other test package).
 
-**Decision:** _(record after P1-19)_
+**Reason (one line).** It is the in-box Microsoft-authored VB template with the smallest version surface — one `MSTest` metapackage against NUnit's five packages and xUnit's four — and its attribute-driven `<AssemblyInitialize>` / `<ClassInitialize>` fixtures are plain shared `Sub`s, avoiding the generic-interface (`IClassFixture(Of T)`) and multi-line-lambda plumbing that `CLAUDE.md` §3 flags as awkward in VB and that the real-MariaDB integration fixtures would lean on hardest.
 
 **Constraint.** All test source is Visual Basic. Integration tests run against the real pinned MariaDB, never an in-memory substitute.
+
+---
+
+### ADR-009.1 · All three candidates were measured on this machine, not compared from documentation
+
+Generated outside the repository on 2026-08-16 and then deleted, under a `Directory.Build.props` mirroring the repo's (`Option Strict On`, `WarningsAsErrors`, `GenerateDocumentationFile`):
+
+| Template | `dotnet new … -lang VB` | Packages pinned | `dotnet test` under `Option Strict On` |
+|---|---|---|---|
+| `mstest` (Microsoft) | generates | `MSTest 4.0.2` | **1 passed, 0 warnings, 0 errors** |
+| `nunit` (community — Aleksei Kharlov) | generates | `NUnit 4.3.2`, `NUnit3TestAdapter 5.0.0`, `NUnit.Analyzers 4.7.0`, `Microsoft.NET.Test.Sdk 17.14.0`, `coverlet.collector 6.0.4` | **1 passed** |
+| `xunit` (Microsoft) | generates | `xunit 2.9.3`, `xunit.runner.visualstudio 3.1.4`, `Microsoft.NET.Test.Sdk 17.14.1`, `coverlet.collector 6.0.4` | **1 passed** |
+
+**None of the three is a risk.** All emit clean VB, all build with zero warnings under `Option Strict On`, all run. The choice is therefore genuinely a preference, exactly as this ADR's original wording assumed — the difference is that it is now a preference backed by measurement.
+
+Also verified: `dotnet test <proj> --configuration Debug --no-build --nologo` — the exact invocation in `scripts/run-tests.ps1` — works against the MSTest VB project. MSTest 4.0.2 still runs through the VSTest bridge on this SDK, so `run-tests.ps1` needs no change.
+
+**Rejected.** NUnit — its VB project template is community-authored rather than Microsoft-authored, and it pins five packages where MSTest pins one. xUnit — no assembly- or class-level setup attributes; shared fixtures require implementing `IClassFixture(Of T)` / `ICollectionFixture(Of T)` and its assertion idiom leans on `Assert.Throws(Of T)(Function() … End Function)`, both of which are heavier in VB than in C#. Neither loses on capability.
+
+---
+
+### ADR-009.2 · Two things the MSTest VB template gets wrong — fix them at P1-01
+
+The generated `.vbproj` is a C# project file with the language swapped. P1-01 must correct it, not accept it as emitted:
+
+```xml
+<TargetFramework>net10.0</TargetFramework>   <!-- hard-coded; must become $(MerchNetTfm) -->
+<ImplicitUsings>enable</ImplicitUsings>      <!-- C#-only concept, inert in VB — delete -->
+<Nullable>enable</Nullable>                  <!-- C#-only concept, inert in VB — delete -->
+<Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />  <!-- C#-only item; VB's
+     equivalent is <Import>. Harmless only because the template also writes a file-level
+     `Imports` line in every .vb it generates. Delete it. -->
+```
+
+Second, the template writes `MSTestSettings.vb` containing:
+
+```vb
+<Assembly: Parallelize(Scope:=ExecutionScope.MethodLevel)>
+```
+
+**That is actively wrong for the integration suite.** Method-level parallelism runs tests concurrently against the one real MariaDB instance, which shares state between them — it would make P1-12's rollback proof and P1-14's idempotency proof flaky for reasons that have nothing to do with the code under test. The integration project must set `<Assembly: DoNotParallelize>` instead. (P1-13's concurrency proof creates its own concurrency inside a single test; it does not want the runner supplying more.) The unit project may keep method-level parallelism.
+
+**Evidence.** Recorded at P1-01 into `evidence/phase-1/p1-01-build.log`.
 
 ---
 
