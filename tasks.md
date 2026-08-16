@@ -297,13 +297,50 @@ One session, no application code, no project created under `src/`. Full account 
 > - **`ClientCommon` is `$(MerchWindowsTfm)` with `UseWPF`, not `$(MerchNetTfm)`.** Spec §7 puts "common controls, converters, styles" and "XAML resources" in that project; a plain `net10.0` library cannot hold a `ResourceDictionary` or implement `System.Windows.Data.IValueConverter`. The card's shorthand said "libraries use `$(MerchNetTfm)`" — the spec outranks the card (`CLAUDE.md` §1), and the alternative was a twelfth project split out at P1-15 for no gain. G-B is unaffected: `ClientCommon` still references `Contracts` and nothing else.
 > - **Test project references wired now**, not deferred to P1-19: Unit → Domain, Contracts; Integration → Api, Infrastructure, Domain, Contracts. `plan.md` §2's diagram has no rows for the test projects, so this fills a genuine gap rather than contradicting it.
 
-> **⚠️ Open item for Max — a guardrail sharp edge found the hard way, deliberately NOT fixed here.**
+> **Open item raised here, resolved in P1-01a.** G-B could not tell a package reference from the rule written down in a comment, so documenting the rule inside `Merchandising.ClientCommon.vbproj` failed the build. Raised rather than fixed inline, per `CLAUDE.md` §7. **Closed by P1-01a — see the card below.**
+
+---
+
+### ✅ P1-01a · G-B and G-D must ignore XML comments; G-C must not
+
+**Closes:** the open item raised by P1-01 · **Touches:** `scripts/check-no-csharp.ps1`, four client `.vbproj` files
+
+**Why.** G-B matched raw project-file text, so it read its own prohibition as a violation: writing *"never reference &lt;the connector&gt;"* in a comment inside `Merchandising.ClientCommon.vbproj` **failed the build**. The client project file is the single best place to record why that rule exists, and it was the one place the rule could not be recorded.
+
+**What the fix turned out to cover.** Investigating it showed the defect was wider than the one instance reported. Three of the four checks read `.vbproj` text, and they split cleanly:
+
+| Check | Looks for | Comments? | Why |
+|---|---|---|---|
+| **G-B** | `ProjectReference` / `PackageReference` | **ignored** | A reference must *take effect* to matter. MSBuild never sees a comment. |
+| **G-D** | `OptionStrict Off`, `PublishAot`, `PublishTrimmed` | **ignored** | Same reasoning — and the natural way to warn the next reader is to name the property in a comment saying not to set it. |
+| **G-C** | connection strings, credentials | **still scanned** | A credential in a comment **is** a leaked credential. It is in the working tree, in the history, and readable by anyone with a clone. |
+
+**That asymmetry is the substance of this card,** not an implementation detail. G-B and G-D check for things that are inert inside a comment; G-C checks for things that are not. Both behaviours are proven by test, so a future reader cannot mistake the difference for an oversight.
+
+**Do:** strip XML comments before matching in G-B and G-D only, preserving newline counts so reported line numbers stay accurate. Report the offending line number in G-B failures. Leave G-C untouched.
+
+**Done when:**
+
+- [x] Real `ProjectReference` to `Infrastructure` in a client project still **fails** (case 2)
+- [x] Real `PackageReference` to a connector package still **fails** (case 3)
+- [x] Those same names in a comment only now **pass** (case 4)
+- [x] Real `<PublishAot>true</PublishAot>` still **fails** (case 5)
+- [x] `PublishAot` / `OptionStrict Off` named in a comment only now **pass** (case 6)
+- [x] **Credential inside a comment still fails** — the asymmetry holds (case 7)
+- [x] Repository clean before and after the run (cases 1 and 8, bracketing)
+- [x] Guardrails green under `pwsh` **and** Windows PowerShell 5.1
+- [x] `run-tests.ps1` green; `dotnet build` unaffected
+- [x] The rule is now actually written down in all four client `.vbproj` files, naming every forbidden package
+
+**Evidence:** `evidence/phase-1/p1-01a-guardrail-comment-fix.txt`
+
+> **Result: 8 of 8 cases correct.** Each case mutates a real project file, runs the guardrail for real through `pwsh`, and is judged on the actual exit code — no assertion is made by reading the script. The file is restored in a `finally` block, and `git diff` confirmed it was restored byte-for-byte.
 >
-> **G-B matches raw file text, so it cannot tell a package reference from the rule written down in a comment.** Writing `Never <connector-name>` in a comment inside `Merchandising.ClientCommon.vbproj` **failed the build** — the guardrail read its own prohibition as a violation. `check-no-csharp.ps1` lines 89–91 do `Get-Content -Raw` then `-match` against the whole file.
+> **Also proven live through the hook path.** The four `.vbproj` writes that added the forbidden package names all passed the `PostToolUse` L2 hook — the same hook that blocked the original attempt. That is the fix verified end to end, not just at the command line.
 >
-> This was worked around by not naming the forbidden packages in any client `.vbproj` comment, with a pointer to `scripts/check-no-csharp.ps1` instead. That works, but it is backwards: the client project file is the single best place to write down why the rule exists, and it is the one place the rule cannot be written.
+> One cosmetic defect found and fixed during the run: a `ProjectReference` path repeats the project name in both the directory and the file name, so line numbers were reported as `(lines 41, 41)`. Deduplicated.
 >
-> **Not fixed unilaterally, per `CLAUDE.md` §7 — a hook block is a stop condition, and G-B is a security guardrail.** The obvious fix is to strip XML comments before matching (a `PackageReference` cannot live inside a comment, so this weakens nothing). Worth its own small card so the change gets its own negative tests, in the P0-08 style, rather than riding along inside P1-01.
+> **G-B failure messages now name the line**, which they did not before: `must not reference 'MySqlConnector' (line 41)`.
 
 ---
 

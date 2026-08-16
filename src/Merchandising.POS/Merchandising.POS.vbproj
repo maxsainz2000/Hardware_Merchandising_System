@@ -6,10 +6,10 @@
 
     Client project: references ClientCommon and Contracts only. It reaches
     the server exclusively over HTTPS (spec section 8) and holds no
-    server-side library and no data-access package. Guardrails G-B and G-C
-    enforce that; the forbidden names are listed in
-    scripts/check-no-csharp.ps1 and are not repeated here, because G-B
-    matches raw file text and would fail on the comment itself.
+    server-side library and no data-access package - not
+    Merchandising.Infrastructure, MySqlConnector, MySql.Data, MariaDB or
+    Microsoft.EntityFrameworkCore. Guardrails G-B and G-C enforce that; the
+    authoritative list is in scripts/check-no-csharp.ps1.
 
     Phase 1 scope for this project is nothing at all - P1-15 builds one
     window in Inventory only. This is a shell until Phase 2.

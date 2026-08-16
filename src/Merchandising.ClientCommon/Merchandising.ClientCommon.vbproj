@@ -9,13 +9,24 @@
     REFERENCES Merchandising.Contracts AND NOTHING ELSE.
     ====================================================================
 
-    Never the server-side infrastructure library, and never a database
-    connector package of any kind. That single rule is what mechanically
-    guarantees a database credential cannot reach a client laptop - it is
-    enforced by guardrail G-B, not by good intentions. The forbidden names
-    are listed in scripts/check-no-csharp.ps1 and are deliberately NOT
-    repeated here: G-B matches raw file text, so writing them out even in
-    a comment fails the build. See CLAUDE.md section 4.
+    Specifically, never any of these:
+
+        Merchandising.Infrastructure
+        MySqlConnector
+        MySql.Data
+        MariaDB
+        Microsoft.EntityFrameworkCore
+
+    That single rule is what mechanically guarantees a database credential
+    cannot reach a client laptop - it is enforced by guardrail G-B in
+    scripts/check-no-csharp.ps1, not by good intentions. See CLAUDE.md
+    section 4.
+
+    Naming them here used to fail the build: G-B matched raw file text and
+    read its own prohibition as a violation. Fixed at P1-01a - G-B and G-D
+    now strip XML comments before matching, because a reference cannot take
+    effect from inside one. G-C still scans comments, deliberately, since a
+    connection string in a comment is a real leaked credential.
 
     On the target framework: this is $(MerchWindowsTfm) with UseWPF, not
     $(MerchNetTfm), because spec section 7 puts "common controls,

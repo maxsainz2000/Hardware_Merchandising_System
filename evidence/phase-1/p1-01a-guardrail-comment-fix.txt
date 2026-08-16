@@ -1,0 +1,165 @@
+P1-01a - G-B and G-D must ignore XML comments; G-C must not
+Captured: 2026-08-16 17:07:19 +08:00
+Machine:  LAPTOP-3HH6OHHE
+==============================================================================
+
+WHAT THIS FIXES
+
+  Found at P1-01. G-B and G-D matched raw project-file text, so they could
+  not distinguish a real reference or build property from the rule written
+  down in an XML comment. Writing "never reference <the connector>" inside
+  Merchandising.ClientCommon.vbproj FAILED THE BUILD - the guardrail read its
+  own prohibition as a violation. The client project file is the single best
+  place to record why that rule exists, and it was the one place it could not
+  be recorded.
+
+WHY IGNORING COMMENTS IS SAFE FOR G-B AND G-D
+
+  Both look for things that must TAKE EFFECT to matter: a ProjectReference, a
+  PackageReference, a PublishAot property. MSBuild never sees anything inside
+  a comment, so a commented violation is not a violation. There is no evasion
+  route to close here - only false positives to remove. Cases 2, 3 and 5 below
+  prove the real violations are still caught.
+
+WHY G-C DELIBERATELY STILL SCANS COMMENTS
+
+  G-C looks for credentials. A connection string in a comment is a real
+  leaked credential: it is in the working tree, it is in the history, and it
+  is readable by anyone with a clone. Case 7 proves this asymmetry holds.
+
+METHOD
+
+  Every case mutates a real project file, runs the guardrail for real through
+  pwsh, and judges on the actual exit code. The file is restored in a finally
+  block; cases 1 and 8 bracket the run to prove the repository was clean
+  before and is clean after.
+
+==============================================================================
+
+------------------------------------------------------------------------------
+CASE 1  Baseline: unmodified repository must pass
+expected exit 0, got exit 0  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+------------------------------------------------------------------------------
+CASE 2  G-B  REAL ProjectReference to Infrastructure in a client project
+expected exit 1, got exit 1  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... FAIL
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+GUARDRAILS FAILED (1 issue(s)):
+
+  [G-B] Merchandising.ClientCommon must not reference 'Merchandising\.Infrastructure' (line 41). Client projects never touch the database.
+
+See CLAUDE.md for the rules these enforce.
+
+------------------------------------------------------------------------------
+CASE 3  G-B  REAL PackageReference to the database connector
+expected exit 1, got exit 1  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... FAIL
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+GUARDRAILS FAILED (1 issue(s)):
+
+  [G-B] Merchandising.ClientCommon must not reference 'MySqlConnector' (line 41). Client projects never touch the database.
+
+See CLAUDE.md for the rules these enforce.
+
+------------------------------------------------------------------------------
+CASE 4  G-B  Forbidden names appearing ONLY inside an XML comment
+expected exit 0, got exit 0  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+------------------------------------------------------------------------------
+CASE 5  G-D  REAL PublishAot property set to true
+expected exit 1, got exit 1  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... FAIL
+
+GUARDRAILS FAILED (1 issue(s)):
+
+  [G-D] AOT/trimming is enabled in src\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj. These do not work with Visual Basic - see CLAUDE.md section 3.
+
+See CLAUDE.md for the rules these enforce.
+
+------------------------------------------------------------------------------
+CASE 6  G-D  PublishAot / OptionStrict Off named ONLY inside a comment
+expected exit 0, got exit 0  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+------------------------------------------------------------------------------
+CASE 7  G-C  Credential inside a COMMENT must STILL fail (asymmetry)
+expected exit 1, got exit 1  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... FAIL
+G-D  Checking Option Strict inheritance... pass
+
+GUARDRAILS FAILED (4 issue(s)):
+
+  [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\TempScanTarget.vb (matched /Server\s*=\s*[^;"']+;/)
+  [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\TempScanTarget.vb (matched /Database\s*=\s*[^;"']+;/)
+  [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\TempScanTarget.vb (matched /Uid\s*=/)
+  [G-C] Possible credential or connection string in client code: src\Merchandising.ClientCommon\TempScanTarget.vb (matched /Pwd\s*=/)
+
+See CLAUDE.md for the rules these enforce.
+
+Restored Merchandising.ClientCommon.vbproj and removed the temporary scan target.
+
+------------------------------------------------------------------------------
+CASE 8  Repository restored: must pass again
+expected exit 0, got exit 0  ->  CORRECT
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+==============================================================================
+SUMMARY
+==============================================================================
+
+Case Expected Actual Verdict Description
+---- -------- ------ ------- -----------
+1           0      0 CORRECT Baseline: unmodified repository must pass
+2           1      1 CORRECT G-B  REAL ProjectReference to Infrastructure in a client project
+3           1      1 CORRECT G-B  REAL PackageReference to the database connector
+4           0      0 CORRECT G-B  Forbidden names appearing ONLY inside an XML comment
+5           1      1 CORRECT G-D  REAL PublishAot property set to true
+6           0      0 CORRECT G-D  PublishAot / OptionStrict Off named ONLY inside a comment
+7           1      1 CORRECT G-C  Credential inside a COMMENT must STILL fail (asymmetry)
+8           0      0 CORRECT Repository restored: must pass again
+
+
+ALL 8 CASES CORRECT.
+

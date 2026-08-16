@@ -10,6 +10,12 @@
       G-C  No connection strings or credentials in client projects
       G-D  No project overrides Option Strict / Option Explicit
 
+    On XML comments: G-B and G-D ignore them, G-C does not. That asymmetry
+    is deliberate. G-B and G-D look for things that must take effect to do
+    any harm, and nothing takes effect from inside a comment. G-C looks for
+    credentials, and a credential in a comment is still in the repository.
+    See the Remove-XmlComments header below.
+
     Exits 0 if all pass, 1 if any fail. Intended to run:
       - as a git pre-commit hook (see scripts/install-hooks.ps1)
       - from Directory.Build.targets during the API build
@@ -92,6 +98,71 @@ function Get-SourceFiles {
 }
 
 # ---------------------------------------------------------------------------
+# XML comment handling  (added at P1-01a)
+#
+# WHY THIS EXISTS. G-B and G-D matched raw project-file text, so they could
+# not tell a real reference from the rule written down in a comment. Writing
+#
+#     <!-- Never reference <the connector package>. -->
+#
+# inside a client .vbproj FAILED THE BUILD: the guardrail read its own
+# prohibition as a violation. Found at P1-01 while documenting the rule in
+# Merchandising.ClientCommon.vbproj, which is precisely the file where that
+# rule most deserves to be written down.
+#
+# WHY IT IS SAFE. G-B and G-D both check for things that must TAKE EFFECT to
+# matter: a ProjectReference, a PackageReference, a PublishAot property. None
+# of those can take effect from inside a comment, because MSBuild never sees
+# them. So ignoring comments cannot hide a real violation - there is no
+# evasion route here, only false positives to remove.
+#
+# WHY G-C DELIBERATELY DOES NOT USE THIS. G-C looks for credentials, and a
+# connection string sitting in a comment is a real leaked credential. It is
+# in the repository, it is in the history, and it is readable by anyone with
+# the clone. G-C must keep scanning comments. The asymmetry is the point, and
+# it is proven by a negative test in
+# evidence/phase-1/p1-01a-guardrail-comment-fix.txt.
+#
+# Newlines inside each comment are preserved so reported line numbers stay
+# accurate. An unterminated '<!--' matches nothing and is therefore left in
+# place to be scanned - failing closed, which is the correct direction.
+# ---------------------------------------------------------------------------
+function Remove-XmlComments {
+    param([string] $Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+
+    $result = New-Object System.Text.StringBuilder
+    $lastIndex = 0
+
+    foreach ($match in [regex]::Matches($Text, '<!--[\s\S]*?-->')) {
+        $null = $result.Append($Text.Substring($lastIndex, $match.Index - $lastIndex))
+        $newlineCount = ([regex]::Matches($match.Value, "`n")).Count
+        if ($newlineCount -gt 0) { $null = $result.Append("`n" * $newlineCount) }
+        $lastIndex = $match.Index + $match.Length
+    }
+
+    $null = $result.Append($Text.Substring($lastIndex))
+    return $result.ToString()
+}
+
+# Returns the 1-based line number of every match, so a failure message can
+# point at the offending line instead of just naming the pattern.
+function Get-MatchLineNumbers {
+    param([string] $Text, [string] $Pattern)
+
+    $lineNumbers = @()
+    foreach ($match in [regex]::Matches($Text, $Pattern)) {
+        $lineNumbers += ($Text.Substring(0, $match.Index) -split "`n").Count
+    }
+
+    # A single line can match more than once - a ProjectReference path repeats
+    # the project name in both the directory and the file name, for instance.
+    # Report each line once.
+    return @($lineNumbers | Sort-Object -Unique)
+}
+
+# ---------------------------------------------------------------------------
 # G-A  No C# application source
 # ---------------------------------------------------------------------------
 Write-Host 'G-A  Checking for C# source...' -NoNewline
@@ -132,11 +203,16 @@ foreach ($name in $clientProjectNames) {
     $projFile = Join-Path $srcPath "$name/$name.vbproj"
     if (-not (Test-Path $projFile)) { continue }
 
-    $content = Get-Content -Path $projFile -Raw
+    # Comments are stripped: a reference cannot take effect from inside one.
+    # See the Remove-XmlComments header for why this cannot hide a violation.
+    $content = Remove-XmlComments (Get-Content -Path $projFile -Raw)
+
     foreach ($pattern in $forbiddenReferencePatterns) {
-        if ($content -match $pattern) {
+        $lineNumbers = @(Get-MatchLineNumbers -Text $content -Pattern $pattern)
+        if ($lineNumbers.Count -gt 0) {
             $gbFailed = $true
-            Add-Failure 'G-B' "$name must not reference '$pattern'. Client projects never touch the database."
+            $where = "line$(if ($lineNumbers.Count -gt 1) { 's' }) $($lineNumbers -join ', ')"
+            Add-Failure 'G-B' "$name must not reference '$pattern' ($where). Client projects never touch the database."
         }
     }
 }
@@ -185,7 +261,11 @@ Write-Host 'G-D  Checking Option Strict inheritance...' -NoNewline
 $gdFailed = $false
 $vbProjects = Get-SourceFiles -Path $srcPath -Include '*.vbproj'
 foreach ($proj in $vbProjects) {
-    $content = Get-Content -Path $proj.FullName -Raw
+    # Comments stripped for the same reason as G-B: an MSBuild property has no
+    # effect from inside a comment, so scanning comments can only ever produce
+    # a false positive. This matters here because the natural way to warn the
+    # next reader is to name the property in a comment saying not to set it.
+    $content = Remove-XmlComments (Get-Content -Path $proj.FullName -Raw)
     $rel = $proj.FullName.Substring($RepoRoot.Length).TrimStart('\', '/')
 
     if ($content -match '<OptionStrict>\s*Off\s*</OptionStrict>') {
