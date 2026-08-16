@@ -82,7 +82,7 @@ Hardware_Merchandising_System/
 ├─ .gitignore  .editorconfig
 ├─ .gitattributes                 ← line endings; the sh pre-commit hook MUST stay LF
 ├─ Directory.Build.props          ← Option Strict On, TargetFramework, LangVersion, analyzers
-├─ Directory.Build.targets        ← guardrail pre-build target (inactive until P1-01)
+├─ Directory.Build.targets        ← guardrail pre-build target (LIVE since P1-01)
 ├─ Merchandising.sln
 ├─ documentations/
 │  └─ Merchandising System for a Mid-Scale Hardware Store.md   ← the spec
@@ -133,7 +133,9 @@ The spec's constraints only hold if violating them breaks the build. Four checks
 
 1. **The git pre-commit hook** — the only layer that catches Visual Studio edits. This is the load-bearing one.
 2. **Claude Code hooks** (`.claude/settings.json`) — `PreToolUse` blocks C# files before they exist, `PostToolUse` sweeps after a `.vbproj` edit, `Stop` sweeps once per turn. These fire only when Claude edits.
-3. **`Directory.Build.targets`** — a pre-build target, conditioned on the `Merchandising.Api` **project name**. It therefore **does not run until P1-01 creates that project and builds it**. The condition does not care which SDK the project uses, so the plain shell P1-01 leaves behind triggers it just as well as the Web SDK version P1-02 converts it into. Do not count it as active protection before P1-01. *(Corrected 2026-08-16 — this and the tree above previously said P1-02.)*
+3. **`Directory.Build.targets`** — a pre-build target, conditioned on the `Merchandising.Api` **project name**. **Live since P1-01**, the task that created the project and built it. The condition does not care which SDK the project uses, so the plain shell P1-01 left behind triggered it just as well as the Web SDK version P1-02 converted it into. *(Corrected 2026-08-16 — this and the tree above previously said P1-02.)*
+
+   **It runs on every build, including one where nothing changed** — the target declares no `Inputs`/`Outputs`, so MSBuild never skips it as up to date. Measured at P1-02b. But it is a **safety net, not a gate**: it only fires when a *build* fires. An edit made in Visual Studio and committed without a rebuild never reaches it, and `-p:MerchSkipGuardrails=true` bypasses it outright. The gate remains the git pre-commit hook. *(P0-07 recorded this target as dead code; that was true then and stopped being true at P1-01 — see P1-02b.)*
 
 The four checks:
 

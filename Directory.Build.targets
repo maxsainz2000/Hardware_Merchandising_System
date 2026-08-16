@@ -12,33 +12,45 @@
     catches violations before they can be committed at all.
 
     ========================================================================
-    STATUS AS OF P0-07 (2026-08-15): THIS TARGET IS DEAD CODE. IT HAS NEVER
-    RUN, AND THAT IS EXPECTED - NOT A DEFECT.
+    STATUS AS OF P1-02b (2026-08-16): THIS TARGET IS LIVE. IT RUNS ON EVERY
+    BUILD. THE BEHAVIOUR BELOW WAS MEASURED, NOT PREDICTED.
     ========================================================================
 
-    The Condition below requires MSBuildProjectName == 'Merchandising.Api'.
-    That project does not exist yet: src/ contains only .gitkeep in Phase 0,
-    and there is nothing in the repository for MSBuild to build. Verified,
-    not assumed.
+      dotnet build, full solution         guardrails run
+      dotnet build, nothing changed       guardrails run. The target has no
+                                          Inputs or Outputs, so MSBuild
+                                          never skips it as up to date, even
+                                          when compilation itself is skipped.
+      dotnet build with
+        MerchSkipGuardrails=true          guardrails skipped, as designed
 
-    IT ACTIVATES AT P1-01, the task that creates all eleven project shells -
-    including src/Merchandising.Api/Merchandising.Api.vbproj - and then runs
-    `dotnet build` as one of its acceptance checks. The Condition keys on the
-    project NAME, not on which SDK the project uses, so the plain-shell
-    Merchandising.Api that P1-01 leaves behind satisfies it just as well as
-    the Web SDK version P1-02 converts it into.
+    It fired for the first time on P1-01's build, and did not misfire. It
+    ran four more times during P1-02 without being disturbed by that card
+    converting the API to the Web SDK: the Condition keys on the project
+    NAME, not on which SDK the project uses.
 
-    CORRECTED 2026-08-16. This comment previously said P1-02, reasoning that
-    P1-02 "hand-authors" the API project. That conflated authoring the API's
-    CONTENT with the project existing and being built. P1-01 builds it first,
-    so P1-01's `dotnet build` is this target's first real exercise. Until that
-    build runs, do not read this file as evidence that guardrails run during a
-    build - they do not, because no build happens. Layers L1-L4 in CLAUDE.md
-    section 11 are what is actually protecting the repository today.
+    WHAT THIS HEADER USED TO SAY, AND WHY IT CHANGED. Until P1-02b it read
+    "THIS TARGET IS DEAD CODE. IT HAS NEVER RUN." That was true when written
+    at P0-07, when src/ held only .gitkeep and no build had ever run in this
+    repository. It stopped being true at P1-01, which created the project
+    and built it, and the header was not updated with it. P1-02 found the
+    contradiction while reading this file for an unrelated reason.
 
-    If it misfires on that first P1-01 build, that is expected first-run work
-    in exactly the way check-no-csharp.ps1 needed its first execution at
-    P0-08 - fix it there rather than treating it as a defect in the plan.
+    IT STILL DOES NOT REPLACE THE GIT PRE-COMMIT HOOK. That conclusion in
+    CLAUDE.md section 11 stands, but its REASON has changed, and the new
+    reason is weaker than the old one. Read the difference carefully:
+
+      OLD REASON   this target never runs, so it protects nothing.
+      REAL REASON  this target runs only when a BUILD runs. An edit made in
+                   Visual Studio and committed without a build is invisible
+                   to it, as is any commit that does not rebuild the API
+                   project. MerchSkipGuardrails=true bypasses it outright.
+
+    So it is a safety net that catches a violation at the moment you build,
+    which is usually earlier than commit time. It is NOT a gate. The gate is
+    the git pre-commit hook (L4), and deleting that hook on the strength of
+    this target would reopen precisely the Visual-Studio-edit hole L4 exists
+    to cover.
 
     On the interpreter: this deliberately invokes 'powershell' (Windows
     PowerShell 5.1) rather than 'pwsh'. pwsh is roughly 3x faster and is what

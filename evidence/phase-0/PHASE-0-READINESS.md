@@ -241,6 +241,13 @@ It lists `.gitignore` and `.editorconfig` but not `.gitattributes` — which is 
 **4. `plan.md` §3 says the guardrails are "wired into `Directory.Build.props` as a pre-build target".**
 They are wired into `Directory.Build.targets`, and that target has **never run** — it is conditioned on `Merchandising.Api`, which does not exist until P1-02. The claim reads as an active protection today; it is not one. The file is now commented to say so, but §3's wording overstates the position.
 
+> **SUPERSEDED 2026-08-16 at P1-02b — appended, not edited.** Both halves of this item are now resolved, and one of them was wrong in a detail worth naming.
+>
+> - **"Never run" is no longer true.** The target went live at **P1-01**, not P1-02 as written above: the condition keys on the project *name*, and P1-01 created the project and built it. It has since been measured running on a full build, on a build where nothing changed, and being correctly bypassed by `MerchSkipGuardrails=true`.
+> - **`plan.md` §3's wording was corrected** to name `Directory.Build.targets`, and now states the current status plus the limit that matters: it fires only when a build fires, so it is a safety net and not a gate. The git pre-commit hook remains the gate.
+>
+> The underlying observation this item made was still the right one. A file that describes itself as protection, but is not running, is worse than no file — and the reverse held too: once it started running, the stale "DEAD CODE" header would have told a reader the opposite of the truth for the rest of the project. It went uncorrected through P1-01 and P1-01a and was caught at P1-02.
+
 **5. P0-08's card assumed script verification was equivalent to wiring verification.**
 The previous session verified the hook scripts thoroughly — 14 of 14 cases — and still shipped a defect that made two of the three layers report failures blank. The lesson generalises: **testing a hook's exit code is not testing the hook.** Worth carrying into how P1-19's test harness is judged: assert on what the consumer actually receives, not just on the return value.
 

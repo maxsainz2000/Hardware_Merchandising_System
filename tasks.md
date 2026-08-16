@@ -166,7 +166,7 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 > - **A trap in the fix itself.** Marking `*.ps1` as `eol=crlf` would have converted `scripts/install-hooks.ps1`, whose here-string *contains* the hook body — reintroducing the exact CRLF shebang the file exists to prevent. `install-hooks.ps1` now normalises the body to LF, writes bytes directly, and **refuses to install** a hook whose shebang ends CRLF. Verified: reinstalled hook has 0 CRLF pairs and still blocked a commit containing a `.cs` file.
 > - **`git add --renormalize .` run** — no unexpected churn; stored content was already LF.
 > - **Two hook scripts fixed** (`2>&1` → `*>&1`) after a live run showed them blocking with an empty message. See P0-08 SECTION 8.
-> - **`Directory.Build.targets` confirmed dead code** and commented as such — its guardrail target is conditioned on `Merchandising.Api`, which does not exist yet. *(Corrected 2026-08-16: that comment said the target activates at P1-02. It activates at **P1-01**, which creates the project and builds it. The condition keys on the project name, not on the Web SDK.)*
+> - **`Directory.Build.targets` confirmed dead code** and commented as such — its guardrail target is conditioned on `Merchandising.Api`, which does not exist yet. *(Corrected 2026-08-16: that comment said the target activates at P1-02. It activates at **P1-01**, which creates the project and builds it. The condition keys on the project name, not on the Web SDK.)* **Superseded at P1-02b: it is no longer dead code — it went live at P1-01 and the "DEAD CODE" header it was given here was left behind. See the P1-02b card.**
 
 > **Environment note.** `git init` had not been run in this directory. `git rev-parse` was resolving to a stray repository at `C:\.git` (someone ran `git init` at the drive root), which would have made `git add -A` catastrophic. A repository now exists at the project root and shadows it. **The stray `C:\.git` was left in place — deleting it is your call, not the agent's.**
 
@@ -430,6 +430,38 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] Either outcome recorded — a negative result is a valid result
 
 **Evidence:** `p1-02a-rungb-result.txt`
+
+---
+
+### ✅ P1-02b · `Directory.Build.targets` still called itself dead code
+
+**Closes:** a stale claim found at P1-02 · **Touches:** `Directory.Build.targets`, `plan.md` §2/§3, this file, `evidence/phase-0/PHASE-0-READINESS.md`
+
+**Documentation only. No behaviour changed, no script edited, no evidence file created** — the measurements below are recorded in the target's own comment, which is where a reader needs them.
+
+**Why.** The file's header block read *"THIS TARGET IS DEAD CODE. IT HAS NEVER RUN"*. True when written at P0-07, when `src/` held only `.gitkeep`. False from P1-01 onwards, which created `Merchandising.Api` and built it — the guardrail lines have been appearing inline in every build since. The header survived P1-01 and P1-01a untouched and was caught at P1-02.
+
+**Why it was worth a commit rather than a shrug.** The claim is not inert. P0-07 used it to argue that the git pre-commit hook is the only real protection: *"do not read this file as evidence that guardrails run during a build — they do not, because no build happens."* **That conclusion is still correct and the reason for it is now different and weaker** — which is exactly the kind of drift that gets a load-bearing hook deleted by someone who reads the old reason and finds it no longer applies.
+
+**Measured before writing any of it down** (`Directory.Build.targets` records the same table):
+
+| Invocation | Guardrails |
+|---|---|
+| `dotnet build`, full solution | run |
+| `dotnet build`, nothing changed since last build | **run** — the target declares no `Inputs`/`Outputs`, so MSBuild never skips it as up to date |
+| `dotnet build -p:MerchSkipGuardrails=true` | skipped, as designed |
+
+**The corrected reasoning, now in the file:** it is a **safety net, not a gate**. It fires only when a *build* fires, so a Visual Studio edit committed without a rebuild never reaches it, and `MerchSkipGuardrails=true` bypasses it outright. **The git pre-commit hook remains the gate**, for a reason that survives the correction.
+
+**Done when:**
+
+- [x] The header states the real status, with the three measured cases
+- [x] The superseded reasoning is spelled out rather than silently replaced — old reason and real reason side by side
+- [x] `plan.md` §2 tree and §3 item 3 corrected — both said "inactive until P1-01"
+- [x] `PHASE-0-READINESS.md` §6 item 4 **appended to, not rewritten** — it is evidence, and evidence records a moment
+- [x] `dotnet build` and `run-tests.ps1` still green afterwards
+
+> **Left alone deliberately:** `docs/claude-code-phase0-close-prompt.md` §B5 also says the target is dead code and activates at P1-02. It is a spent session prompt, not a live document — a record of what a past session was asked to do. Correcting it would falsify that record for no reader's benefit.
 
 ---
 
