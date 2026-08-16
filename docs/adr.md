@@ -343,6 +343,10 @@ Second, the template writes `MSTestSettings.vb` containing:
 
 **That is actively wrong for the integration suite.** Method-level parallelism runs tests concurrently against the one real MariaDB instance, which shares state between them — it would make P1-12's rollback proof and P1-14's idempotency proof flaky for reasons that have nothing to do with the code under test. The integration project must set `<Assembly: DoNotParallelize>` instead. (P1-13's concurrency proof creates its own concurrency inside a single test; it does not want the runner supplying more.) The unit project may keep method-level parallelism.
 
+**Confirmed at P1-01, plus one more the template audit missed.** Both defects above appeared exactly as predicted. A third did not: **both MSTest templates wrap their generated test class in a `Namespace` block matching the project's own `RootNamespace`**, so `Merchandising.Tests.Unit` would have resolved as `Merchandising.Tests.Unit.Merchandising.Tests.Unit`. The generated `Test1.vb` files were replaced rather than patched — they asserted nothing at all. (`dotnet new wpflib -lang VB` has an unrelated defect of the same character: a duplicated `<RootNamespace>` element.)
+
+**Treat every `dotnet new … -lang VB` output as a draft.** These templates are maintained against C# and translated; the translation is not clean. Read what they emit before adding it to the solution.
+
 **Evidence.** Recorded at P1-01 into `evidence/phase-1/p1-01-build.log`.
 
 ---

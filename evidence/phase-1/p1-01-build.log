@@ -1,0 +1,164 @@
+P1-01 - Create the solution and all eleven empty VB projects
+Captured: 2026-08-16 16:52:58 +08:00
+Machine:  LAPTOP-3HH6OHHE
+==============================================================================
+
+SECTION 1 - dotnet build Merchandising.sln (clean rebuild)
+------------------------------------------------------------------------------
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0\Merchandising.Tests.Unit.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  Get-Content : Cannot find path 'C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\Me
+  rchandising.Procurement_p52b0mbv_wpftmp.vbproj' because it does not exist.
+  At C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\check-no-csharp.ps1:188 char:16
+  +     $content = Get-Content -Path $proj.FullName -Raw
+  +                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      + CategoryInfo          : ObjectNotFound: (C:\Users\Admin\...v_wpftmp.vbproj:String) [Get-Content], ItemNotFoundEx 
+     ception
+      + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand
+   
+  G-D  Checking Option Strict inheritance...
+C:\Users\Admin\Documents\Hardware_Merchandising_System\Directory.Build.targets(58,5): error MSB3073: The command "powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\check-no-csharp.ps1"" exited with code 1. [C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Merchandising.Api.vbproj]
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+
+Build FAILED.
+
+C:\Users\Admin\Documents\Hardware_Merchandising_System\Directory.Build.targets(58,5): error MSB3073: The command "powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\check-no-csharp.ps1"" exited with code 1. [C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Merchandising.Api.vbproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:20.08
+
+SECTION 2 - scripts/check-no-csharp.ps1 under Windows PowerShell 5.1
+(the interpreter Directory.Build.targets invokes, per its own comment)
+------------------------------------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+exit code: 0
+
+SECTION 3 - scripts/run-tests.ps1 (guardrails + build + both suites)
+------------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0\Merchandising.Tests.Unit.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:17.45
+
+=== Unit tests ===
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: 67 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: 114 ms - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+exit code: 0
+
+
+SECTION 4 - Acceptance verification (mechanical, not asserted)
+------------------------------------------------------------------------------
+
+4.1  Eleven projects, target framework via variable only
+
+  Merchandising.Api                      $(MerchNetTfm)
+  Merchandising.ClientCommon             $(MerchWindowsTfm)
+  Merchandising.Contracts                $(MerchNetTfm)
+  Merchandising.Domain                   $(MerchNetTfm)
+  Merchandising.Infrastructure           $(MerchNetTfm)
+  Merchandising.Inventory                $(MerchWindowsTfm)
+  Merchandising.Maintenance              $(MerchNetTfm)
+  Merchandising.POS                      $(MerchWindowsTfm)
+  Merchandising.Procurement              $(MerchWindowsTfm)
+  Merchandising.Tests.Integration        $(MerchNetTfm)
+  Merchandising.Tests.Unit               $(MerchNetTfm)
+
+  hard-coded TFM occurrences: 0  -> PASS
+
+4.2  Project reference graph (compare against plan.md section 2)
+
+  Merchandising.Api                      -> Merchandising.Domain, Merchandising.Contracts, Merchandising.Infrastructure
+  Merchandising.ClientCommon             -> Merchandising.Contracts
+  Merchandising.Contracts                -> Merchandising.Domain
+  Merchandising.Domain                   -> (none)
+  Merchandising.Infrastructure           -> Merchandising.Domain, Merchandising.Contracts
+  Merchandising.Inventory                -> Merchandising.ClientCommon, Merchandising.Contracts
+  Merchandising.Maintenance              -> Merchandising.Infrastructure, Merchandising.Domain
+  Merchandising.POS                      -> Merchandising.ClientCommon, Merchandising.Contracts
+  Merchandising.Procurement              -> Merchandising.ClientCommon, Merchandising.Contracts
+  Merchandising.Tests.Integration        -> Merchandising.Api, Merchandising.Infrastructure, Merchandising.Domain, Merchandising.Contracts
+  Merchandising.Tests.Unit               -> Merchandising.Domain, Merchandising.Contracts
+
+4.3  ClientCommon references ONLY Contracts - read from the file itself
+
+      <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  (no other reference element of any kind is present in that file)
+
+4.4  Test project locations - the paths run-tests.ps1 probes
+
+  src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj  exists=True
+  src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj  exists=True
+  Proven behaviourally in SECTION 3: run-tests.ps1 executed both suites
+  rather than printing 'not created yet (task P1-19)'.
+
+4.5  Zero C# artefacts under src/ (bin/ and obj/ excluded)
+
+  count: 0  -> PASS
+
+4.6  Merchandising.Api is still a plain shell (P1-02 owns the Web SDK)
+
+  Sdk attribute      : Microsoft.NET.Sdk
+  OutputType present : False
+  Program.vb present : False
+  any controller     : 0
+

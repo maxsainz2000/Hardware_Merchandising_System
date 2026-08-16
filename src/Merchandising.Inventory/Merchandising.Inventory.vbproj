@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Inventory - WPF application. Products, stock visibility,
+    counts, movements, adjustments, and inventory reports. Spec section 7.
+
+    Client project: references ClientCommon and Contracts only. It reaches
+    the server exclusively over HTTPS (spec section 8) and holds no
+    server-side library and no data-access package. Guardrails G-B and G-C
+    enforce that; the forbidden names are listed in
+    scripts/check-no-csharp.ps1 and are not repeated here, because G-B
+    matches raw file text and would fail on the comment itself.
+
+    This is the client that P1-15 builds the Phase 1 spike into: ONE window,
+    login, one protected call, one decrement, connection status. Not a
+    product grid - that is Phase 2.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Merchandising.Inventory</RootNamespace>
+    <TargetFramework>$(MerchWindowsTfm)</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <!--
+    Project-level VB imports emitted by the WPF template. These are Visual
+    Basic global Imports, not the C#-only <Using> item - they are correct
+    here and are kept.
+  -->
+  <ItemGroup>
+    <Import Include="System.Windows" />
+    <Import Include="System.Windows.Controls" />
+    <Import Include="System.Windows.Data" />
+    <Import Include="System.Windows.Documents" />
+    <Import Include="System.Windows.Input" />
+    <Import Include="System.Windows.Media" />
+    <Import Include="System.Windows.Media.Imaging" />
+    <Import Include="System.Windows.Navigation" />
+    <Import Include="System.Windows.Shapes" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj" />
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>

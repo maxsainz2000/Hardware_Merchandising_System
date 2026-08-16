@@ -21,7 +21,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $RepoRoot = (Split-Path -Parent $PSScriptRoot)
+    [string] $RepoRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +30,52 @@ $failures = New-Object System.Collections.Generic.List[string]
 function Add-Failure {
     param([string] $Guardrail, [string] $Message)
     $failures.Add("[$Guardrail] $Message")
+}
+
+# ---------------------------------------------------------------------------
+# Repository root resolution
+#
+# FIXED AT P1-01, on this script's first execution under Windows PowerShell.
+# $RepoRoot was previously a param() default of (Split-Path -Parent
+# $PSScriptRoot). Under pwsh that works. Under Windows PowerShell 5.1 invoked
+# as `powershell -File <script>` - which is exactly how Directory.Build.targets
+# calls this script, deliberately, for machines with no pwsh installed -
+# $PSScriptRoot is empty at param-binding time, Split-Path rejects the empty
+# string, and the whole build fails with MSB3073.
+#
+# The loud failure was the lucky outcome. The dangerous one is one step away:
+# had $RepoRoot merely ended up empty rather than throwing, $srcPath would have
+# resolved relative to MSBuild's working directory, src/ would not have been
+# found there, and this script would have printed "nothing to check yet" and
+# EXITED 0. A guardrail that passes because it is looking in the wrong place is
+# worse than no guardrail, because it is trusted.
+#
+# So: resolve the root through a fallback chain, and then prove it really is
+# the repository root before trusting any result derived from it.
+# ---------------------------------------------------------------------------
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $scriptDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($scriptDir) -and $MyInvocation.MyCommand.Path) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        Write-Host 'Cannot determine the location of this script. Pass -RepoRoot explicitly.' -ForegroundColor Red
+        exit 1
+    }
+    $RepoRoot = Split-Path -Parent $scriptDir
+}
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot) -or -not (Test-Path -LiteralPath $RepoRoot)) {
+    Write-Host "Repository root '$RepoRoot' does not exist. Refusing to report a pass." -ForegroundColor Red
+    exit 1
+}
+
+# Marker check. CLAUDE.md sits at the repository root and nowhere else, so its
+# absence means we resolved to the wrong directory. Fail rather than pass.
+if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'CLAUDE.md'))) {
+    Write-Host "'$RepoRoot' does not look like the repository root (no CLAUDE.md)." -ForegroundColor Red
+    Write-Host 'Refusing to report a pass from a directory that may not be the repository.' -ForegroundColor Red
+    exit 1
 }
 
 $srcPath = Join-Path $RepoRoot 'src'

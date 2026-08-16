@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.POS - WPF application. Cashier sessions, product lookup,
+    cart, checkout, returns, receipt data, and sales history. Spec section 7.
+
+    Client project: references ClientCommon and Contracts only. It reaches
+    the server exclusively over HTTPS (spec section 8) and holds no
+    server-side library and no data-access package. Guardrails G-B and G-C
+    enforce that; the forbidden names are listed in
+    scripts/check-no-csharp.ps1 and are not repeated here, because G-B
+    matches raw file text and would fail on the comment itself.
+
+    Phase 1 scope for this project is nothing at all - P1-15 builds one
+    window in Inventory only. This is a shell until Phase 2.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Merchandising.POS</RootNamespace>
+    <TargetFramework>$(MerchWindowsTfm)</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <!--
+    Project-level VB imports emitted by the WPF template. These are Visual
+    Basic global Imports, not the C#-only <Using> item - they are correct
+    here and are kept.
+  -->
+  <ItemGroup>
+    <Import Include="System.Windows" />
+    <Import Include="System.Windows.Controls" />
+    <Import Include="System.Windows.Data" />
+    <Import Include="System.Windows.Documents" />
+    <Import Include="System.Windows.Input" />
+    <Import Include="System.Windows.Media" />
+    <Import Include="System.Windows.Media.Imaging" />
+    <Import Include="System.Windows.Navigation" />
+    <Import Include="System.Windows.Shapes" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj" />
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>

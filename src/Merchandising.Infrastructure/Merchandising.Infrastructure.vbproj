@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Infrastructure - MariaDB connection handling, parameterized
+    queries, transactions, repositories, audit persistence, configuration.
+    Spec section 7.
+
+    SERVER-SIDE ONLY. This project is where the database connector and the
+    connection string live (task P1-05). Guardrail G-B fails the build if any
+    client project - ClientCommon, Procurement, Inventory, POS - references
+    it, because that reference is the mechanism by which a database
+    credential would reach a client laptop. See CLAUDE.md section 4.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Infrastructure</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>

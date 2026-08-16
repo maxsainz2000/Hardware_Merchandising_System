@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Tests.Integration - database, API, transaction,
+    concurrency, backup/restore, and service tests. Spec section 7.
+
+    These run against the REAL pinned MariaDB server, never an in-memory
+    substitute (ADR-000, ADR-009). The whole point of the Phase 1 gate is
+    proving behaviour against the exact server version in ADR-002; a fake
+    provider would prove nothing.
+
+    Framework: MSTest, pinned in ADR-009 (ACCEPTED). Do not switch it.
+
+    Corrected from the `dotnet new mstest -lang VB` output per ADR-009.2 -
+    the template emits a C# project file with the language swapped. Removed
+    <ImplicitUsings>, <Nullable> and the C#-only <Using> item; hard-coded
+    net10.0 replaced with $(MerchNetTfm).
+
+    PARALLELISM IS DISABLED HERE - see MSTestSettings.vb. The template's
+    default is method-level parallelism, which would run these tests
+    concurrently against the one shared database instance and make P1-12's
+    rollback proof and P1-14's idempotency proof flaky for reasons that
+    have nothing to do with the code under test. P1-13 creates its own
+    concurrency inside a single test; it does not want the runner adding
+    more on top.
+
+    The reference to Merchandising.Api is what P1-19 needs for
+    WebApplicationFactory to reach Program. At P1-01 that project is still
+    a plain library shell; P1-02 converts it to the Web SDK and this
+    reference is unaffected by that change.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Tests.Integration</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Merchandising.Api\Merchandising.Api.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>

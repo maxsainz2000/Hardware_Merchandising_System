@@ -16,8 +16,23 @@
       whole solution moves together if the target is ever revised.
         MerchNetTfm        - class libraries, API, maintenance utility, tests
         MerchWindowsTfm    - WPF clients (Windows-only UI framework)
-      CONFIRM against `dotnet --info` on the classroom machines (task P0-01)
-      and record the exact SDK version in docs/environment-manifest.md.
+      CONFIRM against `dotnet info` (the SDK's version report) on the
+      classroom machines (task P0-01) and record the exact SDK version in
+      docs/environment-manifest.md.
+
+      NOTE, P1-01. The command name above is written without its leading
+      double dash on purpose.
+
+      Two consecutive hyphen characters are illegal inside an XML comment.
+      This file previously contained a pair, in the flag form of that
+      command name, which made Directory.Build.props invalid XML and broke
+      EVERY MSBuild invocation in the repository. It went unnoticed through
+      the whole of Phase 0 because no build had ever run: src/ was empty
+      until P1-01, so nothing ever parsed this file.
+
+      Do not reintroduce a double dash in any comment here or in
+      Directory.Build.targets. That includes quoting the parser's own error
+      message, which contains one.
     -->
     <MerchNetTfm>net10.0</MerchNetTfm>
     <MerchWindowsTfm>net10.0-windows</MerchWindowsTfm>

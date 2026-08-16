@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Maintenance - console utility. Migrations, scheduled
+    backup, restore workflow, schema verification, maintenance logs.
+    Spec section 7.
+
+    Server-side tool. It runs on the host laptop only and is never
+    installed on a client, which is why it may reference Infrastructure
+    directly. Restore in particular must never be reachable as an ordinary
+    live API request (spec section 15, task P1-18) - putting it here rather
+    than behind an endpoint is that guarantee.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Merchandising.Maintenance</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
+    <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+  </ItemGroup>
+
+</Project>

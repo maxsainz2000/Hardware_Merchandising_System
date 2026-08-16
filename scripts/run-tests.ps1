@@ -22,10 +22,26 @@
 param(
     [switch] $SkipIntegration,
     [string] $Configuration = 'Debug',
-    [string] $RepoRoot = (Split-Path -Parent $PSScriptRoot)
+    [string] $RepoRoot
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Same $PSScriptRoot-in-a-param-default defect that broke check-no-csharp.ps1
+# on its first run under Windows PowerShell 5.1 at P1-01. This script is
+# documented to run under pwsh, where the original form works - but the two
+# scripts sit side by side and get copied from each other, so both are fixed.
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $scriptDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($scriptDir) -and $MyInvocation.MyCommand.Path) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        Write-Host 'Cannot determine the location of this script. Pass -RepoRoot explicitly.' -ForegroundColor Red
+        exit 1
+    }
+    $RepoRoot = Split-Path -Parent $scriptDir
+}
 
 function Write-Step { param([string] $Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 

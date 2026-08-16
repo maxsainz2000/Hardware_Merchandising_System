@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Domain - domain entities, value objects, enumerations,
+    invariants, and domain services. Spec section 7.
+
+    DEPENDS ON NOTHING. This is deliberate and is the root of the dependency
+    direction in plan.md section 2. If you are about to add a ProjectReference
+    here, you are about to invert the architecture - stop.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Domain</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+</Project>

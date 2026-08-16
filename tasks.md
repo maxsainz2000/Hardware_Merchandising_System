@@ -157,6 +157,8 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 > **Left open deliberately.** The directory skeleton exists (`src/`, `db/migrations/`, `evidence/phase-0..7/`, `.claude/`), but `plan.md` §2 also lists `docs/*.md` documents that do not exist yet (`database-design.md`, `api-specification.md`, `role-permission-matrix.md`, `ui-specification.md`, `backup-restore-guide.md`, `user-guide.md`, `test-plan.md`), plus `scripts/publish-release.ps1` and `Merchandising.sln`. The eleven `src/` project directories are P1-01's job. Tick the structure box when those exist — not before.
 >
 > **P0-07 progress:** `docs/installation-guide.md` now exists (created for the `MERCH-HOST` procedure), so one of the eight is done. `.gitattributes` — which `plan.md` §2 does *not* list but should — was also created; see the P0-07 close-out note below.
+>
+> **P1-01 progress:** the eleven `src/` project directories and `Merchandising.sln` now exist, so those parts of `plan.md` §2 are satisfied. **Box still unticked** — seven `docs/*.md` documents (`database-design`, `api-specification`, `role-permission-matrix`, `ui-specification`, `backup-restore-guide`, `user-guide`, `test-plan`) and `scripts/publish-release.ps1` do not exist yet. `src/.gitkeep` was removed, having served its purpose.
 
 > **P0-07 close-out — what this session added to the scaffold.**
 >
@@ -244,7 +246,7 @@ One session, no application code, no project created under `src/`. Full account 
 
 ## Track A — Solution and API skeleton
 
-### ⬜ P1-01 · Create the solution and all eleven empty VB projects
+### ✅ P1-01 · Create the solution and all eleven empty VB projects
 
 **Spec:** §7 · **Consumes:** ADR-009 (ACCEPTED — MSTest 4.0.2; do not re-decide)
 
@@ -264,19 +266,44 @@ One session, no application code, no project created under `src/`. Full account 
 
 **Done when:**
 
-- [ ] All eleven projects exist with correct names and types
-- [ ] References match `plan.md` §2 exactly
-- [ ] `ClientCommon` references **only** `Contracts` — verified by reading the file, not assumed
-- [ ] **`Merchandising.Api` is a plain shell on `Microsoft.NET.Sdk`** — no Web SDK, no `Program.vb`, no controller. That is P1-02.
-- [ ] **Every generated `.vbproj` uses `$(MerchNetTfm)` or `$(MerchWindowsTfm)`** — not the hard-coded TFM `dotnet new` emits. Verified by reading all eleven files; a literal `net10.0` or `net10.0-windows` in any `.vbproj` fails this box.
-- [ ] **Both test projects land at `src/tests/`** — `src/tests/Merchandising.Tests.Unit/` and `src/tests/Merchandising.Tests.Integration/`, matching the paths `scripts/run-tests.ps1` already probes (lines 43 and 56). Anywhere else and the script silently reports "not created yet" instead of running them.
-- [ ] Generated test `.vbproj` files stripped of C#-only properties per ADR-009.2; integration project set to `DoNotParallelize`
-- [ ] `dotnet build` succeeds
-- [ ] `check-no-csharp.ps1` passes
+- [x] All eleven projects exist with correct names and types
+- [x] References match `plan.md` §2 exactly — full graph dumped in evidence §4.2
+- [x] `ClientCommon` references **only** `Contracts` — verified by reading the file, not assumed (evidence §4.3)
+- [x] **`Merchandising.Api` is a plain shell on `Microsoft.NET.Sdk`** — no Web SDK, no `Program.vb`, no controller. That is P1-02. (evidence §4.6)
+- [x] **Every generated `.vbproj` uses `$(MerchNetTfm)` or `$(MerchWindowsTfm)`** — not the hard-coded TFM `dotnet new` emits. Verified by reading all eleven files; a literal `net10.0` or `net10.0-windows` in any `.vbproj` fails this box. **0 occurrences** (evidence §4.1)
+- [x] **Both test projects land at `src/tests/`** — proven behaviourally: `run-tests.ps1` *executed* both suites rather than printing "not created yet (task P1-19)" (evidence §3, §4.4)
+- [x] Generated test `.vbproj` files stripped of C#-only properties per ADR-009.2; integration project set to `DoNotParallelize`
+- [x] `dotnet build` succeeds — **0 warnings, 0 errors**, all eleven projects
+- [x] `check-no-csharp.ps1` passes — under **both** `pwsh` and Windows PowerShell 5.1
 
 > **`Directory.Build.targets` fires for the first time on this card's `dotnet build`** — see the note under P1-02 and the file's own header comment. If it misfires, fix it here; that is expected first-run work.
 
 **Evidence:** `evidence/phase-1/p1-01-build.log`
+
+> **Result.** Eleven projects, `Merchandising.sln`, full reference graph wired, build clean at 0 warnings, both test suites executing. **It did not go through cleanly on the first attempt — and the three things that broke are the point of this card, not incidental to it.**
+>
+> **1. `Directory.Build.props` was not valid XML, and had never been parsed.** Line 19's comment contained the flag form of `dotnet --info`; a double hyphen is illegal inside an XML comment. This broke **every** MSBuild invocation in the repository with `MSB3073`/parse failure. It survived the whole of Phase 0 undetected because `src/` was empty and no build had ever run — precisely the blind spot P0-08's "the script was authored but never executed" note warned about, in a file nobody thought to re-check. Fixed, with a comment in the file explaining why the command name is now written without its dashes. *(Reintroduced twice while fixing it — first by writing the sequence in prose, then by quoting the parser's own error message verbatim. Both caught by re-parsing before proceeding.)*
+>
+> **2. `check-no-csharp.ps1` failed under Windows PowerShell 5.1** — `$RepoRoot` defaulted to `(Split-Path -Parent $PSScriptRoot)` inside the `param()` block, and `$PSScriptRoot` is empty at param-binding time under `powershell -File`. `Directory.Build.targets` invokes `powershell`, not `pwsh`, **deliberately** (its own comment explains: pwsh is not guaranteed on a machine that only has Visual Studio). So the guardrail worked in every context it had ever been tested in and failed in the one context the build actually uses.
+>
+> **The loud failure was the lucky outcome.** Had `Split-Path` not rejected an empty string, `$RepoRoot` would have been empty, `$srcPath` would have resolved relative to MSBuild's working directory, `src/` would not have been found there, and the script would have printed *"nothing to check yet"* and **exited 0**. A guardrail reporting a pass because it is looking at the wrong directory is worse than no guardrail, because it is trusted. Fixed three ways: a fallback chain for the script directory, an existence check on the resolved root, and a **marker check** — `CLAUDE.md` must be present at the resolved root or the script refuses to report a pass. Verified under both interpreters plus a negative test (`-RepoRoot $env:TEMP` → exit 1, correctly refusing). The identical `$PSScriptRoot` pattern in `run-tests.ps1` was fixed at the same time; the two scripts sit side by side and get copied from each other.
+>
+> **3. `dotnet new sln` now defaults to `.slnx`,** the XML solution format, on SDK 10.0.301. `plan.md` §2 names `Merchandising.sln`, so the classic format was forced with `--format sln`. Recorded because the default will keep reasserting itself on any future `dotnet new sln`.
+>
+> **Two template defects also fixed,** beyond the two ADR-009.2 already predicted: `dotnet new wpflib -lang VB` emits a **duplicated `<RootNamespace>`**, and both MSTest templates nest a `Namespace` block matching the project's own `RootNamespace`, which would have produced `Merchandising.Tests.Unit.Merchandising.Tests.Unit`. The generated `Test1.vb` files asserted nothing and were replaced with `ScaffoldReferenceTests.vb`, which asserts the one thing P1-01 delivers that is observable at run time — that every declared project reference resolves to a loadable assembly. P1-19 deletes them.
+>
+> **Decisions taken, both confirmed with Max before implementation:**
+>
+> - **`ClientCommon` is `$(MerchWindowsTfm)` with `UseWPF`, not `$(MerchNetTfm)`.** Spec §7 puts "common controls, converters, styles" and "XAML resources" in that project; a plain `net10.0` library cannot hold a `ResourceDictionary` or implement `System.Windows.Data.IValueConverter`. The card's shorthand said "libraries use `$(MerchNetTfm)`" — the spec outranks the card (`CLAUDE.md` §1), and the alternative was a twelfth project split out at P1-15 for no gain. G-B is unaffected: `ClientCommon` still references `Contracts` and nothing else.
+> - **Test project references wired now**, not deferred to P1-19: Unit → Domain, Contracts; Integration → Api, Infrastructure, Domain, Contracts. `plan.md` §2's diagram has no rows for the test projects, so this fills a genuine gap rather than contradicting it.
+
+> **⚠️ Open item for Max — a guardrail sharp edge found the hard way, deliberately NOT fixed here.**
+>
+> **G-B matches raw file text, so it cannot tell a package reference from the rule written down in a comment.** Writing `Never <connector-name>` in a comment inside `Merchandising.ClientCommon.vbproj` **failed the build** — the guardrail read its own prohibition as a violation. `check-no-csharp.ps1` lines 89–91 do `Get-Content -Raw` then `-match` against the whole file.
+>
+> This was worked around by not naming the forbidden packages in any client `.vbproj` comment, with a pointer to `scripts/check-no-csharp.ps1` instead. That works, but it is backwards: the client project file is the single best place to write down why the rule exists, and it is the one place the rule cannot be written.
+>
+> **Not fixed unilaterally, per `CLAUDE.md` §7 — a hook block is a stop condition, and G-B is a security guardrail.** The obvious fix is to strip XML comments before matching (a `PackageReference` cannot live inside a comment, so this weakens nothing). Worth its own small card so the change gets its own negative tests, in the P0-08 style, rather than riding along inside P1-01.
 
 ---
 

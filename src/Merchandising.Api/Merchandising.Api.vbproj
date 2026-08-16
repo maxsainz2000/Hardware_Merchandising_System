@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Api - authentication, authorization, business rules,
+    database access, transactions, reporting, audit, and API health.
+    Spec section 7.
+
+    ====================================================================
+    THIS IS A PLAIN SHELL. IT IS NOT THE WEB API YET. THAT IS P1-02.
+    ====================================================================
+
+    At P1-01 this project is deliberately Sdk="Microsoft.NET.Sdk" with the
+    default library output. It has its project references wired and it
+    compiles. That is the whole of P1-01's scope for it.
+
+    P1-02 converts it to Sdk="Microsoft.NET.Sdk.Web" with OutputType=Exe,
+    adds Program.vb (Module Program / Sub Main - NOT top-level statements,
+    which do not exist in Visual Basic), and adds HealthController.
+
+    Do not do any of that early. P1-02 is the rung A proof that resolves
+    ADR-001 and retires this project's dominant risk: there is no Visual
+    Basic ASP.NET Core template, so the Web SDK conversion has to be
+    observed happening, under P1-02's own acceptance checks, and captured
+    in evidence/phase-1/p1-02-project-file.txt. A conversion that has
+    already quietly happened here leaves ADR-001 resolved by inference
+    instead of by evidence.
+
+    Note for whoever runs P1-01: this project's NAME is what activates the
+    MerchGuardrails target in Directory.Build.targets - not its SDK. So the
+    guardrail script runs on P1-01's build, not P1-02's.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Api</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+    <ProjectReference Include="..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
+  </ItemGroup>
+
+</Project>

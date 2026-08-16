@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.ClientCommon - API client, token/session handling, common
+    controls, converters, styles, validation helpers, and connection-state
+    behaviour. Spec section 7.
+
+    ====================================================================
+    REFERENCES Merchandising.Contracts AND NOTHING ELSE.
+    ====================================================================
+
+    Never the server-side infrastructure library, and never a database
+    connector package of any kind. That single rule is what mechanically
+    guarantees a database credential cannot reach a client laptop - it is
+    enforced by guardrail G-B, not by good intentions. The forbidden names
+    are listed in scripts/check-no-csharp.ps1 and are deliberately NOT
+    repeated here: G-B matches raw file text, so writing them out even in
+    a comment fails the build. See CLAUDE.md section 4.
+
+    On the target framework: this is $(MerchWindowsTfm) with UseWPF, not
+    $(MerchNetTfm), because spec section 7 puts "common controls,
+    converters, styles" and "XAML resources" in this project. A plain
+    net10.0 library cannot hold a ResourceDictionary or implement
+    System.Windows.Data.IValueConverter. P1-01's card said "libraries use
+    $(MerchNetTfm)"; the spec outranks the card (CLAUDE.md section 1) and
+    the alternative was a twelfth project split out later for no gain.
+    Referencing the net10.0 Contracts project from here is fine.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.ClientCommon</RootNamespace>
+    <TargetFramework>$(MerchWindowsTfm)</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>

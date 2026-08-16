@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Contracts - request/response DTOs, error models, shared
+    enums, and API contract types. Spec section 7.
+
+    This is the ONLY server-side project a client is permitted to reference.
+    Everything the three WPF clients know about the API's shape lives here.
+    Keep it free of behaviour, and free of anything that would drag a
+    database or infrastructure dependency across the wire with it.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Contracts</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Merchandising.Tests.Unit - domain and calculation tests. Spec section 7.
+
+    Framework: MSTest, pinned in ADR-009 (ACCEPTED). Do not switch it.
+
+    This file has been corrected from what `dotnet new mstest -lang VB`
+    emits. The template produces a C# project file with the language
+    swapped; ADR-009.2 records the details. Removed:
+      <ImplicitUsings>  - C#-only concept, inert in Visual Basic
+      <Nullable>        - C#-only concept, inert in Visual Basic
+      <Using Include="..."/> - the C# global-using item. Visual Basic's
+                        equivalent is <Import>. It was harmless only
+                        because the template also writes a file-level
+                        Imports line into every .vb it generates.
+    And <TargetFramework> now uses $(MerchNetTfm) instead of the hard-coded
+    net10.0 the template emits, so the solution moves together if the
+    target is ever revised (Directory.Build.props).
+
+    Parallelism: this project KEEPS the template's method-level
+    parallelism (see MSTestSettings.vb). These tests touch no shared
+    resource. The integration project deliberately does the opposite.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Merchandising.Tests.Unit</RootNamespace>
+    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Merchandising.Domain\Merchandising.Domain.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+  </ItemGroup>
+
+</Project>
