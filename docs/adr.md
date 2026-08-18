@@ -223,7 +223,9 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 
 ## ADR-004 · Numeric precision
 
-**Status:** PENDING — confirm with professor at task P1-07
+**Status:** ACCEPTED
+**Date:** 2026-08-18
+**Decides:** storage precision for money, quantity, and timestamps. Proven live at task P1-07. **PA-003 (formal professor confirmation) is still outstanding — see the note below; the decision itself is not blocked on it.**
 
 | Kind | Type | Rationale |
 |---|---|---|
@@ -231,9 +233,11 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 | Quantity | `DECIMAL(19,3)` | Hardware stores sell fractional units (metres of cable, kilos of nails) |
 | Timestamps | `DATETIME(6)` UTC | Microsecond precision; UTC storage, Asia/Manila display |
 
-**Decision:** _(confirm or adjust after professor review)_
+**Decision.** As proposed in the baseline, confirmed by measurement rather than assumption: `0.001` and `12345678901234.5678` both round-trip exactly through real `DECIMAL(19,3)`/`DECIMAL(19,4)` columns (`StockBalances.Quantity`, `Products.Price`) on the pinned MariaDB 10.4.32 instance, first at the P0-07 pre-check and again at P1-07 against the real `Products`/`StockBalances` tables. See `evidence/phase-1/p1-07-precision-check.txt`.
 
 **Consequence.** `Double` and `Single` are forbidden for money and quantity everywhere — storage, calculation, and transport. Use `Decimal` in VB.
+
+**Resolved like ADR-000 at P0-06: the decision is settled on its own evidence, the professor-approval paperwork is separate and still open.** `p1-07-precision-check.txt` demonstrates why the decision cannot simply wait on the database to enforce it: `UPDATE ... SET Cost = 0.19995` against `DECIMAL(19,4)` under `STRICT_TRANS_TABLES` silently stores `0.2000` (`Note 1265`, not an error) — exactly the ADR-004.1 hole. **PA-003 has not been raised with the professor yet** — that is Max's action, tracked the same way PA-001/PA-002 were at P0-06, and `tasks.md`'s P1-07 card stays 🟡 until it happens.
 
 ---
 

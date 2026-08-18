@@ -1,0 +1,66 @@
+P1-07 - Migration 0001 (POC schema slice) - decimal precision evidence
+Generated 2026-08-18 22:48 +0800, against the real pinned MariaDB instance
+(10.4.32-MariaDB via XAMPP 8.2.12-0). ADR-004: money DECIMAL(19,4),
+quantity DECIMAL(19,3), timestamps DATETIME(6) UTC.
+
+=== 1. Round-trip at the storage boundary (real Products/StockBalances) ===
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, IsActive, CreatedAtUtc, UpdatedAtUtc) VALUES ('PROOF-SKU', NULL, 'Proof Product', 12345678901234.5678, 0.0001, 1, '2026-08-18 00:00:00', '2026-08-18 00:00:00');"
+$ mysql -u merch_api merchandising -e "SELECT Id, Price, Cost FROM products WHERE Sku='PROOF-SKU';"
+Id  Price                   Cost
+1   12345678901234.5678     0.0001
+  [PASS] money DECIMAL(19,4) round-trips 12345678901234.5678 exactly
+
+$ mysql -u merch_api merchandising -e "INSERT INTO stockbalances (ProductId, Quantity, RowVersion, UpdatedAtUtc) SELECT Id, 0.001, 0, '2026-08-18 00:00:00' FROM products WHERE Sku='PROOF-SKU';"
+$ mysql -u merch_api merchandising -e "SELECT ProductId, Quantity FROM stockbalances WHERE ProductId = (SELECT Id FROM products WHERE Sku='PROOF-SKU');"
+ProductId  Quantity
+1          0.001
+  [PASS] quantity DECIMAL(19,3) round-trips 0.001 exactly
+
+=== 2. Why an API-side guard is required: the database rounds over-scale values silently ===
+$ mysql -u merch_api merchandising -e "UPDATE products SET Cost = 0.19995 WHERE Sku='PROOF-SKU'; SHOW WARNINGS; SELECT Cost FROM products WHERE Sku='PROOF-SKU';"
+Level  Code  Message
+Note   1265  Data truncated for column 'Cost' at row 1
+Cost
+0.2000
+  Confirms ADR-004.1: STRICT_TRANS_TABLES does not turn an over-scale
+  decimal into an error. 0.19995 (5 dp) into DECIMAL(19,4) silently becomes
+  0.2000 - a Note, not an ERROR, and INSERT/UPDATE reports success either
+  way. A value read back at the correct scale proves nothing about whether
+  it arrived pre-rounded or was rounded by the server.
+
+Proof rows (products/stockbalances 'PROOF-SKU', the auditlogs and users rows
+from p1-07-audit-immutability.txt section 5) were deleted afterward as
+merch_migrator (merch_api has no DELETE on products/stockbalances/users/
+auditlogs by design - 0002's comment: "deactivate, do not delete"). Table
+row counts confirmed back at 0 for all proof data; roles (5, seeded by the
+migration) and the real schemamigrations row are the only permanent rows
+left, per p1-07-audit-immutability.txt section 5.
+
+=== 3. Client-supplied over-scale values are validated, not rounded, at the API boundary ===
+This is the acceptance box's actual requirement - proven not by reading a
+stored value back (section 2 shows exactly why that proves nothing), but by
+exercising the guard directly: Merchandising.Domain.DecimalScaleGuard,
+src/tests/Merchandising.Tests.Unit/DecimalScaleGuardTests.vb.
+
+Judgment call: written as a unit test, not a Tests.Integration test, despite
+the card's literal wording "Integration test". DecimalScaleGuard is pure
+Domain logic with no I/O - ADR-009's own project split assigns "domain and
+calculation tests" to Merchandising.Tests.Unit and reserves
+Merchandising.Tests.Integration for tests that need the real MariaDB
+instance. Giving this test a database dependency it does not need would
+contradict that split for no benefit.
+
+$ dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~DecimalScaleGuardTests"
+
+Test run for ...Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     7, Skipped:     0, Total:     7
+
+Covers: EnsureMoneyScale_RejectsOverScaleValue (1.99999 -> ArgumentException),
+EnsureQuantityScale_RejectsOverScaleValue (1.9999 -> ArgumentException),
+EnsureMoneyScale_AcceptsValueAtOrBelowScale, EnsureQuantityScale_AcceptsValueAtOrBelowScale,
+RoundMoney_RoundsHalfAwayFromZero, RoundQuantity_RoundsHalfAwayFromZero (ADR-004.1's
+AwayFromZero policy, not .NET's default banker's rounding),
+BoundaryValues_RoundTripExactlyAtStorageScale (0.001 and 12345678901234.5678,
+the same two figures proven at the storage layer in section 1).

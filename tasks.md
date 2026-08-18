@@ -669,7 +669,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-07 · Migration 0001 — POC schema slice
+### 🟡 P1-07 · Migration 0001 — POC schema slice
 
 **Spec:** §12 · **Closes:** G-20, G-21 (begins) · **Decides:** ADR-004
 
@@ -685,14 +685,14 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Migration applies clean on an empty database
-- [ ] `db/grants/0002_post-migration-grants.sql` applied after the migration, with the ten table names matching what `0001_foundation.sql` actually created
-- [ ] `UPDATE` on `AuditLogs` as `merch_api` is **rejected by privilege** (`ERROR 1142`) — mechanism already proven at P1-04, `evidence/phase-1/p1-04a-grant-model-proof.txt`; this box proves it on the *real* table
-- [ ] `DELETE` on `StockMovements` as `merch_api` is **rejected by privilege** (`ERROR 1142`)
-- [ ] `merch_api` has **no** write privilege on `SchemaMigrations` — a row it could insert would make the runner skip a migration that never ran
-- [ ] `0.001` and `12345678901234.5678` round-trip exactly
-- [ ] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
-- [ ] **Integration test:** an over-scale value (money with >4 dp, quantity with >3 dp) is either **rejected** by the API or **explicitly rounded** by it before the parameter is bound — asserted at the API boundary, not by reading the stored value back. Per ADR-004.1, `STRICT_TRANS_TABLES` rounds over-scale decimals silently (`Note 1265`), so a correctly-scaled stored value proves nothing on its own.
+- [x] Migration applies clean on an empty database
+- [x] `db/grants/0002_post-migration-grants.sql` applied after the migration, with the ten table names matching what `0001_foundation.sql` actually created
+- [x] `UPDATE` on `AuditLogs` as `merch_api` is **rejected by privilege** (`ERROR 1142`) — mechanism already proven at P1-04, `evidence/phase-1/p1-04a-grant-model-proof.txt`; this box proves it on the *real* table
+- [x] `DELETE` on `StockMovements` as `merch_api` is **rejected by privilege** (`ERROR 1142`)
+- [x] `merch_api` has **no** write privilege on `SchemaMigrations` — a row it could insert would make the runner skip a migration that never ran
+- [x] `0.001` and `12345678901234.5678` round-trip exactly
+- [x] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
+- [x] **Integration test:** an over-scale value (money with >4 dp, quantity with >3 dp) is either **rejected** by the API or **explicitly rounded** by it before the parameter is bound — asserted at the API boundary, not by reading the stored value back. Per ADR-004.1, `STRICT_TRANS_TABLES` rounds over-scale decimals silently (`Note 1265`), so a correctly-scaled stored value proves nothing on its own.
 - [ ] PA-003 raised with the professor
 
 > **P0-07 pre-checks — these were proven on the real server, so 0001 should not surprise you.** A table with two `VARCHAR(255)` utf8mb4 **unique** indexes (SKU and barcode) created without error: `innodb_default_row_format=dynamic`, 16 KB pages, 3072-byte key prefix limit, 255×4 = 1020 bytes used — roughly 3× headroom. `DECIMAL(19,4)` and `DECIMAL(19,3)` round-tripped `12345678901234.5678` and `0.001` exactly alongside a `DATETIME(6)`.
@@ -700,6 +700,18 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > Two 10.4 constraints to write around: there is **no `UUID` column type** (added in 10.7) — use `CHAR(36)` or `BINARY(16)` for correlation and idempotency keys; and `lower_case_table_names=1` on Windows, so `StockBalances` is stored as `stockbalances`. Harmless on a Windows-only system, but a dump from this host would not restore cleanly onto a case-sensitive Linux server.
 
 **Evidence:** `p1-07-audit-immutability.txt`, `p1-07-precision-check.txt`
+
+> **Result.** `db/migrations/0001_foundation.sql` creates the ten tables named on this card. Surrogate keys are `INT AUTO_INCREMENT` throughout — MariaDB 10.4 has no `UUID` type (added in 10.7) and this store's scale does not need distributed IDs; `CHAR(36)` is used only for the two genuinely GUID-shaped values, `StockMovements.CorrelationId` and `IdempotencyKeys.KeyValue`. Applied live via `Merchandising.Maintenance.exe migrate` as `merch_migrator`, then `db/grants/0002_post-migration-grants.sql` as root. `merch_api` proven to get `ERROR 1142` on `UPDATE auditlogs`, `DELETE stockmovements`, and every write verb against `schemamigrations` — see `p1-07-audit-immutability.txt`. `0.001` and `12345678901234.5678` round-trip exactly through `StockBalances.Quantity` and `Products.Price` — see `p1-07-precision-check.txt`, which also demonstrates the `Note 1265` silent-rounding hole ADR-004.1 exists to close.
+>
+> **Two scope reductions, both documented in the migration file itself rather than guessed silently:** `Products.Barcode` uniqueness is "unique when present" (an ordinary nullable `UNIQUE` index), not "unique among active products only" — MariaDB 10.4 has no partial/filtered unique index, and Phase 1 has exactly one product to test against. `Categories`/`Brands`/`Units`/`ProductBarcodes`/`PriceHistory` from spec §12's table are out of scope for this slice; `Products` carries `Price`/`Cost` directly instead.
+>
+> **The over-scale validation box is `Merchandising.Domain.DecimalScaleGuard`**, not a live HTTP call — no business endpoint exists yet (P1-08 hasn't built one, and Phase 1 has exactly one protected endpoint, which isn't this). `EnsureMoneyScale`/`EnsureQuantityScale` reject a client-supplied over-scale value with `ArgumentException` before it can reach a bound parameter; `RoundMoney`/`RoundQuantity` apply ADR-004.1's `AwayFromZero` policy for values the API itself computes. Written as a **unit** test (`DecimalScaleGuardTests.vb`), not integration, despite the card's literal wording — it's pure Domain logic with no I/O, and ADR-009's own project split reserves the integration project for tests that actually need MariaDB. P1-11 is where this guard gets exercised through a real endpoint, per ADR-004.1's own text.
+>
+> **A real design conflict with P1-06, caught before it could do damage.** `MigrationRunnerTests` (P1-06) DROP+CREATEd the whole `merchandising` database in `TestInitialize`/`TestCleanup` — safe only because no permanent schema existed yet. Running that suite after this task landed would have destroyed the schema captured above on every single test run, forever. Rewritten to isolate itself with `migtest_<guid>`-prefixed tables and migration identifiers, cleaned up by name pattern via `information_schema` instead of a whole-database `DROP` — never touches the real tables or the real `0001_foundation` row. Re-verified: `run-tests.ps1` green (8/8 unit, 7/7 integration), and the real schema confirmed byte-for-byte unchanged by direct query immediately afterward.
+>
+> **PA-003 box stays unticked** — like PA-001/PA-002 at P0-06, raising it with the professor is Max's action, not the agent's.
+>
+> Also hit and fixed: none this time — no new VB-compiler surprises at P1-07, everything already documented at P1-05/P1-06 held.
 
 ---
 

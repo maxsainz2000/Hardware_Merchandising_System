@@ -10,43 +10,55 @@ Imports MySqlConnector
 ''' MariaDB instance (ADR-000, ADR-008, ADR-009) - never a substitute.
 ''' </summary>
 ''' <remarks>
-''' merch_migrator's grant (db/grants/0001_accounts-and-grants.sql) is
+''' <para>
+''' <b>Changed at P1-07.</b> Before P1-07, "merchandising" had no permanent
+''' schema, so each test could DROP and recreate the whole database for a
+''' clean slate. P1-07 gave it a real, permanent schema (10 tables, seeded
+''' roles, an applied "0001_foundation" row in SchemaMigrations) that every
+''' other task now depends on - dropping the database out from under it on
+''' every test run would destroy real state, not just test fixtures.
+''' </para>
+''' <para>
+''' merch_migrator's grant (db/grants/0001_accounts-and-grants.sql) is also
 ''' scoped to the literal "merchandising" database name, not a wildcard
-''' pattern - it cannot CREATE an arbitrarily-named scratch database
-''' alongside it. Each test therefore DROPs and recreates "merchandising"
-''' itself to get a clean slate (exactly the capability P1-04's evidence
-''' describes as unblocking "P1-06's re-runnable tests"), and TestCleanup
-''' recreates it empty again afterward so it stays empty for P1-07.
-'''
+''' pattern, so a side-by-side scratch database was never an option either
+''' (see the P1-06 task-card result note).
+''' </para>
+''' <para>
+''' Isolation is now per-test-run naming instead of a shared clean slate:
+''' every table this suite creates is named <c>migtest_&lt;suffix&gt;_...</c>
+''' with a fresh GUID suffix per test, and every migration identifier this
+''' suite writes contains "migtest" as a substring. <see cref="CleanUpTestArtifactsAsync"/>
+''' finds and drops exactly those tables via <c>information_schema</c> and
+''' deletes exactly those <c>SchemaMigrations</c> rows, at both SetUp (in
+''' case a previous run crashed mid-test) and TearDown - never touching the
+''' real tables or the real "0001_foundation" row.
+''' </para>
+''' <para>
 ''' Requires both host configuration files from P1-04/P1-05/P1-06 to exist
 ''' on this machine: database.json (merch_api) at
 ''' <see cref="DatabaseOptionsLoader.DefaultConfigPath"/>, and
 ''' database.migrator.json (merch_migrator) alongside it. Neither is
 ''' committed to the repository. See docs/installation-guide.md section 3.1.
+''' </para>
 ''' </remarks>
 <TestClass>
 Public Class MigrationRunnerTests
 
     Private Const MigratorConfigFileName As String = "database.migrator.json"
+    Private Const TestArtifactMarker As String = "migtest"
 
     Private _migrationsDirectory As String
     Private _migratorOptions As DatabaseOptions
-    Private _migratorAdminOptions As DatabaseOptions
+    Private _suffix As String
 
     <TestInitialize>
     Public Async Function SetUpAsync() As Task
 
         _migratorOptions = LoadMigratorOptions()
+        _suffix = Guid.NewGuid().ToString("N").Substring(0, 8)
 
-        _migratorAdminOptions = New DatabaseOptions With {
-            .Host = _migratorOptions.Host,
-            .Port = _migratorOptions.Port,
-            .Database = String.Empty,
-            .UserId = _migratorOptions.UserId,
-            .Password = _migratorOptions.Password
-        }
-
-        Await RecreateMerchandisingDatabaseAsync()
+        Await CleanUpTestArtifactsAsync()
 
         _migrationsDirectory = Path.Combine(Path.GetTempPath(), "merch_mig_test_" & Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(_migrationsDirectory)
@@ -56,7 +68,7 @@ Public Class MigrationRunnerTests
     <TestCleanup>
     Public Async Function TearDownAsync() As Task
 
-        Await RecreateMerchandisingDatabaseAsync()
+        Await CleanUpTestArtifactsAsync()
 
         If Directory.Exists(_migrationsDirectory) Then
             Directory.Delete(_migrationsDirectory, recursive:=True)
@@ -64,22 +76,63 @@ Public Class MigrationRunnerTests
 
     End Function
 
-    Private Async Function RecreateMerchandisingDatabaseAsync() As Task
-        Dim adminFactory As New ConnectionFactory(_migratorAdminOptions)
-        Using connection As MySqlConnection = Await adminFactory.CreateOpenConnectionAsync()
+    ''' <summary>
+    ''' Drops every table named <c>migtest_...</c> (read from
+    ''' <c>information_schema</c>, not a fixed list, so a future test cannot
+    ''' silently leak a table this misses) and deletes every SchemaMigrations
+    ''' row whose identifier contains "migtest". Table/identifier names here
+    ''' are not parameter-bindable in MySQL - they come only from this test
+    ''' class's own naming convention, never from external input.
+    ''' </summary>
+    Private Async Function CleanUpTestArtifactsAsync() As Task
+
+        Dim factory As New ConnectionFactory(_migratorOptions)
+
+        Using connection As MySqlConnection = Await factory.CreateOpenConnectionAsync()
+
+            Dim tableNames As New List(Of String)
+
             Using command As MySqlCommand = connection.CreateCommand()
                 command.CommandText =
-                    "DROP DATABASE IF EXISTS merchandising; " &
-                    "CREATE DATABASE merchandising CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+                    "SELECT TABLE_NAME FROM information_schema.TABLES " &
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'migtest\_%' ESCAPE '\\';"
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync()
+                    While Await reader.ReadAsync()
+                        tableNames.Add(reader.GetString(0))
+                    End While
+                End Using
+            End Using
+
+            For Each tableName As String In tableNames
+                Using command As MySqlCommand = connection.CreateCommand()
+                    command.CommandText = $"DROP TABLE IF EXISTS `{tableName}`;"
+                    Await command.ExecuteNonQueryAsync()
+                End Using
+            Next
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = $"DELETE FROM SchemaMigrations WHERE MigrationId LIKE '%{TestArtifactMarker}%';"
                 Await command.ExecuteNonQueryAsync()
             End Using
+
         End Using
+
     End Function
 
     Private Shared Function LoadMigratorOptions() As DatabaseOptions
         Dim migratorConfigPath As String =
             Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName)
         Return DatabaseOptionsLoader.Load(migratorConfigPath)
+    End Function
+
+    ''' <summary>Test-scoped table name, isolated from the real schema and from other tests by GUID suffix.</summary>
+    Private Function TestTableName(baseName As String) As String
+        Return $"{TestArtifactMarker}_{_suffix}_{baseName}"
+    End Function
+
+    ''' <summary>Test-scoped migration file name - the marker in the identifier is what <see cref="CleanUpTestArtifactsAsync"/> matches on.</summary>
+    Private Function MigrationFileName(number As String, description As String) As String
+        Return $"{number}_{TestArtifactMarker}_{_suffix}_{description}.sql"
     End Function
 
     Private Function WriteMigration(fileName As String, sql As String) As String
@@ -98,10 +151,12 @@ Public Class MigrationRunnerTests
     <TestMethod>
     Public Async Function FirstRun_AppliesMigrationsAndRecordsThem() As Task
 
-        WriteMigration("0001_create_widgets.sql",
-            "CREATE TABLE Widgets (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
-        WriteMigration("0002_seed_widgets.sql",
-            "INSERT INTO Widgets (Id, Name) VALUES (1, 'hammer');")
+        Dim widgetsTable As String = TestTableName("widgets")
+
+        WriteMigration(MigrationFileName("0001", "create_widgets"),
+            $"CREATE TABLE {widgetsTable} (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
+        WriteMigration(MigrationFileName("0002", "seed_widgets"),
+            $"INSERT INTO {widgetsTable} (Id, Name) VALUES (1, 'hammer');")
 
         Dim summary As MigrationRunSummary = Await CreateRunner().RunAsync(_migrationsDirectory)
 
@@ -111,12 +166,13 @@ Public Class MigrationRunnerTests
         Using connection As MySqlConnection = Await New ConnectionFactory(_migratorOptions).CreateOpenConnectionAsync()
 
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText = "SELECT COUNT(*) FROM SchemaMigrations WHERE Succeeded = 1;"
+                command.CommandText =
+                    $"SELECT COUNT(*) FROM SchemaMigrations WHERE Succeeded = 1 AND MigrationId LIKE '%{TestArtifactMarker}_{_suffix}%';"
                 Assert.AreEqual(2L, CLng(Await command.ExecuteScalarAsync()))
             End Using
 
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText = "SELECT COUNT(*) FROM Widgets;"
+                command.CommandText = $"SELECT COUNT(*) FROM {widgetsTable};"
                 Assert.AreEqual(1L, CLng(Await command.ExecuteScalarAsync()))
             End Using
 
@@ -128,8 +184,8 @@ Public Class MigrationRunnerTests
     <TestMethod>
     Public Async Function SecondRun_AppliesNothing() As Task
 
-        WriteMigration("0001_create_widgets.sql",
-            "CREATE TABLE Widgets (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
+        WriteMigration(MigrationFileName("0001", "create_widgets"),
+            $"CREATE TABLE {TestTableName("widgets")} (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
 
         Dim runner As MigrationRunner = CreateRunner()
         Await runner.RunAsync(_migrationsDirectory)
@@ -144,14 +200,16 @@ Public Class MigrationRunnerTests
     <TestMethod>
     Public Async Function TamperedAppliedFile_CausesRefusal() As Task
 
-        Dim path As String = WriteMigration("0001_create_widgets.sql",
-            "CREATE TABLE Widgets (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
+        Dim widgetsTable As String = TestTableName("widgets")
+
+        Dim filePath As String = WriteMigration(MigrationFileName("0001", "create_widgets"),
+            $"CREATE TABLE {widgetsTable} (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
 
         Dim runner As MigrationRunner = CreateRunner()
         Await runner.RunAsync(_migrationsDirectory)
 
-        File.WriteAllText(path,
-            "CREATE TABLE Widgets (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(999) NOT NULL) ENGINE=InnoDB;")
+        File.WriteAllText(filePath,
+            $"CREATE TABLE {widgetsTable} (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(999) NOT NULL) ENGINE=InnoDB;")
 
         Await Assert.ThrowsExactlyAsync(Of MigrationChecksumMismatchException)(
             Function() runner.RunAsync(_migrationsDirectory))
@@ -162,11 +220,14 @@ Public Class MigrationRunnerTests
     <TestMethod>
     Public Async Function FailingMigration_RollsBackAndRecordsFailure() As Task
 
-        WriteMigration("0001_create_probe.sql",
-            "CREATE TABLE RollbackProbe (Id INT NOT NULL PRIMARY KEY, Value VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
-        WriteMigration("0002_conflicting_inserts.sql",
-            "INSERT INTO RollbackProbe (Id, Value) VALUES (1, 'first');" &
-            "INSERT INTO RollbackProbe (Id, Value) VALUES (1, 'duplicate-fails');")
+        Dim probeTable As String = TestTableName("rollbackprobe")
+        Dim secondMigrationId As String = Path.GetFileNameWithoutExtension(MigrationFileName("0002", "conflicting_inserts"))
+
+        WriteMigration(MigrationFileName("0001", "create_probe"),
+            $"CREATE TABLE {probeTable} (Id INT NOT NULL PRIMARY KEY, Value VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
+        WriteMigration(MigrationFileName("0002", "conflicting_inserts"),
+            $"INSERT INTO {probeTable} (Id, Value) VALUES (1, 'first');" &
+            $"INSERT INTO {probeTable} (Id, Value) VALUES (1, 'duplicate-fails');")
 
         Dim summary As MigrationRunSummary = Await CreateRunner().RunAsync(_migrationsDirectory)
 
@@ -177,7 +238,7 @@ Public Class MigrationRunnerTests
         Using connection As MySqlConnection = Await New ConnectionFactory(_migratorOptions).CreateOpenConnectionAsync()
 
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText = "SELECT COUNT(*) FROM RollbackProbe;"
+                command.CommandText = $"SELECT COUNT(*) FROM {probeTable};"
                 Assert.AreEqual(
                     0L, CLng(Await command.ExecuteScalarAsync()),
                     "Both inserts were in the same uncommitted transaction - the failed " &
@@ -185,8 +246,8 @@ Public Class MigrationRunnerTests
             End Using
 
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText =
-                    "SELECT Succeeded FROM SchemaMigrations WHERE MigrationId = '0002_conflicting_inserts';"
+                command.CommandText = "SELECT Succeeded FROM SchemaMigrations WHERE MigrationId = @migrationId;"
+                command.Parameters.AddWithValue("@migrationId", secondMigrationId)
                 Assert.IsFalse(CBool(Await command.ExecuteScalarAsync()))
             End Using
 
@@ -198,15 +259,17 @@ Public Class MigrationRunnerTests
     <TestMethod>
     Public Async Function RunningAsApiAccount_FailsLoudlyRatherThanHalfApplying() As Task
 
-        WriteMigration("0001_create_widgets.sql",
-            "CREATE TABLE Widgets (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
+        Dim widgetsTable As String = TestTableName("widgets")
+
+        WriteMigration(MigrationFileName("0001", "create_widgets"),
+            $"CREATE TABLE {widgetsTable} (Id INT NOT NULL PRIMARY KEY, Name VARCHAR(50) NOT NULL) ENGINE=InnoDB;")
 
         ' Deliberately points at the REAL "merchandising" database (via the
-        ' default database.json / merch_api config), not the scratch
-        ' database - the claim under test is specifically that merch_api
-        ' holds no DDL privilege there (ADR-013), which a scratch database
-        ' it was never granted anything on would not distinguish from a
-        ' plain "access denied to this database" failure.
+        ' default database.json / merch_api config), not a scratch database -
+        ' the claim under test is specifically that merch_api holds no DDL
+        ' privilege there (ADR-013), which a scratch database it was never
+        ' granted anything on would not distinguish from a plain "access
+        ' denied to this database" failure.
         Dim apiOptions As DatabaseOptions = DatabaseOptionsLoader.Load()
         Dim runner As New MigrationRunner(New ConnectionFactory(apiOptions))
 
@@ -224,12 +287,13 @@ Public Class MigrationRunnerTests
         End Try
 
         ' Safety net, not the assertion: if the privilege model ever
-        ' regresses and this DOES half-apply, do not leave a stray
-        ' table behind in the real schema - P1-07 needs it empty.
-        Dim migratorOptions As DatabaseOptions = _migratorOptions
-        Using connection As MySqlConnection = Await New ConnectionFactory(migratorOptions).CreateOpenConnectionAsync()
+        ' regresses and this DOES half-apply, do not leave this test's own
+        ' table behind. Never touches SchemaMigrations directly here - it now
+        ' holds the real, permanent migration history (P1-07) and merch_api
+        ' has already been proven to have no privilege on it anyway.
+        Using connection As MySqlConnection = Await New ConnectionFactory(_migratorOptions).CreateOpenConnectionAsync()
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText = "DROP TABLE IF EXISTS Widgets; DROP TABLE IF EXISTS SchemaMigrations;"
+                command.CommandText = $"DROP TABLE IF EXISTS `{widgetsTable}`;"
                 Await command.ExecuteNonQueryAsync()
             End Using
         End Using

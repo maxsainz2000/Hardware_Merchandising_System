@@ -1,0 +1,90 @@
+P1-07 - Migration 0001 (POC schema slice) - append-only evidence
+Generated 2026-08-18 22:48 +0800, against the real pinned MariaDB instance
+(ADR-000, ADR-002: 10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute.
+
+Sequence: db/grants/0001_accounts-and-grants.sql was already applied at
+P1-04. This run applies db/migrations/0001_foundation.sql via
+Merchandising.Maintenance (merch_migrator, MigrationRunner - ADR-008), then
+db/grants/0002_post-migration-grants.sql as root, then proves the
+append-only guarantee against the REAL tables (not the P1-04a scratch
+tables) as merch_api.
+
+=== 1. Apply migration 0001_foundation as merch_migrator ===
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --no-build -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0001_foundation
+
+$ mysql -u root -e "SHOW TABLES FROM merchandising;"
+auditlogs
+idempotencykeys
+products
+roles
+schemamigrations
+stockbalances
+stockmovements
+systemsettings
+userroles
+users
+(10 tables - matches the task card's list exactly)
+
+=== 2. Apply db/grants/0002_post-migration-grants.sql as root ===
+$ mysql -u root < db/grants/0002_post-migration-grants.sql
+(no output - GRANT statements are silent on success; FLUSH PRIVILEGES ran)
+
+=== 3. merch_api: append-only ledgers reject UPDATE/DELETE (real tables) ===
+$ mysql -u merch_api merchandising -e "UPDATE auditlogs SET Result='tampered' WHERE Id=1;"
+ERROR 1142 (42000) at line 1: UPDATE command denied to user 'merch_api'@'localhost' for table `merchandising`.`auditlogs`
+  [PASS] UPDATE auditlogs -> ERROR 1142, exactly as required by the task card
+
+$ mysql -u merch_api merchandising -e "DELETE FROM stockmovements;"
+ERROR 1142 (42000) at line 1: DELETE command denied to user 'merch_api'@'localhost' for table `merchandising`.`stockmovements`
+  [PASS] DELETE stockmovements -> ERROR 1142, exactly as required by the task card
+
+=== 4. merch_api has NO write privilege on SchemaMigrations at all ===
+$ mysql -u merch_api merchandising -e "INSERT INTO schemamigrations (MigrationId, Checksum, AppliedAtUtc, Succeeded) VALUES ('9999_forged','x','2026-08-18 00:00:00',1);"
+ERROR 1142 (42000) at line 1: INSERT command denied to user 'merch_api'@'localhost' for table `merchandising`.`schemamigrations`
+
+$ mysql -u merch_api merchandising -e "UPDATE schemamigrations SET Succeeded=0 WHERE MigrationId='0001_foundation';"
+ERROR 1142 (42000) at line 1: UPDATE command denied to user 'merch_api'@'localhost' for table `merchandising`.`schemamigrations`
+
+$ mysql -u merch_api merchandising -e "DELETE FROM schemamigrations;"
+ERROR 1142 (42000) at line 1: DELETE command denied to user 'merch_api'@'localhost' for table `merchandising`.`schemamigrations`
+  [PASS] INSERT/UPDATE/DELETE on schemamigrations all denied - the API cannot
+         forge, alter, or erase migration history, so it can never make the
+         runner believe a migration ran that never did (0002's own comment).
+
+=== 5. Sanity check: mutable tables DO accept the writes 0002 grants ===
+$ mysql -u merch_api merchandising -e "INSERT INTO users (...) VALUES (...);"
+$ mysql -u merch_api merchandising -e "INSERT INTO auditlogs (...) VALUES (...);"
+$ mysql -u merch_api merchandising -e "SELECT COUNT(*) FROM auditlogs;"
+1
+  [PASS] INSERT allowed where 0002 grants it - the denials above are the
+         grant model working as designed, not a broken connection.
+
+Proof rows from section 5 and section 6 (p1-07-precision-check.txt) were
+removed afterward via merch_migrator - see that file's cleanup section.
+Steady state after this task: 10 tables, 5 seeded roles, one real
+SchemaMigrations row (0001_foundation, Succeeded=1). This is the P1-07
+baseline every later task builds on - unlike P1-06, this schema is meant to
+persist.
+
+=== 6. Test-suite safety re-verified ===
+A design conflict was caught and fixed before this evidence was captured:
+P1-06's MigrationRunnerTests originally DROP+CREATATEd the whole
+"merchandising" database in TestInitialize/TestCleanup, which was safe only
+because no permanent schema existed yet. Running that suite after this task
+would have destroyed the schema captured above on every test run. Rewritten
+to isolate itself via migtest_<guid>-prefixed tables and migration
+identifiers, cleaned up by name pattern instead of a whole-database DROP.
+
+$ pwsh ./scripts/run-tests.ps1
+=== Guardrails ===  G-A/B/C/D pass
+=== Build ===       0 Warning(s), 0 Error(s)
+=== Unit tests ===  Passed! - Failed: 0, Passed: 8, Skipped: 0, Total: 8
+=== Integration tests (real MariaDB) ===
+                     Passed! - Failed: 0, Passed: 7, Skipped: 0, Total: 7
+All checks passed.
+
+$ mysql -u root -e "SHOW TABLES FROM merchandising; SELECT COUNT(*) FROM merchandising.roles; SELECT MigrationId, Succeeded FROM merchandising.schemamigrations;"
+(same 10 tables, 5 roles, single 0001_foundation row as section 1 - confirmed
+untouched by the test run that just executed)
