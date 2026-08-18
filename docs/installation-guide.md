@@ -97,7 +97,7 @@ These sections are owned by later tasks and are deliberately absent rather than 
 
 | Section | Owed by |
 |---|---|
-| MariaDB accounts, grants, and `sql_mode` hardening | P1-04 |
+| MariaDB accounts, grants, and `sql_mode` hardening | P1-04 — **accounts and grants now scripted, see §3.2** |
 | Certificate installation and client trust procedure | P1-09 |
 | Windows Service registration and recovery settings | P1-16 |
 | Backup schedule, retention, and off-host destination | P1-17 |
@@ -158,3 +158,68 @@ of it; treat the file the same way as the MariaDB root password.
 **Verification:** `evidence/phase-1/p1-05-connection-test.log` records a live connection
 opened through this exact file, with `STRICT_TRANS_TABLES` and `READ COMMITTED` both proven on
 the session.
+
+---
+
+## 3.1 The second configuration file — migrations (P1-06, ADR-013)
+
+**Path:** `C:\ProgramData\MerchandisingSystem\config\database.migrator.json`
+
+Same directory, same ACL, same shape — different account:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "database": "merchandising",
+  "userId": "merch_migrator",
+  "password": "<the merch_migrator password generated at install time>"
+}
+```
+
+**Why two files rather than one account.** `merch_migrator` owns the schema and is the only
+account permitted to `CREATE`, `ALTER` or `DROP` a table. `merch_api` owns the data and holds
+**no DDL at all** — it cannot create a table even by accident. `Merchandising.Maintenance`
+loads this file during a migration run; the API never does. Passing the wrong file produces
+`ERROR 1142` immediately rather than a half-applied schema. Full reasoning: ADR-013.
+
+---
+
+## 3.2 Database accounts and grants — run in this order
+
+The account and privilege setup is scripted, not prose. Run as `root`, from the repository root:
+
+| Step | Script | When |
+|---|---|---|
+| 1 | `db/grants/0001_accounts-and-grants.sql` | Once, on a fresh MariaDB, **before** any migration |
+| 2 | migration `0001_foundation.sql`, via `Merchandising.Maintenance` | After step 1 |
+| 3 | `db/grants/0002_post-migration-grants.sql` | **After** step 2 |
+
+**The order is not a preference.** Step 3 grants `merch_api` its write privileges one table at
+a time, and MariaDB 10.4 refuses a table-level `GRANT` naming a table that does not exist yet:
+
+```
+ERROR 1146 (42S02): Table 'merchandising.does_not_exist_yet' doesn't exist
+```
+
+So the per-table grants physically cannot be applied until the migration has created the
+tables. Between steps 1 and 3 the API can read but not write — that is expected, not a fault.
+
+**Before running step 1**, replace the three `{{...}}` placeholders with passwords generated
+for *this* installation. Per ADR-012 requirement 6, credentials are generated per installation
+and never committed: no password known to the author may be the password protecting a
+classmate's demo.
+
+**What step 3 deliberately omits is the point of step 3.** `stockmovements` and `auditlogs`
+receive `INSERT` and nothing else, which is what makes the ledgers append-only by privilege
+rather than by discipline (CLAUDE.md §5). Verify after step 3 — both must fail with
+`ERROR 1142`:
+
+```powershell
+& "C:\xampp\mysql\bin\mysql.exe" -u merch_api -p merchandising -e "UPDATE auditlogs SET Actor='x';"
+& "C:\xampp\mysql\bin\mysql.exe" -u merch_api -p merchandising -e "DELETE FROM stockmovements;"
+```
+
+> **On this lab host, MariaDB `root` has no password** — loopback-only, and the instance is
+> shared with an unrelated project. **On a demo install this is not acceptable and must be
+> set**, because that instance is fresh and single-purpose. See manifest §2.

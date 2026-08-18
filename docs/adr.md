@@ -217,7 +217,7 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 
 **Evidence.** `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
 
-> **Item 1 (server-side) done at P1-04 (2026-08-16).** `STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted (`mysqladmin shutdown` + `mysql_start.bat` — `mysql_stop.bat` itself did not reliably terminate the process), and the truncation demo re-run: `'THIS-SKU-IS-FAR-TOO-LONG'` into `VARCHAR(8)` now raises `ERROR 1406 (22001)` instead of silently storing `'THIS-SKU'`. **This does not close the decimal-scale half** — `1.9999` rounding to `2.000` on an over-scale insert is still silent under strict mode, by design (see ADR-004.1, which correctly assigns that half to the API, not the database). Evidence: `evidence/phase-1/p1-04-grants.txt`. **Item 2 (per-connection, belt-and-braces) remains owed by P1-05.**
+> **Item 1 (server-side) done at P1-04 (2026-08-16).** `STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted (`mysqladmin shutdown` + `mysql_start.bat` — `mysql_stop.bat` itself did not reliably terminate the process), and the truncation demo re-run: `'THIS-SKU-IS-FAR-TOO-LONG'` into `VARCHAR(8)` now raises `ERROR 1406 (22001)` instead of silently storing `'THIS-SKU'`. **This does not close the decimal-scale half** — `1.9999` rounding to `2.000` on an over-scale insert is still silent under strict mode, by design (see ADR-004.1, which correctly assigns that half to the API, not the database). Evidence: `evidence/phase-1/p1-04-grants.txt`. **Item 2 (per-connection) done at P1-05 (2026-08-16) — this ADR is now fully discharged.** `ConnectionFactory` issues `SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',STRICT_TRANS_TABLES')` on every connection opened, and `ConnectionFactoryTests.OpenedConnection_HasStrictModeAndReadCommittedIsolation` asserts it live against the real server on every test run. Evidence: `evidence/phase-1/p1-05-connection-test.log`. **Corrected 2026-08-18** — this note previously still read "remains owed by P1-05" after P1-05 had shipped, and contradicted ADR-002's own P1-05 result note four sections above it in this same file.
 
 ---
 
@@ -323,7 +323,7 @@ UPDATE StockBalances
 
 ## ADR-008 · Migration mechanism
 
-**Status:** PENDING — resolve at task P1-06
+**Status:** PENDING — resolve at task P1-06. **The identity question is already settled: the runner connects as `merch_migrator` (ADR-013), not `merch_api`.** What remains PENDING here is the mechanism — discovery, checksumming, transaction boundary and failure recording.
 
 **Decision.** Numbered, forward-only SQL files in `db/migrations/NNNN_description.sql`, applied by `Merchandising.Maintenance`. Each file is checksummed; `SchemaMigrations` records identifier, checksum, timestamp, and result. The runner refuses to proceed if a previously applied file's checksum has changed.
 
@@ -493,6 +493,77 @@ Resolution is configured on the lab host and on **no** demo workstation, which i
 - P1-17's dump-tool path (ADR-003.1, `C:\xampp\mysql\bin\mysqldump.exe`) must be **configured, not hardcoded**, so a differently-installed XAMPP on a classmate's machine does not break backup.
 
 **Evidence.** `docs/environment-manifest.md` §2–§4 (lab vs demo split), `scripts/capture-client-baseline.ps1`.
+
+---
+
+## ADR-013 · Database identities and the append-only grant model
+
+**Status:** ACCEPTED
+**Date:** 2026-08-18
+**Decides:** how many database accounts exist, what each may do, and how `StockMovements` and `AuditLogs` are made append-only *by the server* rather than by discipline. Supersedes the single-account grant shape created at P1-04. Unblocks P1-06 and makes P1-07's acceptance achievable.
+
+**Decision.**
+
+| Identity | Owns | Privileges on `merchandising` |
+|---|---|---|
+| `merch_migrator`@`localhost` | the **schema** | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES` at database level. **No `GRANT OPTION`.** |
+| `merch_api`@`localhost` | the **data** | `SELECT` at database level, and nothing else. Every write privilege is granted **per table** by `db/grants/0002_post-migration-grants.sql`. |
+| `merch_backup`@`localhost` | nothing | `SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER`. Unchanged from P1-04. |
+| `root` | — | Used by no application, ever. Unchanged from P1-04. |
+
+`merch_migrator` is used by `Merchandising.Maintenance` during a migration run and at no other time. The API never holds a DDL privilege.
+
+**Reasoning — why P1-04's shape could not work.**
+
+P1-04 created one application account holding `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` **on `merchandising`.\***. That satisfied "least privilege" read casually, and it is what `CLAUDE.md` §5 and `plan.md` §251 assumed when they promised `AuditLogs` would reject an `UPDATE` from `merch_api`.
+
+It cannot. **MariaDB unions privileges across scopes and has no `DENY`.** A database-level `GRANT UPDATE ON merchandising.*` applies to every table in the schema, and no table-level grant can subtract from it — a table-level grant only ever adds. Measured directly rather than reasoned about:
+
+```
+mysql> SELECT Db,User,Update_priv,Delete_priv FROM mysql.db WHERE User='merch_api';
+   merchandising | merch_api | Y | Y
+mysql> SELECT * FROM mysql.tables_priv WHERE User='merch_api';
+   Empty set
+```
+
+So P1-07's two acceptance boxes — *"`UPDATE` on `AuditLogs` as `merch_api` is rejected by privilege"* and the matching `DELETE` on `StockMovements` — were **unachievable as written**, and `CLAUDE.md` §5's "enforced by database grants as well as by policy" was a claim the machine did not support. This was found by the pre-P1-06 health check, by querying the grant tables rather than by reading the ADR.
+
+**The fix is an inversion: append-only becomes the default, not the exception.**
+
+Grant `merch_api` no write privilege at the database level at all. Then every table it can reach is append-only until something explicitly says otherwise, and `0002` says otherwise one table at a time. The two ledgers are simply absent from that file. A future table added by a migration is append-only until someone deliberately grants it more — which is the correct direction for the failure to point.
+
+**Ordering constraint, measured.** MariaDB 10.4 **rejects a table-level `GRANT` naming a table that does not exist**:
+
+```
+mysql> GRANT UPDATE ON merchandising.does_not_exist_yet TO '_granttest'@'localhost';
+ERROR 1146 (42S02): Table 'merchandising.does_not_exist_yet' doesn't exist
+```
+
+The per-table grants therefore cannot be pre-staged. They are a separate, numbered file applied **after** migration `0001` creates the tables. That is why `db/grants/` has two files rather than one, and why the install order is: `0001_accounts-and-grants.sql` → migration `0001_foundation.sql` → `0002_post-migration-grants.sql`.
+
+**Reasoning — why a separate migrator identity.**
+
+P1-04 deliberately withheld `DROP` from `merch_api`, confirmed with Max at the time. That was the right call and is kept. But `DatabaseOptionsLoader` exposes exactly one identity, so it was also the *only* identity available to the migration runner — and P1-06's acceptance requires running the runner repeatedly (*"second run applies nothing"*, *"a failing migration rolls back"*). Without `DROP` there is no way to reset the schema between runs, and `merch_api` cannot `CREATE DATABASE` either, so a throwaway scratch schema was not available as a workaround. P1-06 would have stalled on its second test.
+
+Adding `DROP` to `merch_api` would have solved that by making the runtime account strictly more dangerous. Splitting the identity solves it while making the runtime account strictly **less** dangerous: `merch_api` now has no DDL whatsoever, where before it could `CREATE` and `ALTER` tables at will.
+
+`GRANT OPTION` is withheld from `merch_migrator` so that a migration can never widen anyone's privileges, including its own. `0002` is an install step run by root, not a migration.
+
+**Consequences.**
+
+- `db/grants/0001_accounts-and-grants.sql` and `0002_post-migration-grants.sql` are the reproducible source of truth. The account setup is no longer recorded only as prose, which is a direct down-payment on ADR-012's handover requirement.
+- Migration files themselves must never contain `GRANT`. Privilege changes are numbered grant scripts.
+- P1-06 must load `database.migrator.json`, not `database.json`. The mechanism half of **ADR-008 remains PENDING** and is still P1-06's to resolve — this ADR settles only *which identity* runs it.
+- P1-07 gains a step: run `0002` after the migration, then prove the two denials.
+- Passwords are generated per installation and never committed (ADR-012 requirement 6). The `{{...}}` placeholders in `0001` are substituted at install time.
+
+**Rejected.**
+
+- **Granting `merch_api` `DROP`.** Solves P1-06 by widening the account that faces the network. Wrong direction.
+- **Enforcing append-only with `BEFORE UPDATE` / `BEFORE DELETE` triggers.** Works, but it is enforcement by code running inside the database rather than by privilege, it is silent about *why* it refused, and `merch_api` held `ALTER` at the time — an account that can drop the trigger is not constrained by it. Privilege is the stronger claim and the one the spec asks for.
+- **Leaving the database-level grant and relying on the API never issuing the statement.** That is exactly the "enforced by policy alone" position `CLAUDE.md` §5 rejects, and the failure mode is silent.
+
+**Evidence.** `evidence/phase-1/p1-04a-grant-model-proof.txt` — 13 privilege assertions, including `UPDATE`, `DELETE` and `DROP` on an append-only table all rejected with `ERROR 1142`, `INSERT` accepted, and `merch_migrator` able to tear down what it created. Integration suite re-run green afterwards.
 
 ---
 

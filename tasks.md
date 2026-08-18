@@ -548,15 +548,18 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track B — Database and migrations
 
-### 🟡 P1-04 · MariaDB setup and least-privilege accounts — root-from-another-machine box now unblocked
+### 🟡 P1-04 · MariaDB setup and least-privilege accounts — grant model rebuilt 2026-08-18; root-from-another-machine box still open
 
-**Spec:** §17 · **Closes:** G-03, G-10 (begins) · **Decides:** ADR-003
+**Spec:** §17 · **Closes:** G-03, G-10 (begins) · **Decides:** ADR-003, **ADR-013**
 
-**Do:** Create database `merchandising` (InnoDB, `utf8mb4`). Create `merch_api` (DML + limited DDL) and `merch_backup` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only). Root is used by **no** application.
+**Do:** Create database `merchandising` (InnoDB, `utf8mb4`). Create **three** accounts — `merch_migrator` (schema owner, the only DDL), `merch_api` (data, **no DDL, database-level `SELECT` only**) and `merch_backup` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only). Root is used by **no** application.
 
 **Done when:**
 
-- [x] Both accounts created with least privilege — `merch_api`@`localhost` (`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` — deliberately no `DROP`, no admin privileges); `merch_backup`@`localhost` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only, verbatim). Confirmed with Max before implementing: "limited DDL" read as CREATE/ALTER/INDEX/REFERENCES, no DROP — see evidence
+- [x] All three accounts created with least privilege — **restructured 2026-08-18 (ADR-013)**: `merch_migrator`@`localhost` (`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES`, **no `GRANT OPTION`**); `merch_api`@`localhost` (**`SELECT` at database level and nothing else** — writes granted per table by `db/grants/0002`); `merch_backup`@`localhost` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only, verbatim). Reproducible from `db/grants/*.sql`
+- [x] **`StockMovements` / `AuditLogs` append-only is enforceable by privilege** — proven on scratch tables: `INSERT` accepted, `UPDATE` / `DELETE` / `DROP` all rejected with `ERROR 1142`. 13/13 assertions in `evidence/phase-1/p1-04a-grant-model-proof.txt`
+- [x] `merch_api` has **no DDL at all** — `CREATE TABLE` rejected with `ERROR 1142` (it previously held `CREATE`/`ALTER`/`INDEX`/`REFERENCES`)
+- [x] `merch_migrator` can `CREATE` and `DROP`, so P1-06's migration tests are re-runnable
 - [x] `merch_api` **cannot** `DROP DATABASE` — attempt recorded, `ERROR 1044 (42000): Access denied`, database confirmed intact afterward
 - [x] `merch_backup` **cannot** write — `INSERT`/`UPDATE`/`DELETE`/`CREATE` all denied against a scratch table; `SELECT` succeeds alongside, proving the denial is real privilege enforcement and not a broken account
 - [ ] Root login from another machine fails — **unblocked 2026-08-18: the lab desktop is sufficient.** This tests a property of the *host* (root is not reachable off-box), not a fact about a demo machine, so any second machine proves it. Structural evidence recorded instead: `bind-address=127.0.0.1` (P0-04) plus `root` having no `%`-host entry (only `localhost`/`127.0.0.1`/`::1`) — two independent layers, neither a substitute for the real cross-machine test
@@ -571,7 +574,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 >
 > Also inherit from ADR-003: state `utf8mb4` / `utf8mb4_unicode_ci` / `InnoDB` **explicitly** on every object — the server default collation is `utf8mb4_general_ci`, not what we want. And do not reach for `uca1400` collations; zero of them exist on 10.4.
 
-**Evidence:** `p1-04-grants.txt`, `p1-04-negative-tests.txt`
+**Evidence:** `p1-04-grants.txt`, `p1-04-negative-tests.txt`, `p1-04a-grant-model-proof.txt`
 
 > **Result.** Database and both accounts created; `sql_mode` fixed server-side; 3 of 4 testable boxes closed, the 4th blocked on hardware that doesn't exist yet — same shape as every other card in this gap (P0-02/03/05).
 >
@@ -581,7 +584,15 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 >
 > **A pre-existing, unrelated set of accounts was found and deliberately left alone**: `merchsys_owner@%`, `merchsys_sync@%`, `merchsys_sync_role`, `vista_app@%` — tied to the `merchsys_central` database already flagged as out-of-project at P0-04/manifest §2. Confirmed unmodified after this card's changes. Functionally inert regardless of their `%` host pattern, since `bind-address=127.0.0.1` restricts the whole server to loopback.
 >
-> **Card stays 🟡, not ✅.** The root-from-a-client box is the only thing outstanding, and it needs a client laptop, not more engineering — closes automatically once one exists, same as the P0-02/03/05 pattern this project has already established.
+> **Grant model rebuilt 2026-08-18 — the original shape could not deliver what it promised.** The pre-P1-06 health check queried `mysql.db` and `mysql.tables_priv` directly and found `merch_api` holding `UPDATE` and `DELETE` at the **database** level over `merchandising`.\*, with zero table-level grants. MariaDB unions privileges across scopes and has no `DENY`, so no table-level rule can subtract from that — meaning P1-07's two acceptance boxes (`UPDATE` on `AuditLogs` rejected, `DELETE` on `StockMovements` rejected) were **unachievable as written**, and `CLAUDE.md` §5's "enforced by database grants" was false on this machine.
+>
+> Fixed by inverting the default: `merch_api` now holds **no** database-level write privilege, so every table is append-only until `db/grants/0002` grants otherwise per table — and the two ledgers are simply absent from that file. A separate `merch_migrator` identity owns the schema, which also removed DDL from the runtime account entirely and unblocked P1-06's re-runnable tests. Full reasoning and the two measurements behind it: **ADR-013**.
+>
+> **Setup is no longer prose-only.** `db/grants/0001_accounts-and-grants.sql` and `0002_post-migration-grants.sql` are the reproducible source of truth, with `{{...}}` password placeholders substituted per installation (ADR-012 req. 6). That is a direct down-payment on the handover gap.
+>
+> **Root deliberately left password-less, and recorded as such** (manifest §2). Loopback-only, and this MariaDB instance is shared with an unrelated project whose phpMyAdmin depends on it. Setting one is a required step in the demo-install bootstrap, where the instance is fresh. Decided with Max 2026-08-18 — an accepted risk, not an oversight.
+>
+> **Card stays 🟡, not ✅.** The root-from-another-machine box is the only thing outstanding. It needs a second machine on the network, not more engineering — and per ADR-012 the lab desktop is sufficient for it, since it tests a property of the host rather than a fact about a demo machine.
 
 ---
 
@@ -624,12 +635,23 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Do:** Discover `db/migrations/NNNN_*.sql`, checksum each, apply unapplied ones in order inside a transaction, record identifier/checksum/timestamp/result in `SchemaMigrations`. **Refuse to run** if an applied file's checksum changed.
 
+> **Connect as `merch_migrator`, loading `database.migrator.json` — not `database.json`.** `merch_api` holds no DDL privilege at all and will fail with `ERROR 1142` on the first `CREATE TABLE`. See ADR-013.
+>
+> **Ground confirmed clear, 2026-08-18:** `db/migrations/` is empty apart from `.gitkeep`; `merchandising` has zero tables; no `SchemaMigrations` exists; the connection layer opens live and is asserted by `ConnectionFactoryTests`. (The `__schemamigrations` table visible on this server belongs to `merchsys_central`, an unrelated project — do not mistake it for ours.)
+>
+> **Two things that would otherwise have stalled this card, now fixed at P1-04:** there was no identity able to `DROP`, so *"second run applies nothing"* could never have been re-tested from a clean state; and `merch_api` could not `CREATE DATABASE`, so a throwaway scratch schema was not available either. `merch_migrator` closes both.
+>
+> **`DatabaseOptionsLoader.Load` takes an optional path** — pass the migrator config explicitly rather than changing the default, so the API keeps loading `database.json` untouched.
+>
+> **Migrations must never contain `GRANT`.** Privilege changes are numbered scripts under `db/grants/`, applied by root as an install step. `merch_migrator` deliberately has no `GRANT OPTION`.
+
 **Done when:**
 
 - [ ] First run applies migrations and records them
 - [ ] Second run applies nothing
 - [ ] Tampering with an applied file causes a clear refusal, not a silent skip
 - [ ] A failing migration rolls back and records the failure
+- [ ] Runner connects as `merch_migrator`; running it with `database.json` (the API account) fails loudly rather than half-applying
 
 **Evidence:** `p1-06-migration-run.log`, `p1-06-tamper-refusal.log`
 
@@ -641,13 +663,21 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Files:** `db/migrations/0001_foundation.sql`
 
-**Do:** `Users`, `Roles`, `UserRoles`, `Products`, `StockBalances`, `StockMovements`, `AuditLogs`, `IdempotencyKeys`, `SystemSettings`, `SchemaMigrations`. Money `DECIMAL(19,4)`, quantity `DECIMAL(19,3)`, timestamps `DATETIME(6)` UTC. `StockMovements` and `AuditLogs` append-only **by grant**, not just by policy.
+**Do:** `Users`, `Roles`, `UserRoles`, `Products`, `StockBalances`, `StockMovements`, `AuditLogs`, `IdempotencyKeys`, `SystemSettings`, `SchemaMigrations`. Money `DECIMAL(19,4)`, quantity `DECIMAL(19,3)`, timestamps `DATETIME(6)` UTC.
+
+> **Append-only is already the default — do not try to carve it out here.** Since 2026-08-18 `merch_api` holds **no** database-level write privilege (ADR-013), so every table this migration creates is append-only until something grants otherwise. This card's grant step is therefore: **run `db/grants/0002_post-migration-grants.sql` after the migration**, which adds writes back one table at a time and deliberately omits `StockMovements` and `AuditLogs`.
+>
+> It cannot be run before the migration — MariaDB 10.4 rejects a table-level `GRANT` naming a table that does not exist (`ERROR 1146`, measured). Install order is: `db/grants/0001` → migration `0001_foundation.sql` → `db/grants/0002`.
+>
+> Table names in `0002` are **lowercase** (`stockmovements`, `auditlogs`) because `@@lower_case_table_names = 1` on Windows. If you add a table to the migration, add its grant to `0002` — or leave it out deliberately, and say so.
 
 **Done when:**
 
 - [ ] Migration applies clean on an empty database
-- [ ] `UPDATE` on `AuditLogs` as `merch_api` is **rejected by privilege**
-- [ ] `DELETE` on `StockMovements` as `merch_api` is **rejected by privilege**
+- [ ] `db/grants/0002_post-migration-grants.sql` applied after the migration, with the ten table names matching what `0001_foundation.sql` actually created
+- [ ] `UPDATE` on `AuditLogs` as `merch_api` is **rejected by privilege** (`ERROR 1142`) — mechanism already proven at P1-04, `evidence/phase-1/p1-04a-grant-model-proof.txt`; this box proves it on the *real* table
+- [ ] `DELETE` on `StockMovements` as `merch_api` is **rejected by privilege** (`ERROR 1142`)
+- [ ] `merch_api` has **no** write privilege on `SchemaMigrations` — a row it could insert would make the runner skip a migration that never ran
 - [ ] `0.001` and `12345678901234.5678` round-trip exactly
 - [ ] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
 - [ ] **Integration test:** an over-scale value (money with >4 dp, quantity with >3 dp) is either **rejected** by the API or **explicitly rounded** by it before the parameter is bound — asserted at the API boundary, not by reading the stored value back. Per ADR-004.1, `STRICT_TRANS_TABLES` rounds over-scale decimals silently (`Note 1265`), so a correctly-scaled stored value proves nothing on its own.

@@ -176,17 +176,21 @@ No application code is written in Phase 0.
 | Task | Deliverable | Acceptance |
 |---|---|---|
 | P0-01 | Install VS 2026 with **.NET desktop development** + **ASP.NET and web development** workloads; verify the .NET 10 component. | `dotnet --info` output captured to `docs/environment-manifest.md`. |
-| P0-02 | Record Windows edition + build for the host laptop and **each** client laptop. | Table in environment manifest, one row per machine. |
+| P0-02 | Record Windows edition + build, architecture, resolution/scaling and **local admin rights** for the API host and **each demo workstation** (the three classmates' machines). | Table in environment manifest §3.2, one block per machine. **A lab machine cannot close this** — see ADR-012. |
 | P0-03 | Install XAMPP on host. Stop and disable Apache, FileZilla, Mercury, Tomcat. Keep MariaDB only. | Services list screenshot; only MariaDB running. |
 | P0-04 | Record exact MariaDB version, data directory, config file path, and which dump tool ships with it. **Resolved: 10.4.32, `mysqldump.exe` only — no `mariadb.exe` or `mariadb-dump.exe` in this build, so capture the version via `mysqld.exe --version`.** | Environment manifest + first ADR entry. |
-| P0-05 | Reserve host IP on the LAN; choose and record the host name `MERCH-HOST`; confirm resolution from each client (hosts file or DNS). | `ping MERCH-HOST` succeeds from every client; output captured. |
+| P0-05 | Fix the host address **on the self-provided demo rig** (§4.2), not by manual static on a lab adapter; choose and record the host name `MERCH-HOST`; confirm resolution from each demo workstation via hosts file. | `ping MERCH-HOST` succeeds from every demo workstation; output captured. **The router-side DHCP reservation this row used to require was withdrawn by ADR-012.** |
 | ~~P0-06~~ | ~~Obtain professor confirmation~~ — **RESOLVED.** Manual VB ASP.NET Core API is acceptable; XAMPP/MariaDB is mandatory, not merely permitted. | Capture the confirmation (email/message//written note) into `docs/professor-approvals.md` so it can be cited at acceptance. Do this even though the answer is known — an undocumented approval is one you cannot point to during sign-off. |
 | P0-07 | Initialise repo: folder structure (§2), `.gitignore`, `.editorconfig`, `Directory.Build.props`, `CLAUDE.md` (§4), empty `docs/adr.md`. | `git log` shows initial commit; agent session reads CLAUDE.md correctly. |
 | P0-08 | Write `scripts/check-no-csharp.ps1` with guardrails G-A…G-D. | Script passes on empty repo; deliberately drop a `.cs` file and confirm it fails. |
 
-**Exit criteria:** environment manifest complete for host + all clients; professor confirmation recorded in `docs/`; repo scaffolded; guardrail script proven to fail when it should.
+**Exit criteria:** environment manifest complete for the host + **all three demo workstations** (§3.2, not the lab machines); professor confirmation recorded in `docs/`; repo scaffolded; guardrail script proven to fail when it should.
 
-**Carry-forward rule for client-dependent criteria.** Phase 0's client-laptop criteria — the per-client manifest rows, `ping MERCH-HOST` from a client, and the cross-machine phpMyAdmin check — **may be carried into Phase 1 and must be closed before the *Phase 1* gate**, not the Phase 0 gate. This is not a relaxation; it is the plan's own sequencing-by-dependency principle applied consistently. Twelve of Phase 1's twenty tasks (P1-01→P1-08, P1-11→P1-14) touch no second machine, and they include every task carrying real design risk. Blocking them on hardware they do not use would stall the project for no safety gain. The criteria bite where they actually matter — P1-09 (certificate trust on a client), P1-10 (port denial from a client), P1-15 (WPF round trip from a client), and one sub-check of P1-04 — and all four are hard blockers there.
+**Carry-forward rule for machine-dependent criteria.** Phase 0's criteria that need a machine other than the build laptop — the per-workstation manifest rows, `ping MERCH-HOST` from a workstation, and the cross-machine phpMyAdmin check — **may be carried into Phase 1 and must be closed before the *Phase 1* gate**, not the Phase 0 gate. This is not a relaxation; it is the plan's own sequencing-by-dependency principle applied consistently. Twelve of Phase 1's twenty tasks (P1-01→P1-08, P1-11→P1-14) touch no second machine, and they include every task carrying real design risk.
+
+> **Re-scoped 2026-08-18 by ADR-012 — this paragraph previously said the opposite of `tasks.md`.** It used to state that P1-09, P1-10, P1-15 and P1-04's root check are *"hard blockers"* pending a client laptop. **They are not, and have not been since ADR-012.** Those four test **software behaviour across a real network boundary**, which *any* second machine proves — the author's lab desktop (`DESKTOP-OUU3M8J`, manifest §3.1) is sufficient for every one of them. What a lab machine cannot do is stand in for a *demo workstation* in P0-02 and P0-05, because those cards record facts about specific machines rather than behaviours.
+>
+> The distinction that governs: **behaviour is proved by any second machine; facts are only proved by the machine they are facts about.** Do not treat the Phase 0 gate FAIL as a reason to wait — `evidence/phase-0/PHASE-0-READINESS.md`.
 
 **Standing constraint from P0-06:** because both constraints were confirmed as binding, the academic-prototype framing in spec §3 and §29 is not optional hedging — it is the accurate description of what you are delivering. Every document, the presentation, and the cover page state that XAMPP is a course requirement and that the result is not a production-readiness claim. Getting this wording right early costs nothing; retrofitting it into ten finished documents during Phase 7 is miserable.
 
@@ -242,13 +246,13 @@ Acceptance: API connects; connection string appears in **no** committed file and
 Evidence: `p1-05-connection-test.log`; ADR entry pinning connector + MariaDB versions (**closes G-04**).
 
 **P1-06 · Migration runner in `Merchandising.Maintenance`**
-Deliverable: VB console utility that discovers `db/migrations/NNNN_*.sql`, computes a checksum per file, applies unapplied ones in order inside a transaction, and records id/checksum/timestamp/result in `SchemaMigrations`; refuses to run if a previously applied file's checksum has changed.
+Deliverable: VB console utility that discovers `db/migrations/NNNN_*.sql`, computes a checksum per file, applies unapplied ones in order inside a transaction, and records id/checksum/timestamp/result in `SchemaMigrations`; refuses to run if a previously applied file's checksum has changed. **Connects as `merch_migrator`, loading `database.migrator.json` — not as `merch_api`, which now holds no DDL privilege at all (ADR-013).**
 Acceptance: run twice — second run applies nothing; tamper with an applied file — runner refuses and explains.
 Evidence: `p1-06-migration-run.log`, `p1-06-tamper-refusal.log`.
 
 **P1-07 · Migration `0001` — POC schema slice**
-Deliverable: `Users`, `Roles`, `UserRoles`, `Products`, `StockBalances`, `StockMovements`, `AuditLogs`, `IdempotencyKeys`, `SystemSettings`, `SchemaMigrations`. Money `DECIMAL(19,4)`, quantity `DECIMAL(19,3)`, all timestamps UTC (`DATETIME(6)`), `StockMovements` and `AuditLogs` append-only by grant.
-Acceptance: migration applies clean; a manual `UPDATE` against `AuditLogs` as `merch_api` is **rejected by privilege** (**closes G-20**); decimal precision verified by inserting and reading back `0.001` and `12345678901234.5678`.
+Deliverable: `Users`, `Roles`, `UserRoles`, `Products`, `StockBalances`, `StockMovements`, `AuditLogs`, `IdempotencyKeys`, `SystemSettings`, `SchemaMigrations`. Money `DECIMAL(19,4)`, quantity `DECIMAL(19,3)`, all timestamps UTC (`DATETIME(6)`). **Append-only is already the default** — `merch_api` holds no database-level write privilege (ADR-013) — so this task's grant step is running `db/grants/0002_post-migration-grants.sql` **after** the migration, which adds writes back per table and deliberately omits `StockMovements` and `AuditLogs`. It cannot be run earlier: MariaDB 10.4 rejects a table-level `GRANT` on a table that does not exist.
+Acceptance: migration applies clean **as `merch_migrator`**; after `db/grants/0002`, a manual `UPDATE` against `AuditLogs` and a `DELETE` against `StockMovements` as `merch_api` are both **rejected by privilege** with `ERROR 1142` (**closes G-20**); decimal precision verified by inserting and reading back `0.001` and `12345678901234.5678`. The grant mechanism itself is already proven — `evidence/phase-1/p1-04a-grant-model-proof.txt`.
 Evidence: `p1-07-schema.sql`, `p1-07-audit-immutability.txt`, `p1-07-precision-check.txt`.
 
 #### Track C — Security seam
@@ -264,7 +268,7 @@ Acceptance: client reaches `https://MERCH-HOST:8443/health` with no certificate 
 Evidence: `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.png` (**closes G-07, G-25**).
 
 **P1-10 · Negative security tests**
-Deliverable: from a client laptop — port scan / direct connection attempt to MariaDB's port; unauthenticated call to a protected endpoint; call with a valid token but insufficient role.
+Deliverable: from a second machine — port scan / direct connection attempt to MariaDB's port; unauthenticated call to a protected endpoint; call with a valid token but insufficient role. **Any second machine proves this; the lab desktop is sufficient (ADR-012). Tailscale is out of scope and must not appear in the test matrix.**
 Acceptance: DB port unreachable from client; unauthenticated → 401; wrong-role → 403; error bodies contain a correlation ID and **no** stack trace, SQL, or connection detail.
 Evidence: `p1-10-port-scan.txt`, `p1-10-denials.txt` (**closes G-03 partially, G-10**).
 
@@ -305,7 +309,7 @@ Evidence: `p1-14-idempotency.txt` (**closes G-13**).
 
 **P1-15 · WPF client spike over HTTPS**
 Deliverable: `ClientCommon` API client (typed HTTP client, token storage in memory only, connection-state detection, correlation-ID propagation); one WPF window in `Merchandising.Inventory` with: login, call protected endpoint, display result, trigger the stock decrement, and a visible connection-status indicator.
-Acceptance: full round trip over HTTPS from a **client laptop**, not the dev machine; stopping the API produces a clear connection-unavailable state and the client refuses to queue or fake the write.
+Acceptance: full round trip over HTTPS from a **second machine**, not the build machine — the lab desktop qualifies (ADR-012); stopping the API produces a clear connection-unavailable state and the client refuses to queue or fake the write.
 Evidence: `p1-15-client-roundtrip.png`, `p1-15-api-down-state.png` (**closes G-26**).
 
 #### Track F — Hosting and recovery

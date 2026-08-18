@@ -1,0 +1,96 @@
+dotnet-info-host.txt
+Captured : 2026-08-18 21:48:54 +08:00
+Machine  : LAPTOP-3HH6OHHE
+
+WHY THIS FILE LOOKS IDENTICAL TO dotnet-info-dev.txt
+----------------------------------------------------
+It is the same physical machine. Manifest section 1 (development machine)
+and section 2 (reference host) both describe LAPTOP-3HH6OHHE: in the lab,
+the build machine also serves as the API and database host.
+
+This file was listed under manifest section 2 "Attach:" from the start but
+did not exist on disk until 2026-08-18, when a pre-P1-06 health check
+checked every referenced evidence path and found this one dangling. It is
+captured here rather than deleted from the manifest, so the host row has
+the artefact it claims.
+
+PER ADR-012 THIS IS A LAB FACT, NOT A DELIVERABLE VALUE. The demo host is
+a classmate machine that has not been surveyed (manifest section 3.2), and
+crucially it will have NO .NET SDK -- so the ASP.NET Core runtime present
+below exists here only because the SDK is installed. ADR-010 relies on
+exactly that distinction: do not read this file as evidence that a demo
+host can run framework-dependent output.
+
+==========================================================================
+dotnet --info
+==========================================================================
+.NET SDK:
+ Version:           10.0.301
+ Commit:            96856fd726
+ Workload version:  10.0.300-manifests.8c7d7c03
+ MSBuild version:   18.6.4+96856fd72
+
+Runtime Environment:
+ OS Name:     Windows
+ OS Version:  10.0.26200
+ OS Platform: Windows
+ RID:         win-x64
+ Base Path:   C:\Program Files\dotnet\sdk\10.0.301\
+
+.NET workloads installed:
+There are no installed workloads to display.
+Configured to use workload sets when installing new manifests.
+No workload sets are installed. Run "dotnet workload restore" to install a workload set.
+
+Host:
+  Version:      10.0.9
+  Architecture: x64
+  Commit:       901ca94124
+
+.NET SDKs installed:
+  10.0.301 [C:\Program Files\dotnet\sdk]
+
+.NET runtimes installed:
+  Microsoft.AspNetCore.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+  Microsoft.AspNetCore.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+  Microsoft.AspNetCore.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+  Microsoft.NETCore.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+  Microsoft.NETCore.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+  Microsoft.NETCore.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+  Microsoft.WindowsDesktop.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+  Microsoft.WindowsDesktop.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+  Microsoft.WindowsDesktop.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+
+Other architectures found:
+  x86   [C:\Program Files (x86)\dotnet]
+    registered at [HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x86\InstallLocation]
+
+Environment variables:
+  Not set
+
+global.json file:
+  Not found
+
+Learn more:
+  https://aka.ms/dotnet/info
+
+Download .NET:
+  https://aka.ms/dotnet/download
+
+==========================================================================
+dotnet --list-runtimes
+==========================================================================
+Microsoft.AspNetCore.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+Microsoft.AspNetCore.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+Microsoft.AspNetCore.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+Microsoft.NETCore.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+Microsoft.NETCore.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+Microsoft.NETCore.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+Microsoft.WindowsDesktop.App 8.0.28 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 9.0.17 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 10.0.9 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+
+==========================================================================
+dotnet --list-sdks
+==========================================================================
+10.0.301 [C:\Program Files\dotnet\sdk]

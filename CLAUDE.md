@@ -92,7 +92,9 @@ That single rule is what mechanically guarantees a database credential can never
 3. Insert an `AuditLogs` row
 4. Verify the affected-row count before returning success
 
-**`StockMovements` and `AuditLogs` are append-only.** Never `UPDATE` or `DELETE` them. Corrections are compensating movements, never edits. This is enforced by database grants as well as by policy.
+**`StockMovements` and `AuditLogs` are append-only.** Never `UPDATE` or `DELETE` them. Corrections are compensating movements, never edits.
+
+This is enforced **by database grant**, not only by policy, and the mechanism is specific: `merch_api` holds **no** write privilege at the database level, so every table is append-only by default. `UPDATE`/`DELETE` are added back one table at a time in `db/grants/0002_post-migration-grants.sql`, and those two ledgers are deliberately absent from that list. MariaDB has no `DENY` and unions privileges across scopes, so this ordering is the only way the guarantee can be real — see ADR-013. Proven at `evidence/phase-1/p1-04a-grant-model-proof.txt`.
 
 **Money is `DECIMAL(19,4)`. Quantities are `DECIMAL(19,3)`.** Never use `Double`, `Single`, or floating-point arithmetic for money or quantities anywhere — storage, calculation, or transport. Use `Decimal` in VB.
 
@@ -124,6 +126,26 @@ TFMs          net10.0 / net10.0-windows
 Visual Studio Community 2026, 18.7.1+11911.148 (ManagedDesktop + NetWeb workloads)
 ```
 
+**Three database identities, and they are not interchangeable (ADR-013):**
+
+```
+merch_migrator  owns the SCHEMA. The only account with DDL (incl. DROP).
+                Used by Merchandising.Maintenance during a migration run, and
+                nowhere else.
+                Config: %ProgramData%\MerchandisingSystem\config\database.migrator.json
+merch_api       owns the DATA. NO DDL at all. Database-level SELECT only;
+                every write privilege is per-table (db/grants/0002). This is
+                what makes StockMovements and AuditLogs append-only.
+                Config: ...\config\database.json
+merch_backup    SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER. mysqldump only.
+root            used by no application, ever.
+```
+
+If you are writing code that creates or alters a table, it runs as
+`merch_migrator`. If you are writing code that serves a request, it runs as
+`merch_api`. Reaching for the wrong one shows up as `ERROR 1142`, not as a
+subtle bug — that is deliberate.
+
 ### 6.2 Write SQL for MariaDB 10.4, not MySQL 8 or MariaDB 11
 
 **Your training data skews heavily toward MySQL 8 and MariaDB 11. Features from those versions fail on this server.** These were confirmed by querying the installed instance:
@@ -140,11 +162,26 @@ Two more that bite silently rather than loudly:
 - **The server default collation is `utf8mb4_general_ci`, not `unicode_ci`.** State `COLLATE utf8mb4_unicode_ci` explicitly on every `CREATE DATABASE` and `CREATE TABLE`. Inheriting it gets you the wrong one and a later `Illegal mix of collations` error on a join.
 - **The default isolation level is `REPEATABLE-READ`, not `READ COMMITTED`.** ADR-006 requires `READ COMMITTED`; set it explicitly. Never assume it.
 
-### 6.3 `sql_mode` is not strict here — never rely on the server rejecting bad data
+### 6.3 `sql_mode` — strict now, but never rely on scale being enforced
 
-XAMPP ships `sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION`. **`STRICT_TRANS_TABLES` is absent**, so this server silently truncates over-long strings and rounds over-precision decimals and reports success. Demonstrated: `'THIS-SKU-IS-FAR-TOO-LONG'` stored as `'THIS-SKU'`, `1.9999` stored as `2.000`, no error.
+**Current state on this machine, verified 2026-08-18:**
 
-Until P1-04 and P1-05 fix this in `my.ini` **and** in the connection factory, treat every write as unprotected by the database and validate server-side in the API. See ADR-003.2.
+```
+@@sql_mode = STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION
+```
+
+`STRICT_TRANS_TABLES` is **present**, in two places, deliberately:
+
+1. **Server-side** — `my.ini` line 157, fixed at P1-04.
+2. **Per connection** — `ConnectionFactory` issues `SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',STRICT_TRANS_TABLES')` on every connection, fixed at P1-05, so a reinstalled or rebuilt XAMPP cannot quietly revert the guarantee. Asserted live by `ConnectionFactoryTests`.
+
+**What that buys you:** column widths and decimal *ranges* are now enforced by the database. `'THIS-SKU-IS-FAR-TOO-LONG'` into a `VARCHAR(8)` raises `ERROR 1406` instead of silently storing `'THIS-SKU'`.
+
+**What it does not buy you — this half is still live and still bites:**
+
+> **Decimal *scale* is NOT enforced, even under strict mode.** An over-scale value is still rounded silently: `1.9999` into a `DECIMAL(19,3)` stores `2.000` and reports success (`Note 1265`, not an error). Rounding to storage scale is the **API's** job, not the database's — see ADR-004.1. Validate scale server-side, at the API boundary, before the parameter is bound. A correctly-scaled stored value proves nothing on its own.
+
+> **XAMPP as shipped is not strict.** The default is `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — XAMPP actively weakens MariaDB 10.4's own default. That matters for handover: a classmate installing XAMPP fresh gets the unsafe setting until the bootstrap applies the `my.ini` change. The per-connection half is what makes a mis-installed host safe anyway.
 
 ---
 

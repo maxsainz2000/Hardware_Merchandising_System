@@ -1,0 +1,39 @@
+P1-04a  GRANT MODEL PROOF - append-only enforced by privilege
+Generated : 2026-08-18 21:42:05 +08:00
+Server    : 10.4.32-MariaDB
+
+Scratch tables stand in for the real ones. P1-07 has not run yet, and
+MariaDB 10.4 refuses a table-level GRANT naming a table that does not
+exist (ERROR 1146), so the mechanism is proven on tables that do.
+
+=== 1. merch_migrator owns the schema (DDL) ===
+  [PASS] CREATE TABLE _proof_mutable                          expected ALLOW
+  [PASS] CREATE TABLE _proof_appendonly                       expected ALLOW
+
+=== 2. merch_api has NO DDL and NO writes before 0002 grants ===
+  [PASS] merch_api CREATE TABLE                               expected DENY
+         server said: ERROR 1142 (42000) at line 1: CREATE command denied to user 'merch_api'@'localhost' for table `merchandising`.`_proof_api_ddl`
+  [PASS] merch_api INSERT (no grant yet)                      expected DENY
+         server said: ERROR 1142 (42000) at line 1: INSERT command denied to user 'merch_api'@'localhost' for table `merchandising`.`_proof_mutable`
+  [PASS] merch_api SELECT                                     expected ALLOW
+
+=== 3. After 0002-pattern grants: mutable table is writable ===
+  [PASS] INSERT into mutable                                  expected ALLOW
+  [PASS] UPDATE mutable                                       expected ALLOW
+
+=== 4. THE POINT: append-only table takes INSERT and refuses the rest ===
+  [PASS] INSERT into append-only ledger                       expected ALLOW
+  [PASS] UPDATE append-only ledger                            expected DENY
+         server said: ERROR 1142 (42000) at line 1: UPDATE command denied to user 'merch_api'@'localhost' for table `merchandising`.`_proof_appendonly`
+  [PASS] DELETE from append-only ledger                       expected DENY
+         server said: ERROR 1142 (42000) at line 1: DELETE command denied to user 'merch_api'@'localhost' for table `merchandising`.`_proof_appendonly`
+  [PASS] DROP append-only ledger                              expected DENY
+         server said: ERROR 1142 (42000) at line 1: DROP command denied to user 'merch_api'@'localhost' for table `merchandising`.`_proof_appendonly`
+
+=== 5. merch_migrator can tear down (unblocks P1-06 re-runnable tests) ===
+  [PASS] merch_migrator DROP _proof_mutable                   expected ALLOW
+  [PASS] merch_migrator DROP _proof_appendonly                expected ALLOW
+
+=== 6. Cleanup verification ===
+  tables left in merchandising : 0
+  scratch table grants left    : 0
