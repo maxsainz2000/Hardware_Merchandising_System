@@ -4,8 +4,8 @@
 
 The spec is explicit that "works on the developer's machine" is not acceptance. This file is what makes that testable — every version below must be captured from the **actual** classroom machines, not assumed.
 
-**Status:** ⬜ Incomplete — every item that can be captured **without a second physical machine** is now captured. What remains needs either a client laptop or a decision only Max can make. See §5 for exactly which.
-**Last updated:** 2026-08-15 (P0-07 close-out)
+**Status:** ⬜ Incomplete — **no longer hardware-blocked.** A second physical machine now exists (`DESKTOP-OUU3M8J`, Client 1, §3) but has not yet been powered on and measured. What remains needs the machine on the LAN, a router DHCP reservation, and two screenshots — see §5.
+**Last updated:** 2026-08-18 (client machine acquired; P0-05 addressing corrected)
 
 ---
 
@@ -35,7 +35,7 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 | Windows edition + build | Windows 11 Home Single Language, build 26200 (10.0.26200), 64-bit (x64) | `systeminfo` |
 | Reserved LAN IP | **NONE — reverted to DHCP on 2026-08-17.** The static `192.168.100.165/24` was removed because a static address binds to the *adapter*, not to a network, and blocked all connectivity on every other Wi-Fi the laptop joined. **Current lease (2026-08-18, back on `HUAWEI-5G-fP2f 2`): `192.168.100.165/24` — the router handed back the very address the static used, but as a ~24 h lease (`PrefixOrigin=Dhcp`, `ValidLifetime 22:40`), not a reservation.** Treat that as a trap, not as good news: it makes the stale hardcoded `.165` in `installation-guide.md` §1.1 pass today and fail after any lease expiry or router reboot. (Earlier office lease was `192.168.100.123/24`.) **A stable host address is still required and is still owed by P0-05** — the approved method is now a **router-side MAC DHCP reservation**, not a manual static. See §4 | `Get-NetIPAddress` |
 | Host name for clients | `MERCH-HOST` | Chosen — must match the certificate SAN |
-| Name resolution method | **hosts file** (no DNS server on this LAN). Procedure written up in `docs/installation-guide.md` §1. **Not yet applied on any machine, including this host** — needs an elevated shell | Per machine |
+| Name resolution method | **hosts file** (no DNS server on this LAN). Procedure written up in `docs/installation-guide.md` §1. **Applied on the host** (`192.168.100.165  MERCH-HOST`, hosts file line 25) and verified resolving 2026-08-18 — this corrects an earlier claim that it had never been applied anywhere. **Not applied on any client**, and must not be until the host address is durable | Per machine |
 | .NET runtimes present | AspNetCore.App 8.0.28 / 9.0.17 / **10.0.9**; NETCore.App 8.0.28 / 9.0.17 / **10.0.9**; WindowsDesktop.App 8.0.28 / 9.0.17 / **10.0.9** — same machine as §1 | `dotnet --list-runtimes` |
 | ASP.NET Core runtime present | **Yes — 10.0.9** | `dotnet --list-runtimes` |
 | .NET Desktop Runtime present | **Yes — 10.0.9** | `dotnet --list-runtimes` |
@@ -69,18 +69,26 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 Copy this block once **per client machine**. Every client is part of the tested system, not an assumption.
 
-**Status as of P0-02 (2026-08-15): no client laptops are provisioned yet.** This is a solo-developer prototype at this stage; the blocks below remain unfilled placeholders until physical/virtual client machines exist. Do not tick the P0-02 client acceptance boxes until real machines are captured here — a copy of the host row is not a substitute.
+**Status as of 2026-08-18: the first client machine exists but is not yet captured.** A Windows 10 desktop, `DESKTOP-OUU3M8J`, is designated **Client 1** — wired by Ethernet to the same Huawei router. Role split confirmed the same day: the laptop stays dev + API host + MariaDB, the desktop is a pure client. Nothing migrates, so P0-03, P0-04 and P1-04 are not re-opened.
 
-### Client 1 — _(role: Procurement / Inventory / POS)_
+The block below is still **unfilled**, because the machine has not been powered on and measured. Capture it by running `scripts/capture-client-baseline.ps1` on the desktop — that script gathers every field here plus the P0-03 and P1-04 cross-machine negative tests in one pass. Do not tick the P0-02 client acceptance boxes from anything other than real measured output; a copy of the host row is not a substitute.
+
+> ⚠️ **Two things to check first, both of which can invalidate the plan.**
+> 1. **Windows 10 build and architecture.** The project targets `win-x64` and .NET 10. A 32-bit OS cannot run the published output at all. Windows 10 also passed end-of-support in October 2025 — acceptable for an academic prototype, but it belongs here as a recorded fact rather than a discovered one.
+> 2. **Wired/wireless isolation.** The client is on Ethernet, the host on Wi-Fi. Consumer routers usually bridge the two, but not always. If the client cannot ping the host, every downstream test is meaningless until that is fixed — the capture script gates on this explicitly.
+
+### Client 1 — `DESKTOP-OUU3M8J` — _(role: Procurement / Inventory / POS — not yet assigned)_
 
 | Item | Value |
 |---|---|
-| Machine name | _(record)_ |
-| Windows edition + build | _(record)_ |
-| Architecture | _(expect x64)_ |
-| Screen resolution | _(record — baseline target is 1366×768)_ |
+| Machine name | `DESKTOP-OUU3M8J` — known from the tailnet registration; **confirm on the machine**, not from this note |
+| Windows edition + build | _(record — Windows 10, exact edition/build/DisplayVersion outstanding)_ |
+| Architecture | _(expect x64 — **verify**, this is a hard gate)_ |
+| Screen resolution | _(record — baseline target is 1366×768; a desktop monitor will not exercise it)_ |
 | Display scaling | _(record — must remain usable at 125%)_ |
-| .NET Desktop Runtime | _(version, or "not yet installed")_ |
+| .NET Desktop Runtime | _(expect "not yet installed" — needs 10.0.9 x64 before P1-15. Runtime only: no SDK, no XAMPP, ever)_ |
+| LAN connection | Ethernet to the Huawei router — MAC to be recorded |
+| Tailscale | Registered as `100.69.76.37`, **offline, last seen ~25 d before 2026-08-18**. Not the store LAN — see §4 |
 | Resolves `MERCH-HOST` | ⬜ verified — attach `ping` output |
 | Reaches API over HTTPS | ⬜ verified at task P1-09 |
 | **Cannot** reach MariaDB port | ⬜ verified at task P1-10 |
@@ -103,6 +111,9 @@ Copy this block once **per client machine**. Every client is part of the tested 
 | ⚠️ **Address conflict risk** | **Still OPEN as a question, but no longer live**, since no manual address is currently assigned. Live neighbours observed at `.1, .6, .74, .83, .149, .174, .175, .187, .191` — spanning **both sides** of `.165` and reaching `.191`, all with randomised (locally-administered) MACs typical of phones cycling through a DHCP pool. A pool that has issued `.191` very likely includes `.165`. **Max must still check the pool range in the router admin UI** before choosing the reservation address; picking one inside the pool via reservation is fine, picking one inside the pool via static is not. Belongs to P0-05 |
 | ⚠️ **Subnet collision with the OJT office network** | **Discovered 2026-08-17 and materially affects deployment planning.** The DILG-Aparri office Wi-Fi (profile **"LNB"**) uses **the same `192.168.100.0/24` subnet and the same `192.168.100.1` gateway** as the home Huawei network. Consequences: (1) the office failure was almost certainly *not* a subnet mismatch — the subnet matched exactly — but either an address conflict at `.165` or, more likely on managed government-office gear, DHCP snooping / IP source guard dropping traffic from an address the network never leased; (2) this reinforces that **a manual static address may be silently blocked on the deployment network**, so a DHCP reservation is the only method that can be relied on; (3) two distinct networks sharing one subnet makes any Tailscale subnet-routing between them ambiguous, and makes "which `192.168.100.x` am I on?" a real question during testing — always confirm by network profile name, not by address |
 | Additional network interface | **Tailscale tunnel active — `100.76.155.51/32`.** A second path into and out of the host that is not the store LAN. P1-09 firewall scoping and the P1-10 negative tests must account for it, or those tests prove less than they appear to |
+| Host adapter MAC (for the reservation) | `24-EB-16-3F-82-2A` — Wi-Fi, Intel(R) Wi-Fi 6 AX101, interface index 14. This is the MAC the router DHCP reservation binds to |
+| ⚠️ **Client is wired, host is wireless** | Client 1 (`DESKTOP-OUU3M8J`) reaches the router by **Ethernet**; the host is on **Wi-Fi** (`HUAWEI-5G-fP2f 2`, 5 GHz). Consumer routers normally bridge LAN and WLAN into one broadcast domain, but some isolate the 5 GHz or guest SSID. **Unverified — verify before drawing any conclusion from a cross-machine test.** If the client cannot ping the host, every P0-03 / P0-05 / P1-04 / P1-10 result is void rather than passing, because a refused connection would be proving the router's isolation rather than our configuration. `scripts/capture-client-baseline.ps1` gates on this explicitly |
+| Client 1 Tailscale registration | `100.69.76.37` (`desktop-ouu3m8j`), **offline, last seen ~25 d before 2026-08-18.** Means the negative tests over Tailscale will be meaningful once it is online — a client genuinely on the tailnet, rather than one refused for want of a route |
 | Portability | ⚠️ **Nothing in this section transfers — and this was proven the hard way on 2026-08-17.** Subnet, gateway, host address, hosts-file entries and any router reservation are all bound to a specific network and must be redone on the classroom or store network. P0-05 will need re-running at deployment. **Lesson recorded:** a Windows static IPv4 is a property of the *adapter*, not of a Wi-Fi profile, so it follows the laptop onto every network it joins and breaks all of them. Never configure the host by manual static again; use a router reservation, and leave the adapter on DHCP |
 | Internet access required | No — the system is LAN-only |
 
@@ -115,7 +126,7 @@ Phase 0 is not complete until every box is ticked. A box is ticked only when the
 - [x] Dev machine captured, with `dotnet --info` attached — `evidence/phase-0/dotnet-info-dev.txt`; Visual Studio 2026 and both required workloads independently confirmed via `vswhere -requires` at `evidence/phase-0/p0-07-visual-studio-workloads.txt`
 - [x] Host laptop captured, with MariaDB version and dump tool confirmed — `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
 - [ ] **Every** client laptop captured — no "same as above" shortcuts → **blocked: no client laptop exists** (P0-02)
-- [ ] `ping MERCH-HOST` succeeds from every client, output attached → **blocked: no client laptop exists** (P0-05). The host's own hosts entry also still needs an elevated shell — see `docs/installation-guide.md` §1.5
+- [ ] `ping MERCH-HOST` succeeds from every client, output attached → **no longer hardware-blocked.** Client 1 (`DESKTOP-OUU3M8J`) exists as of 2026-08-18; it is not yet on the LAN. Now gated on the router MAC reservation, not on hardware — the client hosts entry must not be written against a DHCP lease. Host-side entry is applied and verified — see `docs/installation-guide.md` §1.5
 - [x] XAMPP stripped to MariaDB only — `evidence/phase-0/xampp-services.txt` (PowerShell process/service/port output substituted for a screenshot, by agreement). *Cross-machine phpMyAdmin unreachability remains unverified — needs a client (P0-03).*
 - [x] MariaDB bound to loopback, config excerpt attached — `evidence/phase-0/mariadb-config.txt`
 - [ ] Backup directory **and** off-host destination chosen and writable → **half done.** `C:\MerchandisingBackups` created, ACL-restricted and write-proven (`evidence/phase-0/p0-07-network-and-backup.txt`); the **off-host destination is not chosen** and needs a physical drive Max selects. The box stays unticked because the requirement has two halves.

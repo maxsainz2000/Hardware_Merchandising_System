@@ -17,11 +17,17 @@ There is no DNS server on this LAN, so the name is resolved with a **hosts file 
 | Item | Value |
 |---|---|
 | Host name | `MERCH-HOST` |
-| Host IP address | `192.168.100.165` |
+| Host IP address | `192.168.100.165` — ⚠️ **currently a DHCP lease, not yet durable.** Read the two warnings below before using it. |
 | Hosts file path | `C:\Windows\System32\drivers\etc\hosts` |
 | Required rights | **Administrator.** The file is not writable by a standard user. |
 
-> ⚠️ **`192.168.100.165` is network-specific.** It is a static address on the Wi-Fi network `HUAWEI-5G-fP2f 2`. On the classroom or store network the host will have a different address and **every** hosts entry below must be redone with the new one. See the environment manifest §4.
+> ⚠️ **The host address is not settled yet (P0-05 is open).** On 2026-08-17 the manual static was reverted to DHCP — a Windows static IPv4 belongs to the *adapter*, not to a Wi-Fi profile, so it followed the laptop onto other networks and broke them. On 2026-08-18 the router happened to lease back **the same `192.168.100.165`**, with `PrefixOrigin=Dhcp` and about 24 hours of lifetime left.
+>
+> **That coincidence is a trap, not a convenience.** The value in the table above is correct *today* and will keep working right up until a lease expiry or a router reboot silently moves it — at which point every hosts entry written from this table points at the wrong machine, and the failure looks like a certificate or firewall problem rather than an addressing one.
+>
+> **Do not write hosts entries from this table until the address is durable.** Durable means a **router-side MAC DHCP reservation** on the host's Wi-Fi adapter (`24-EB-16-3F-82-2A`), created in the Huawei admin UI at `http://192.168.100.1`. Never a manual static again — see the environment manifest §4 for why.
+
+> ⚠️ **Nothing here is portable.** The address, the subnet, the reservation and every hosts entry below are bound to one specific network. On the classroom or store network all of it must be redone. See the environment manifest §4.
 
 ### 1.2 Procedure — run once per machine, host and every client
 
@@ -63,10 +69,12 @@ Capture the `ping` output to `evidence/phase-0/ping-<machine-name>.txt`. **P0-05
 
 | Machine | Entry added | `ping MERCH-HOST` verified |
 |---|---|---|
-| Host `LAPTOP-3HH6OHHE` | ❌ **not yet** — needs an elevated shell (see below) | ❌ |
-| Client 1 | ❌ no client machine provisioned | ❌ |
+| Host `LAPTOP-3HH6OHHE` | ✅ **yes** — `192.168.100.165  MERCH-HOST` present at line 25 of the hosts file | ✅ resolves and replies, verified 2026-08-18 |
+| Client 1 `DESKTOP-OUU3M8J` | ❌ not yet — machine not yet on the LAN | ❌ |
 
-> **Host entry outstanding.** At P0-07 the agent session was not elevated and self-elevation was refused by the tooling's permission boundary, so the host's own hosts entry was **not** written. Run §1.2 on the host in an elevated PowerShell. This is a one-line task that removes a step from the day the client laptop arrives; it does **not** close P0-05 on its own.
+> **Correction, 2026-08-18.** This table previously recorded the host entry as *not applied*, on the basis that the P0-07 agent session could not elevate. It had in fact been applied out of band. Found by running `scripts/capture-client-baseline.ps1` on the host as a smoke test — `Resolve-DnsName MERCH-HOST` returned `192.168.100.165` and ping replied. The document was wrong, not the machine.
+>
+> **This still does not close P0-05.** Resolution on the host proves only that the host can find itself. The card requires resolution *from a client*, and the client entry must not be written until the host address is durable — see the warnings in §1.1.
 
 ---
 
