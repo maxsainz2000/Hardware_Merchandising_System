@@ -47,6 +47,8 @@
     <ProjectReference Include="..\..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Domain\Merchandising.Domain.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+    <!-- P1-06: MigrationRunnerTests exercises Merchandising.Maintenance's migration runner. -->
+    <ProjectReference Include="..\..\Merchandising.Maintenance\Merchandising.Maintenance.vbproj" />
   </ItemGroup>
 
 </Project>

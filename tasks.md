@@ -627,7 +627,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-06 · Migration runner
+### ✅ P1-06 · Migration runner
 
 **Spec:** §6.3 · **Decides:** ADR-008
 
@@ -647,13 +647,25 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] First run applies migrations and records them
-- [ ] Second run applies nothing
-- [ ] Tampering with an applied file causes a clear refusal, not a silent skip
-- [ ] A failing migration rolls back and records the failure
-- [ ] Runner connects as `merch_migrator`; running it with `database.json` (the API account) fails loudly rather than half-applying
+- [x] First run applies migrations and records them
+- [x] Second run applies nothing
+- [x] Tampering with an applied file causes a clear refusal, not a silent skip
+- [x] A failing migration rolls back and records the failure
+- [x] Runner connects as `merch_migrator`; running it with `database.json` (the API account) fails loudly rather than half-applying
 
 **Evidence:** `p1-06-migration-run.log`, `p1-06-tamper-refusal.log`
+
+> **Result.** `MigrationRunner.vb` (plus `MigrationFile`/`MigrationDiscovery`/`MigrationRecord`/`MigrationRunSummary`/`ChecksumCalculator`/`MigrationChecksumMismatchException`) in `src/Merchandising.Maintenance/Migrations/`, wired into `Program.vb` as a `migrate` command. One integration test per `Done when` box in `MigrationRunnerTests.vb`, all green against the real MariaDB instance — see `p1-06-migration-run.log`.
+>
+> **Who creates `SchemaMigrations`.** The runner bootstraps it itself (`CREATE TABLE IF NOT EXISTS`) before it can even ask "has 0001 been applied yet" — a numbered migration can't resolve that chicken/egg problem. **Flag for P1-07:** its own `0001_foundation.sql` table list includes `SchemaMigrations` — that statement needs `IF NOT EXISTS` too, or drop the line, or it will collide with what this runner already created.
+>
+> **DDL does not roll back on MariaDB/InnoDB — documented, not fixed.** `CREATE TABLE` etc. cause an implicit commit regardless of an open transaction. The "failing migration rolls back" guarantee is therefore fully real for DML and only partial for mixed DDL+DML. `FailingMigration_RollsBackAndRecordsFailure` is deliberately built on pure DML (two conflicting `INSERT`s) so the claim under test is actually true; this limitation is called out in `MigrationRunner.vb`'s header comment for whoever writes the next mixed migration.
+>
+> **The scratch-database test plan from this card's own note didn't survive contact with the real grants.** `merch_migrator`'s grant (`db/grants/0001_accounts-and-grants.sql`) is scoped to the literal `merchandising.*` pattern, not a wildcard — it cannot `CREATE DATABASE` under an arbitrary new name. "P1-04 closes both" meant *drop-and-recreate the same `merchandising` database*, not a side-by-side scratch schema. Tests now do exactly that in `TestInitialize`/`TestCleanup`; `merchandising` is confirmed empty again (`SHOW TABLES` — zero rows) both by the test teardown and by a manual check after the live CLI demo, so P1-07 still inherits an empty schema.
+>
+> **VB entry-point correction to CLAUDE.md section 3.** `Async Function Main() As Task` does not compile as an entry point under this SDK's `vbc` (`BC30737`, tried both `As Task` and `As Task(Of Integer)`) — unlike C#, VB never got compiler-level async-Main sugar. `Program.vb` uses the standard workaround instead: `Sub Main` blocking on an async `RunAsync` via `GetAwaiter().GetResult()`, the one accepted exception to "no `.Result`/`.Wait()`" because `Main` has no async caller above it. Worth a CLAUDE.md wording fix later; not blocking.
+>
+> Also hit and fixed along the way: VB disallows `Await` inside `Catch`/`Finally` (same constraint `ConnectionFactory.vb` already worked around at P1-05) — both the runner's per-migration rollback and a test's cleanup-after-assert needed restructuring to do the `Await` after the `Try/Catch` instead of inside it. And MSTest 4.0.2 renamed `Assert.ThrowsExceptionAsync` to `Assert.ThrowsExactlyAsync` — confirmed by reflecting the installed package, not guessed.
 
 ---
 

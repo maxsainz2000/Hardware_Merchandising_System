@@ -1,0 +1,108 @@
+P1-06 - Migration runner - evidence
+Captured 2026-08-18, against the real pinned MariaDB instance (ADR-002),
+never a substitute (ADR-000, ADR-009).
+
+====================================================================
+Part 1 - full guardrail + build + test run (pwsh ./scripts/run-tests.ps1)
+Includes MigrationRunnerTests: 5 new tests exercising the runner against
+the real "merchandising" database (drop/recreate per test, per
+merch_migrator's grant scope in db/grants/0001_accounts-and-grants.sql).
+====================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0\Merchandising.Tests.Unit.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:15.08
+
+=== Unit tests ===
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: 90 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     7, Skipped:     0, Total:     7, Duration: 1 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+(The 7 passing integration tests are: ScaffoldReferenceTests (1),
+ConnectionFactoryTests.OpenedConnection_HasStrictModeAndReadCommittedIsolation (P1-05),
+and the 5 new MigrationRunnerTests -
+FirstRun_AppliesMigrationsAndRecordsThem,
+SecondRun_AppliesNothing,
+TamperedAppliedFile_CausesRefusal,
+FailingMigration_RollsBackAndRecordsFailure,
+RunningAsApiAccount_FailsLoudlyRatherThanHalfApplying - one per Done-when box.)
+
+Filtered re-run isolating just the new tests, for the record:
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~MigrationRunnerTests"
+
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     5, Skipped:     0, Total:     5, Duration: 1 s - Merchandising.Tests.Integration.dll (net10.0)
+
+====================================================================
+Part 2 - live CLI demonstration (Done-when boxes 1 and 2)
+Merchandising.Maintenance.exe migrate, run as merch_migrator, against a
+throwaway migrations folder (outside db/migrations - that stays empty for
+P1-07). "merchandising" was confirmed empty before this demo (see
+db/migrations/.gitkeep note on the task card) and was reset to empty again
+immediately afterward - see Part 3.
+====================================================================
+
+--- run 1: first run applies migrations and records them ---
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --no-build -- migrate --migrations-dir <tmp>/p1-06-demo-migrations
+Applying migrations from '<tmp>/p1-06-demo-migrations' as 'merch_migrator'...
+  [OK]   0001_create_demo
+  [OK]   0002_seed_demo
+exit code: 0
+
+--- run 2: second run applies nothing ---
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --no-build -- migrate --migrations-dir <tmp>/p1-06-demo-migrations
+Applying migrations from '<tmp>/p1-06-demo-migrations' as 'merch_migrator'...
+No new migrations to apply.
+exit code: 0
+
+====================================================================
+Part 3 - post-demo cleanup and verification
+====================================================================
+
+$ mysql.exe -u root -h 127.0.0.1 -P 3306 -e "DROP DATABASE IF EXISTS merchandising; CREATE DATABASE merchandising CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+$ mysql.exe -u root -h 127.0.0.1 -P 3306 -e "SHOW TABLES FROM merchandising;"
+(no output - zero tables, confirmed empty for P1-07)

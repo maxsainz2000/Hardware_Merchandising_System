@@ -323,11 +323,21 @@ UPDATE StockBalances
 
 ## ADR-008 · Migration mechanism
 
-**Status:** PENDING — resolve at task P1-06. **The identity question is already settled: the runner connects as `merch_migrator` (ADR-013), not `merch_api`.** What remains PENDING here is the mechanism — discovery, checksumming, transaction boundary and failure recording.
+**Status:** ACCEPTED
+**Date:** 2026-08-18
+**Decides:** the migration mechanism — discovery, checksumming, transaction boundary and failure recording. **The identity question was already settled at ADR-013: the runner connects as `merch_migrator`, not `merch_api`.**
 
-**Decision.** Numbered, forward-only SQL files in `db/migrations/NNNN_description.sql`, applied by `Merchandising.Maintenance`. Each file is checksummed; `SchemaMigrations` records identifier, checksum, timestamp, and result. The runner refuses to proceed if a previously applied file's checksum has changed.
+**Decision.** Numbered, forward-only SQL files in `db/migrations/NNNN_description.sql`, discovered and applied by `MigrationRunner` (`src/Merchandising.Maintenance/Migrations/`). Each file is SHA-256 checksummed at discovery time. Unapplied files are applied in ascending order, each inside its own transaction. `SchemaMigrations` records identifier, checksum, UTC timestamp, and result (success/failure + error message) for every attempt. If a previously successfully-applied file's checksum no longer matches disk, the entire run is refused before anything is applied — a clear error, not a silent skip.
+
+**`SchemaMigrations` is bootstrapped by the runner itself** (`CREATE TABLE IF NOT EXISTS`), not by a numbered migration — the runner needs it to exist before it can determine whether migration `0001` has already run, which no ordinary migration file can resolve for itself. P1-07's own migration list names `SchemaMigrations` as one of the tables `0001_foundation.sql` creates; that statement must use `IF NOT EXISTS` (or be dropped) so it doesn't collide with what the runner already created.
+
+**Known limitation, not fixable here.** DDL statements (`CREATE TABLE`, `ALTER TABLE`, ...) cause an implicit commit in MariaDB/InnoDB and do not participate in transaction rollback. "A failing migration rolls back" is therefore a real guarantee for DML, and only partial for a migration that mixes DDL and DML. This is a property of the database engine, documented in `MigrationRunner.vb` and in the P1-06 task-card result note, not something this mechanism can paper over.
 
 **Consequence.** Applied migrations are **immutable**. Corrections are new migrations, never edits. This is stop condition 6 in `CLAUDE.md`.
+
+**Rejected.** A migration file itself creating `SchemaMigrations` — rejected because the runner cannot know whether *that* migration already ran without the table already existing; standard tooling (Flyway, DbUp) bootstraps its own tracking table for the same reason.
+
+**Evidence.** `evidence/phase-1/p1-06-migration-run.log`, `evidence/phase-1/p1-06-tamper-refusal.log` — `MigrationRunnerTests.vb`, one test per acceptance box, all green against the real pinned MariaDB instance.
 
 ---
 

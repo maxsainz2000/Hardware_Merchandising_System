@@ -1,0 +1,25 @@
+P1-06 - Migration runner - tamper refusal evidence
+Captured 2026-08-18, against the real pinned MariaDB instance (ADR-002).
+
+Sequence: run migrations 0001/0002 successfully (see p1-06-migration-run.log
+Part 2), then edit the content of the already-applied 0001 file on disk
+without renumbering it, then run again.
+
+--- tampering with an applied file ---
+$ (edited 0001_create_demo.sql: VARCHAR(50) -> VARCHAR(999), same file name)
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --no-build -- migrate --migrations-dir <tmp>/p1-06-demo-migrations
+Applying migrations from '<tmp>/p1-06-demo-migrations' as 'merch_migrator'...
+Refusing to run: Migration '0001_create_demo' was already applied with checksum '33758c4efcc2b53ad6cc07f3d40317e3cdd0c4f8233a3df79ad550eb476f3d2d', but the file on disk now checksums to '6ce3d189ca2af56e6dce88f1a34249fc62d68b4190fb23f17e27a0dec83f1937'. Applied migrations are immutable - write a new migration instead of editing this one.
+exit code: 2
+
+This is a clear refusal (distinct message, non-zero exit code, nothing
+applied this run - box 3), not a silent skip. The equivalent assertion is
+also proven programmatically and repeatably by
+MigrationRunnerTests.TamperedAppliedFile_CausesRefusal, which additionally
+confirms via SQL that the tampered migration's row in SchemaMigrations is
+untouched and no later migration in the file set was attempted - see
+p1-06-migration-run.log Part 1 for that test passing against the real
+database.
+
+Demo state (the temp migrations folder and the "merchandising" database)
+was reset immediately afterward - see p1-06-migration-run.log Part 3.
