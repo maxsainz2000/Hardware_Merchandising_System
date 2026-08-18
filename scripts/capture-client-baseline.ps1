@@ -5,12 +5,23 @@
     tests that P0-02, P0-03, P0-05 and P1-04 have been blocked on.
 
 .DESCRIPTION
-    Run this ON THE CLIENT MACHINE, not on the host. It gathers, in one pass:
+    Run this ON A WORKSTATION, not on the API host. It gathers, in one pass:
 
       P0-02  Windows edition / build / architecture / resolution / DPI scaling
       P0-05  Reachability of the host, and whether MERCH-HOST resolves yet
       P0-03  phpMyAdmin and the XAMPP dashboard must be UNREACHABLE from here
       P1-04  MariaDB's port 3306 must be UNREACHABLE from here
+
+    WHAT THE OUTPUT PROVES DEPENDS ON WHICH MACHINE YOU RAN IT ON (ADR-012).
+
+      On a LAB test workstation  -- proves the SOFTWARE behaves correctly across
+                                    a real network boundary. Unblocks P1-09,
+                                    P1-10 and P1-15. Does NOT close P0-02 or
+                                    P0-05, which are about the demo machines.
+      On a DEMO workstation      -- this output IS the P0-02 / P0-05 evidence.
+
+    Running it in the lab and filing the result as demo-workstation evidence is
+    the specific mistake this warning exists to prevent.
 
     It is deliberately read-only. It changes nothing, needs no Administrator
     rights, and installs nothing. The hosts-file edit that P0-05 also requires
@@ -20,25 +31,34 @@
     PowerShell 7 syntax (?:, ??, -Parallel) -- it will not run on the target.
 
 .PARAMETER HostIPv4
-    The API host's current LAN address. Defaults to the address the host held
-    when this script was written. VERIFY IT FIRST -- the host is on a DHCP
-    lease, not a reservation, so this value is not yet durable (P0-05).
+    REQUIRED. The API host's address ON THIS NETWORK.
+
+    Deliberately has no default. Per ADR-012 the host address is an install-time
+    value, not a constant: it differs between the development lab and the demo
+    rig. A default would be silently wrong in the environment that matters, and
+    a wrong-but-plausible address does not fail cleanly -- it resolves to some
+    other machine and produces results that look like evidence.
 
 .PARAMETER HostTailscaleIPv4
-    The host's Tailscale address. The host has a second network path that is
-    not the store LAN, so "unreachable from the client" has to hold on both
-    or the P0-03 / P1-10 tests prove less than they appear to.
+    OPTIONAL and normally omitted. Tailscale is OUT OF PROJECT SCOPE (ADR-012):
+    it is a personal tailnet that exists on no machine which will attend the
+    presentation. Supply this only when deliberately characterising the lab.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\capture-client-baseline.ps1
+    powershell -ExecutionPolicy Bypass -File .\capture-client-baseline.ps1 -HostIPv4 192.168.100.165
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\capture-client-baseline.ps1 -HostIPv4 192.168.100.42
+    # Lab characterisation only -- also probes the author's Tailscale path
+    powershell -ExecutionPolicy Bypass -File .\capture-client-baseline.ps1 `
+        -HostIPv4 192.168.100.165 -HostTailscaleIPv4 100.76.155.51
 #>
 [CmdletBinding()]
 param(
-    [string] $HostIPv4          = '192.168.100.165',
-    [string] $HostTailscaleIPv4 = '100.76.155.51',
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string] $HostIPv4,
+
+    [string] $HostTailscaleIPv4 = '',
     [string] $HostName          = 'MERCH-HOST',
     [string] $OutFile           = (Join-Path ([Environment]::GetFolderPath('Desktop')) 'client-baseline.txt')
 )
@@ -81,7 +101,16 @@ function Test-MustBeUnreachable {
 Add-Line 'CLIENT BASELINE CAPTURE'
 Add-Line ("Generated : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'))
 Add-Line ("Script    : capture-client-baseline.ps1")
-Add-Line ("Host under test : {0} ({1}), Tailscale {2}" -f $HostName, $HostIPv4, $HostTailscaleIPv4)
+Add-Line ("Host under test : {0} ({1})" -f $HostName, $HostIPv4)
+if (-not [string]::IsNullOrWhiteSpace($HostTailscaleIPv4)) {
+    Add-Line ("Tailscale probe : {0} (LAB ONLY -- out of scope, ADR-012)" -f $HostTailscaleIPv4)
+}
+Add-Line ''
+Add-Line 'WHICH MACHINE IS THIS? Record it before reading any result below.'
+Add-Line '  Lab test workstation  -> proves software behaviour (P1-09/P1-10/P1-15).'
+Add-Line '                           Does NOT satisfy P0-02 or P0-05 acceptance.'
+Add-Line '  Demo workstation      -> the deliverable. This output IS the evidence.'
+Add-Line 'See ADR-012 and environment-manifest section 3.'
 
 # ---------------------------------------------------------------- P0-02 ------
 Add-Section 'P0-02  Machine identity, Windows baseline, architecture'
@@ -231,9 +260,15 @@ try {
     }
     $pingName = Test-Connection -ComputerName $HostName -Count 2 -ErrorAction SilentlyContinue
     if ($pingName) {
-        Add-Line ("  [PASS] ping {0} succeeded -- P0-05 acceptance met from this client" -f $HostName)
+        Add-Line ("  [PASS] ping {0} succeeded from this machine" -f $HostName)
+        Add-Line '         Closes P0-05 ONLY if this is a demo workstation on the demo'
+        Add-Line '         LAN. From a lab machine it proves the mechanism works and'
+        Add-Line '         nothing more -- do not tick the card on it (ADR-012).'
     } else {
         Add-Line ("  [WARN] {0} resolves but does not answer ping" -f $HostName)
+        Add-Line '         Resolution and reachability are different failures. The name'
+        Add-Line '         mapped, so the hosts entry is fine; something between the two'
+        Add-Line '         machines is dropping traffic -- firewall, or AP isolation.'
     }
 } catch {
     Add-Line ("  [PENDING] '{0}' does not resolve -- hosts entry not applied here yet." -f $HostName)
@@ -256,11 +291,20 @@ Test-MustBeUnreachable -Label 'P0-03  Apache TLS 443'              -Target $Host
 Test-MustBeUnreachable -Label 'P0-03  Apache alt 8080'             -Target $HostIPv4 -Port 8080
 
 Add-Line ''
-Add-Line ("--- Over Tailscale ({0}) -- the host's SECOND path ---" -f $HostTailscaleIPv4)
-Add-Line 'If this client is not on the tailnet these will refuse for the wrong'
-Add-Line 'reason (no route), which proves nothing. Note which case applies.'
-Test-MustBeUnreachable -Label 'P1-04  MariaDB 3306 via Tailscale'  -Target $HostTailscaleIPv4 -Port 3306
-Test-MustBeUnreachable -Label 'P0-03  Apache 80 via Tailscale'     -Target $HostTailscaleIPv4 -Port 80
+if ([string]::IsNullOrWhiteSpace($HostTailscaleIPv4)) {
+    Add-Line '--- Tailscale path: SKIPPED (out of scope, ADR-012) ---'
+    Add-Line 'Tailscale is a personal tailnet on the author lab machines. It will not'
+    Add-Line 'exist on the demo network, so hardening or testing against it buys'
+    Add-Line 'nothing and would displace testing the path that WILL be there.'
+} else {
+    Add-Line ("--- Over Tailscale ({0}) -- LAB CHARACTERISATION ONLY ---" -f $HostTailscaleIPv4)
+    Add-Line 'Out of project scope per ADR-012. These results describe the lab, not'
+    Add-Line 'the deliverable, and must not be cited as P0-03 or P1-10 evidence.'
+    Add-Line 'If this client is not on the tailnet they refuse for the wrong reason'
+    Add-Line '(no route), which proves nothing at all. Note which case applies.'
+    Test-MustBeUnreachable -Label 'LAB  MariaDB 3306 via Tailscale'  -Target $HostTailscaleIPv4 -Port 3306
+    Test-MustBeUnreachable -Label 'LAB  Apache 80 via Tailscale'     -Target $HostTailscaleIPv4 -Port 80
+}
 
 Add-Line ''
 Add-Line '--- phpMyAdmin over HTTP (belt and braces on top of the port check) ---'

@@ -7,6 +7,26 @@
 
 ---
 
+> ## ⚠️ Read ADR-012 before acting on any environment card
+>
+> **The delivery model was settled on 2026-08-18 and it re-scopes several cards below.** Three classmates are paying for this work and will present it as a system proposal for a hardware store. **The business receives nothing** — it is the subject of the proposal, not a deployment site.
+>
+> **The deliverable is a handover package that three people who did not build it can install and demonstrate, on machines the author does not own, on a network the author does not control.**
+>
+> Three consequences that change how cards are read:
+>
+> | | |
+> |---|---|
+> | **Lab ≠ demo** | The author's laptop and desktop are a development and integration-test lab. They are **never** the deliverable. A card asking for facts about *demo workstations* cannot be closed with a lab machine — see P0-02, P0-05. |
+> | **Behaviour ≠ facts** | A card testing *software behaviour across a network* is proved by **any** second machine, so P1-09, P1-10, P1-15 and P1-04's root check are **unblocked now**. |
+> | **Tailscale is out of scope** | Personal tailnet, present on no machine that will attend the presentation. Struck from P0-03, P1-09 and P1-10. |
+>
+> **Largest un-mitigated risk:** the demo runs on venue Wi-Fi, which commonly isolates stations from each other and would kill a client-server demo on the day, unfixably. Mitigation is a self-provided demo LAN — manifest §4.2, not started.
+>
+> **Highest-value non-architectural work:** there is no README and no bootstrap script, and every setup step was done by hand and recorded only as prose. **A classmate cloning this repository today cannot start it.** That gap closes after P1-06 and P1-07 give a bootstrap script something to invoke.
+
+---
+
 # Phase 0 — Environment baseline
 
 No application code is written in this phase.
@@ -51,26 +71,29 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision i
 
 ---
 
-### 🔴 P0-02 · Capture Windows baseline for host and every client — BLOCKED, no clients provisioned
+### 🔴 P0-02 · Capture Windows baseline for the host and every demo workstation — BLOCKED, classmates' machines not surveyed
 
 **Spec:** §3 · **Closes:** G-30
 
-**Do:** Record Windows edition, build, and architecture for the host laptop and **each** client laptop. Also record each client's screen resolution and display scaling — the UI baseline is 1366×768 and must stay usable at 125%.
+**Do:** Record Windows edition, build, and architecture for the API host and **each demo workstation**. Also record each workstation's screen resolution and display scaling — the UI baseline is 1366×768 and must stay usable at 125% — and whether its owner holds local administrator rights.
 
 > **Result.** User confirmed the dev machine (`LAPTOP-3HH6OHHE`, Windows 11 Home Single Language build 26200, 64-bit x64) doubles as the host laptop at this stage. That row is filled in manifest §2. **No client laptops are provisioned yet** — this is currently a solo-developer setup. Manifest §3 is left as unfilled placeholders with an explicit status note rather than faked/duplicated data. Card stays open until real client machines exist and are captured individually — no "same as above" shortcuts, per the card's own instruction.
 
 **Done when:**
 
 - [x] Host row complete in manifest §2 (Windows edition/build/architecture/machine name only — other host-row fields belong to P0-03/P0-04/P0-05 and are filled by those cards)
-- [ ] One complete block per client in manifest §3 — **not satisfied, no client machines exist**
-- [ ] Resolution and scaling recorded per client — **not satisfied, no client machines exist**
-- [x] Host machine confirmed 64-bit; client confirmation pending client provisioning
+- [ ] One complete block per **demo workstation** in manifest §3.2 — **not satisfied.** These are the three classmates' machines; none has been surveyed
+- [ ] Resolution and scaling recorded per demo workstation — **not satisfied**
+- [ ] Local administrator rights confirmed per demo workstation — **added 2026-08-18.** Required for the hosts entry and certificate trust. A classmate without admin on their own machine is a blocker best discovered now, not at P1-09
+- [x] Host machine confirmed 64-bit
 
-**Unblocked by:** one physical (or virtual) client laptop existing. Nothing else. No agent action can advance this card.
+> **Re-scoped 2026-08-18 by ADR-012.** This card was blocked on "a client laptop existing". A second machine now exists — the author's Windows 10 desktop — but it is **lab equipment, not a deliverable**, and recording it here would be recording the wrong computer. The card is about the machines the system will be demonstrated on. The desktop is captured separately in manifest §3.1.
+
+**Unblocked by:** the three classmates reporting their machine details. Ask for edition, build, architecture, resolution, scaling and admin rights — `scripts/capture-client-baseline.ps1` collects all of it if they can run one command. No agent action can advance this card.
 
 ---
 
-### 🟡 P0-03 · Install and strip XAMPP — phpMyAdmin cross-machine test pending client laptop
+### 🟡 P0-03 · Install and strip XAMPP — phpMyAdmin cross-machine test now unblocked
 
 **Spec:** §3, §17 · **Closes:** G-03 (partially)
 
@@ -82,12 +105,14 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision i
 
 - [x] Only MariaDB runs; evidence at `evidence/phase-0/xampp-services.txt` (screenshot substituted with PowerShell output, by agreement)
 - [x] Apache/FileZilla/Mercury/Tomcat confirmed not running, no OS-level autostart mechanism found
-- [ ] phpMyAdmin unreachable from a client laptop — **not verified, no client laptop provisioned; deferred with P0-02**
+- [ ] phpMyAdmin unreachable from another machine — **not verified, but no longer blocked.** The lab desktop is sufficient: this is a property of the host, not of a demo machine (ADR-012). `scripts/capture-client-baseline.ps1` performs the check
 - [x] XAMPP version recorded in manifest §2 — `8.2.12-0`, now also pinned in ADR-002
 
-**Unblocked by:** a client laptop, to run the cross-machine reachability test from.
+**Unblocked by:** any second machine on the same network as the host. The author's lab desktop is sufficient here — unlike P0-02, this card tests a *property of the host* (that phpMyAdmin is not exposed), not a fact about a demo machine, so the lab proves it.
 
-> **P0-07 addition.** When this test is finally run, check the **Tailscale** interface too (`100.76.155.51`). The host has a second network path that is not the store LAN, and "unreachable from the client" must hold on both.
+> ~~**P0-07 addition.** When this test is finally run, check the **Tailscale** interface too.~~ **WITHDRAWN 2026-08-18 by ADR-012.** Tailscale is a personal tailnet on the author's lab machines and will exist on no machine at the presentation. Hardening against a path that will not be there displaces testing the path that will. `capture-client-baseline.ps1` now skips it unless explicitly asked to characterise the lab.
+>
+> **Replaced by a real concern:** on the demo LAN, confirm there is no *second* path — a workstation still joined to venue Wi-Fi while also on the demo rig is dual-homed, and "unreachable" then depends on which route Windows picks.
 
 ---
 
@@ -115,7 +140,7 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 
 ---
 
-### 🔴 P0-05 · Network and host addressing — BLOCKED, no clients to verify resolution from
+### 🔴 P0-05 · Network and host addressing — BLOCKED, demo rig not acquired
 
 **Spec:** §8 · **Closes:** G-25 (begins)
 
@@ -126,18 +151,23 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 **Done when:**
 
 - [x] Host IP reserved; method recorded (static IP on host adapter, not a router DHCP reservation — see manifest §4 for why)
-- [ ] `ping MERCH-HOST` succeeds from **every** client — **not satisfied, no client machines exist**
+- [ ] `ping MERCH-HOST` succeeds from **every demo workstation** — **not satisfied.** A lab-to-lab run proves the mechanism and unblocks P1-09/P1-10/P1-15, but does not tick this box (ADR-012)
 - [x] Subnet recorded in manifest §4
 - [x] Name choice recorded in ADR-011 (confirmation note only; ADR itself stays PENDING for P1-09)
 
-**Unblocked by:** (a) a client laptop to resolve `MERCH-HOST` from, and (b) router admin access to clear the conflict risk below. Neither is an agent action.
+**Unblocked by:** the demo rig existing (manifest §4.2). **Router admin access is no longer required** — see the re-scope note below.
 
-> **P0-07 additions — two things this card now also owes.**
+> **Re-scoped 2026-08-18 by ADR-012 — read this before doing anything on this card.**
 >
-> 1. **The static IP is very likely inside the router's DHCP pool.** Live neighbours were observed at `.1, .6, .74, .83, .149, .174, .175, .187, .191` — on both sides of `.165` and up to `.191`, all randomised MACs typical of phones cycling through a pool. Windows DAD said `Preferred` at assignment, so there is no conflict *today*; that is not a guarantee. A duplicate address handed out mid-demo is the most likely way this bites. **Max: open `http://192.168.100.1` and answer "is 192.168.100.165 inside the DHCP pool, and what is the range?"** Then move the host IP out of the pool, shrink the pool, or convert to a MAC reservation.
-> 2. **The host's own hosts-file entry was not applied.** It needs an elevated shell; the agent session was not elevated and self-elevation was refused by the tooling's permission boundary. The one-line command is in `docs/installation-guide.md` §1.2. Applying it does **not** close this card — the card requires resolution *from a client*.
+> **What this card is no longer about.** It previously owed a router-side MAC DHCP reservation on the author's home Huawei, plus an audit of that router's DHCP pool. Both are **withdrawn**. They would have stabilised a *lab* address, and no delivered artefact is permitted to contain one. Neither survives contact with the presentation venue, and neither is worth an hour of router administration.
 >
-> Also recorded: this whole configuration is bound to the `HUAWEI-5G-fP2f 2` network and must be redone on the classroom or store network.
+> **What it is about now.** The system is demonstrated on **self-provided network equipment** (manifest §4.2), where the host address is fixed once on hardware under our control. That single change retires the pool-conflict risk, the router-admin dependency, and the whole class of "is this address inside the DHCP range" questions — because we own the range.
+>
+> **The one thing that carries forward, and it is the important one.** Never configure a host by manual static IP. A Windows static IPv4 belongs to the *adapter*, not to a network profile, so it follows the machine onto every network it joins and breaks all of them. Proven on 2026-08-17 at the OJT office; recorded in `evidence/phase-0/host-ip-reservation.txt` §2. Set addresses on the router; leave adapters on DHCP.
+>
+> **Already done:** the host's own hosts-file entry, previously recorded here as outstanding, **was applied out of band** and verifies clean — `Resolve-DnsName MERCH-HOST` resolves and replies. The document was wrong, not the machine. It does not close this card: resolution on the host proves only that the host can find itself.
+>
+> **Now the largest un-mitigated risk to the presentation:** venue Wi-Fi commonly enables **AP client isolation**, which blocks station-to-station traffic while leaving internet access intact. A client-server demo dies outright, minutes before presenting, with no fix available without admin rights on someone else's equipment. Acquiring and rehearsing the demo rig is the mitigation, and it is not started.
 
 ---
 
@@ -215,9 +245,13 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 - [ ] Approvals documented with evidence — **blocked on Max attaching two screenshots (P0-06)**
 - [x] Repo scaffolded, hooks installed, guardrails proven to fail correctly — all four layers now proven **live**, not just by script (P0-08 SECTION 8)
 
-**Gate verdict: FAIL — 2 of 4 criteria unmet.** Both remaining criteria are blocked on things no agent can do: a client laptop existing, and two screenshots being attached. Nothing is blocked on engineering work.
+**Gate verdict: FAIL — 2 of 4 criteria unmet.** Both remain blocked on things no agent can do: the classmates' machine details being reported, and two approval screenshots being attached. Nothing is blocked on engineering work.
 
-> **Phase 0 does not gate Phase 1.** P1-01 through P1-08 and P1-11 through P1-14 need none of the outstanding items. Only P1-09, P1-10, P1-15 and one sub-check of P1-04 need the client laptop. Do not treat this FAIL as a reason to wait — see `evidence/phase-0/PHASE-0-READINESS.md`.
+> **Re-scoped 2026-08-18 by ADR-012.** The outstanding criteria used to read "a client laptop exists". They now read "the demo workstations and demo LAN are specified" — a different and more honest blocker. Acquiring a second machine did **not** close them, because the author's desktop is lab equipment, not a deliverable.
+
+> **Phase 0 does not gate Phase 1.** P1-01→P1-08 and P1-11→P1-14 need none of the outstanding items.
+>
+> **And the four that used to need "a client laptop" are now unblocked too:** P1-09 (certificate trust), P1-10 (port denial), P1-15 (WPF round trip) and P1-04's root-from-another-machine check all test **software behaviour across a real network boundary**, which any second machine proves. The author's lab desktop is sufficient for every one of them. What a lab machine cannot do is stand in for a *demo workstation* in P0-02 and P0-05 — those are facts about specific machines, not behaviours. Do not treat this FAIL as a reason to wait — see `evidence/phase-0/PHASE-0-READINESS.md`.
 
 ---
 
@@ -514,7 +548,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track B — Database and migrations
 
-### 🟡 P1-04 · MariaDB setup and least-privilege accounts — root-from-client box blocked, no client laptop
+### 🟡 P1-04 · MariaDB setup and least-privilege accounts — root-from-another-machine box now unblocked
 
 **Spec:** §17 · **Closes:** G-03, G-10 (begins) · **Decides:** ADR-003
 
@@ -525,7 +559,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [x] Both accounts created with least privilege — `merch_api`@`localhost` (`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` — deliberately no `DROP`, no admin privileges); `merch_backup`@`localhost` (`SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` only, verbatim). Confirmed with Max before implementing: "limited DDL" read as CREATE/ALTER/INDEX/REFERENCES, no DROP — see evidence
 - [x] `merch_api` **cannot** `DROP DATABASE` — attempt recorded, `ERROR 1044 (42000): Access denied`, database confirmed intact afterward
 - [x] `merch_backup` **cannot** write — `INSERT`/`UPDATE`/`DELETE`/`CREATE` all denied against a scratch table; `SELECT` succeeds alongside, proving the denial is real privilege enforcement and not a broken account
-- [ ] Root login from a client machine fails — **blocked, no client laptop exists** (same gap as P0-02/P0-03/P0-05). Structural evidence recorded instead: `bind-address=127.0.0.1` (P0-04) plus `root` having no `%`-host entry (only `localhost`/`127.0.0.1`/`::1`) — two independent layers, neither a substitute for the real cross-machine test
+- [ ] Root login from another machine fails — **unblocked 2026-08-18: the lab desktop is sufficient.** This tests a property of the *host* (root is not reachable off-box), not a fact about a demo machine, so any second machine proves it. Structural evidence recorded instead: `bind-address=127.0.0.1` (P0-04) plus `root` having no `%`-host entry (only `localhost`/`127.0.0.1`/`::1`) — two independent layers, neither a substitute for the real cross-machine test
 - [x] ADR-003 records charset, collation, engine — **already ACCEPTED at P0-07 with measured values.** This card now *consumes* ADR-003 rather than deciding it.
 - [x] **`STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted, and the change logged in the manifest §6** — re-ran the ADR-003.2 truncation demo under strict mode: `ERROR 1406 (22001)` where it previously silently stored a mangled value. The decimal-*scale* rounding half of that demo is **not** fixed by strict mode (expected — that's ADR-004.1's job, at the API layer, not here)
 
@@ -662,6 +696,14 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [ ] Dev HTTP profile displays a non-production warning
 - [ ] Firewall allows 8443 from the private subnet only
 
+> **ADR-012 note — unblocked, and one design lean firmed up.**
+>
+> **Provable in the lab.** "A client reaches it without a certificate warning" is a software behaviour, so any second machine proves it. Do not wait for the demo workstations.
+>
+> **Lean strongly to a name-only SAN.** ADR-011's baseline said "`MERCH-HOST` and the reserved IP". **An IP in the SAN binds the certificate to one network** — it would be valid on the lab LAN and produce a trust warning on the demo rig, at the worst possible moment. A name-only SAN keeps one certificate valid everywhere and is the entire reason the manual hosts-file step earns its inconvenience. Confirm or overturn here; ADR-011 is updated with the reasoning.
+>
+> **Scope the firewall rule to the demo LAN's subnet, and ignore Tailscale** — out of scope, and it will not be present at the presentation.
+
 **Evidence:** `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.png`
 
 ---
@@ -670,7 +712,13 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Spec:** §17 · **Closes:** G-03, G-10
 
-**Do:** From a **client laptop**: attempt a direct MariaDB connection; call a protected endpoint unauthenticated; call it with a valid token but insufficient role.
+**Do:** From a **second machine**: attempt a direct MariaDB connection; call a protected endpoint unauthenticated; call it with a valid token but insufficient role.
+
+> **ADR-012 note — unblocked.** Every check here is a property of the **host**, not a fact about the machine you run it from, so the lab desktop proves all of them. `scripts/capture-client-baseline.ps1` already performs the port-denial half.
+>
+> **Verify the two machines can reach each other first.** If they cannot, a refused connection proves the *network's* isolation rather than the system's configuration, and the results are void rather than passing. The script gates on this.
+>
+> **Tailscale is excluded** — it will not exist at the presentation.
 
 **Done when:**
 
@@ -769,7 +817,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Full round trip over HTTPS **from a client laptop**, not the dev machine
+- [ ] Full round trip over HTTPS **from a second machine**, not the dev machine — the lab test workstation satisfies this (ADR-012). It must have the .NET 10 Desktop Runtime 10.0.9 x64 and **not** the SDK: a framework-dependent WPF client (ADR-010) that fails at launch on a runtime-free machine is exactly the failure this card exists to catch
 - [ ] Stopping the API produces a clear connection-unavailable state
 - [ ] The client **refuses** to queue or fake the write when offline
 - [ ] Token never written to disk

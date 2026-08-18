@@ -437,11 +437,62 @@ P1-16 raises the stakes: the API runs as a **Windows Service** with automatic re
 
 **Baseline lean:** self-signed certificate with subject/SAN covering the host name `MERCH-HOST` (and the reserved IP if client configuration will use it), with a documented manual trust-installation procedure per client.
 
-**P0-05 note:** host name `MERCH-HOST` confirmed as the name to use (matches the baseline lean above — no reason found to deviate). Host's current LAN address is `192.168.100.165` (static, see environment manifest §4), which the SAN should also cover per the baseline lean, since P1-09 hasn't yet ruled that out. `MERCH-HOST` → `192.168.100.165` resolution is **not yet configured on any client** — no client laptops are provisioned (same gap as P0-02/P0-03).
+**P0-05 note:** host name `MERCH-HOST` confirmed as the name to use (matches the baseline lean above — no reason found to deviate).
+
+**Revised 2026-08-18 by ADR-012 — the baseline lean's "and the reserved IP" clause is now actively harmful.** An IP address in the SAN binds the certificate to one network. Under ADR-012 the same package must run on the author's lab LAN, on a self-provided demo rig, and on whatever the venue provides — three different subnets, at least. A certificate carrying `192.168.100.165` would be valid in exactly one of those and produce a trust warning in the others, at the moment it matters most.
+
+**Therefore P1-09 should lean to a name-only SAN** covering `MERCH-HOST`, with the address supplied per install through the hosts file. That keeps the certificate a constant of the *package* rather than a property of one network, and it is the reason the hosts-file approach is worth its manual step. Confirm or overturn this at P1-09 — it is a lean, not yet the decision.
+
+Resolution is configured on the lab host and on **no** demo workstation, which is correct: no hosts entry should be written until the demo rig's addressing is fixed.
 
 **Decision:** _(record after P1-09)_
 
 **Fixed:** HTTPS mandatory for production-like operation on port 8443. HTTP permitted only on an isolated developer machine, visibly labelled non-production.
+
+---
+
+## ADR-012 · Delivery model — who receives this system, and on whose hardware
+
+**Status:** ACCEPTED
+**Date:** 2026-08-18
+**Decides:** what the deliverable actually is, and which machines it must run on. Reframes the acceptance criteria of P0-02, P0-03, P0-05, P1-09, P1-10 and P1-15. Does **not** alter any architectural rule.
+
+**Decision.**
+
+1. **The deliverable is a handover package, not an installed system.** Three classmates are paying for this work. They will present it as a system proposal for a mid-scale hardware store, and the proposed system must already be functional at presentation time. There is **no deployment to the business.** The store is the *subject* of the proposal, not a site.
+2. **Nothing required to run this system may exist only on the author's hardware or only in the author's head.** The package must be installable and demonstrable by three people who did not build it, on machines the author does not own, on a network the author does not control.
+3. **The author's laptop and desktop are a development and integration-test lab.** They are not "the host" and not "Client 1". They stand in for the demo environment; they are never part of it.
+4. **Topology is unchanged from the spec:** one API host and three WPF workstations (Procurement, Inventory, POS), one database, one LAN. One business, three workstations — not three deployments.
+5. **The demo LAN is self-provided equipment**, not the venue's network. See *Reasoning* — this is a hard requirement, not a convenience.
+6. **Credentials are generated per installation** and never committed. No password known to the author may be the password protecting a classmate's demo.
+
+**Reasoning.**
+
+*Why the lab/demo distinction is load-bearing.* Phase 0 recorded the environment of one laptop — machine name, a Wi-Fi SSID, a router, a MAC address, a Tailscale tunnel — as though those were properties of the system. They are properties of one developer's house. Every one of them is absent at presentation time. The manifest's own Portability row already said "nothing in this section transfers", and 2026-08-17 proved it the hard way when a static IP followed the laptop to another network and broke it. This ADR makes the distinction structural instead of a warning note.
+
+*Why the demo network must be self-provided.* The presentation happens on a school or venue network nobody here administers. **AP client isolation is common on such networks and blocks station-to-station traffic** — every workstation reaches the internet, none can reach the API host. The failure surfaces as a connection or certificate error minutes before presenting, and is unfixable without administrative access to equipment belonging to someone else. A travel router, an unmanaged switch, or a phone hotspot removes the entire failure class and makes the demo LAN a rehearsable constant. It also retires the router-admin dependency and the DHCP-reservation problem that blocked P0-05.
+
+*Why Tailscale leaves scope.* It is a personal tailnet on a personal account. It exists on the author's machines and on no machine that will be present at the demo. Leaving it in the P1-09 firewall scoping and the P1-10 test matrix would mean hardening against a path that will not be there, while the real second path — whatever the venue's network provides — goes untested. It remains a documented fact about the **lab**, and nothing more.
+
+*Why this does not disturb the architecture.* Every rule in `CLAUDE.md` §4 and §5 is machine-agnostic: the dependency direction, atomicity, append-only ledgers, idempotency, decimal precision, server-side authority. Verified at the time of writing: `src/` contains no hardcoded address, credential or XAMPP path — `DatabaseOptions.vb` is options-driven throughout and its `127.0.0.1` default is a deliberate loopback constraint, not a personal value. **The contamination was entirely in documentation and evidence.**
+
+*What this raises in priority without adding scope.* Phase 6 already owns release packaging, the installation guide and the exit criterion "a clean installation on a fresh machine succeeds from the guide alone" (`plan.md` §7). That criterion was one of many; under this ADR it is the primary measure of whether the deliverable exists at all. Similarly `CLAUDE.md` §9's "a clean-clone build from scratch succeeds" stops being a gate checkbox and becomes the product quality. **Currently unmet:** there is no README, no bootstrap script, and every setup step (XAMPP layout, `my.ini` `sql_mode`, `bind-address`, both database accounts and grants, the backup directory ACL, the hosts entry) was performed by hand and recorded only as prose. A classmate cloning this repository today cannot start it. That gap is now the highest-value non-architectural work in the project, and it cannot be closed before P1-06 and P1-07 exist for a bootstrap script to invoke.
+
+**Rejected.**
+
+- **Treating the author's laptop as the host.** Recommended earlier on 2026-08-18 and withdrawn the same day. The grounds were that the laptop already carried XAMPP, the accounts and the evidence, and that a laptop travels well. Both assume the deliverable runs on the author's hardware, which requirement 2 forbids.
+- **Escalating XAMPP to the professor as unfit for a paying client (draft PA-004).** Drafted and withdrawn once it was established that the business receives nothing. ADR-000 stands unaltered, and XAMPP is a positive here: three classmates can install the entire database stack from one download. The "academic prototype" wording throughout the documents remains accurate and stays.
+- **Per-site commissioning records, multi-tenancy, per-site licensing, Data Privacy Act obligations, and Windows 10 end-of-support as a security liability.** All scoped to a business running the software against real personnel and sales records. No business runs it. All dropped.
+- **Rewriting git history to remove the author's personal data.** Deferred, not rejected. The repository carries home network topology, a MAC address, hostnames, tailnet addresses and the author's email on every commit. Scrubbing forward and curating the handover is likely cheaper than a rewrite, but the decision is the author's and is not yet made.
+
+**Consequences.**
+
+- P0-02's per-client manifest blocks describe **demo workstations**, and are filled from the classmates' machines, not from the author's desktop. The desktop is recorded separately as lab equipment.
+- P0-05 no longer depends on router administration. The host address becomes an install-time variable on self-provided equipment.
+- P1-09, P1-10 and P1-15 are provable **in the lab** on any two machines, because they test software behaviour across a real network boundary rather than facts about a site. They are no longer hardware-blocked.
+- P1-17's dump-tool path (ADR-003.1, `C:\xampp\mysql\bin\mysqldump.exe`) must be **configured, not hardcoded**, so a differently-installed XAMPP on a classmate's machine does not break backup.
+
+**Evidence.** `docs/environment-manifest.md` §2–§4 (lab vs demo split), `scripts/capture-client-baseline.ps1`.
 
 ---
 

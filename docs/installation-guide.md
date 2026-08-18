@@ -14,33 +14,34 @@ There is no DNS server on this LAN, so the name is resolved with a **hosts file 
 
 ### 1.1 The values
 
+**The host address is an install-time value, not a constant of this system (ADR-012).** It differs between the development lab and the demo rig, and a value copied from one into the other resolves to the wrong machine instead of failing cleanly — which is far harder to diagnose under time pressure. Fill this table in per installation.
+
 | Item | Value |
 |---|---|
-| Host name | `MERCH-HOST` |
-| Host IP address | `192.168.100.165` — ⚠️ **currently a DHCP lease, not yet durable.** Read the two warnings below before using it. |
+| Host name | `MERCH-HOST` — **constant.** The certificate SAN is issued for this name, so it never changes between environments |
+| Host IP address | ⬜ **per install.** Lab: currently `192.168.100.165`, a DHCP lease (see below). Demo rig: to be fixed once the equipment exists — environment manifest §4.2 |
 | Hosts file path | `C:\Windows\System32\drivers\etc\hosts` |
-| Required rights | **Administrator.** The file is not writable by a standard user. |
+| Required rights | **Administrator.** The file is not writable by a standard user. **Confirm each demo workstation's owner actually has local admin** — without it, neither this step nor certificate trust can be completed on their machine |
 
-> ⚠️ **The host address is not settled yet (P0-05 is open).** On 2026-08-17 the manual static was reverted to DHCP — a Windows static IPv4 belongs to the *adapter*, not to a Wi-Fi profile, so it followed the laptop onto other networks and broke them. On 2026-08-18 the router happened to lease back **the same `192.168.100.165`**, with `PrefixOrigin=Dhcp` and about 24 hours of lifetime left.
->
-> **That coincidence is a trap, not a convenience.** The value in the table above is correct *today* and will keep working right up until a lease expiry or a router reboot silently moves it — at which point every hosts entry written from this table points at the wrong machine, and the failure looks like a certificate or firewall problem rather than an addressing one.
->
-> **Do not write hosts entries from this table until the address is durable.** Durable means a **router-side MAC DHCP reservation** on the host's Wi-Fi adapter (`24-EB-16-3F-82-2A`), created in the Huawei admin UI at `http://192.168.100.1`. Never a manual static again — see the environment manifest §4 for why.
+> ⚠️ **Why the host name is constant but the address is not.** `MERCH-HOST` is what the HTTPS certificate is issued for, so clients must always connect by name. The name-to-address mapping is what changes per environment, and the hosts file is where that change is absorbed. This is the whole reason the manual hosts step is worth its inconvenience — it keeps one certificate valid across every network the system runs on. See ADR-011.
 
-> ⚠️ **Nothing here is portable.** The address, the subnet, the reservation and every hosts entry below are bound to one specific network. On the classroom or store network all of it must be redone. See the environment manifest §4.
+> ⚠️ **The lab address is a DHCP lease and may move without warning.** On 2026-08-17 a manual static was reverted after it followed the laptop onto another network and broke it; on 2026-08-18 the router happened to lease back the very same `192.168.100.165`, with about 24 hours of lifetime. **That coincidence is a trap, not a convenience** — it will keep working right up until a lease expiry or a router reboot moves it, and the resulting failure presents as a certificate or firewall problem rather than an addressing one. Re-check the address before relying on it; never copy it onto a demo machine.
+
+> ⚠️ **Never configure the host by manual static IP.** A Windows static IPv4 is a property of the *adapter*, not of a network profile, so it follows the machine onto every network it joins and breaks all of them. On the demo rig, set the address on the *router* — equipment we control — and leave every adapter on DHCP. Evidence: `evidence/phase-0/host-ip-reservation.txt` §2.
 
 ### 1.2 Procedure — run once per machine, host and every client
 
-Open **PowerShell as Administrator** (right-click → *Run as administrator*), then paste:
+Open **PowerShell as Administrator** (right-click → *Run as administrator*). Set `$HostIp` to **this installation's** host address from §1.1 — do not paste an address carried over from another environment:
 
 ```powershell
-Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n# Merchandising System - API host (P0-05)`n192.168.100.165`tMERCH-HOST"
+$HostIp = "<the API host's address on THIS network>"
+Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n# Merchandising System - API host (P0-05)`n$HostIp`tMERCH-HOST"
 ```
 
 If you prefer to edit by hand: open `C:\Windows\System32\drivers\etc\hosts` in Notepad **started as administrator**, and append this line — the separator must be a tab or spaces, not a comma:
 
 ```
-192.168.100.165	MERCH-HOST
+<host-ip>	MERCH-HOST
 ```
 
 ### 1.3 Verify — do not skip this
@@ -49,32 +50,44 @@ If you prefer to edit by hand: open `C:\Windows\System32\drivers\etc\hosts` in N
 ping MERCH-HOST
 ```
 
-Expected: replies from `192.168.100.165`. Then confirm the name resolves through the hosts file rather than by luck:
+Expected: replies from the address you entered. Then confirm the name resolves through the hosts file rather than by luck — and **check the address in the output matches what you intended**, because a stale entry higher up the file resolves silently to the wrong machine:
 
 ```powershell
 Resolve-DnsName MERCH-HOST
 ```
 
-Capture the `ping` output to `evidence/phase-0/ping-<machine-name>.txt`. **P0-05 is not complete until this succeeds from a client machine** — running it on the host proves only that the host can talk to itself.
+Capture the `ping` output to `evidence/phase-0/ping-<machine-name>.txt`. **Running this on the host proves only that the host can talk to itself.** P0-05 needs it to succeed from each *demo workstation*; a run between two lab machines is worth doing earlier, since it unblocks P1-09/P1-10/P1-15, but it does not close the card (ADR-012).
 
 ### 1.4 If it does not resolve
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Ping request could not find host MERCH-HOST` | The entry was written to a copy, or Notepad was not elevated and silently saved elsewhere | Re-open elevated; confirm the line is really in `C:\Windows\System32\drivers\etc\hosts` |
-| Resolves but no reply | Host firewall, or the two machines are on different networks/VLANs | Confirm both are on `HUAWEI-5G-fP2f 2` and on the `192.168.100.0/24` subnet |
+| Resolves but no reply | Host firewall, or the two machines cannot reach each other at layer 2 | Confirm both are on the **same** network and subnet — by network profile name, not by address, since two different networks can share a subnet (it has already happened once on this project) |
+| Resolves, no reply, and both machines are demonstrably on the same subnet | **AP client isolation** on the access point — common on school, campus and guest Wi-Fi. Each station reaches the internet; none can reach another | Not fixable without admin access to that equipment. **Use the self-provided demo rig** — environment manifest §4.2. This is the failure this project expects to meet at the venue |
 | Resolves to a different address | A stale entry already exists further up the file | Remove the older `MERCH-HOST` line — the first match wins |
 
 ### 1.5 Current status
 
+**Lab** — development and integration testing only, not part of the deliverable:
+
 | Machine | Entry added | `ping MERCH-HOST` verified |
 |---|---|---|
-| Host `LAPTOP-3HH6OHHE` | ✅ **yes** — `192.168.100.165  MERCH-HOST` present at line 25 of the hosts file | ✅ resolves and replies, verified 2026-08-18 |
-| Client 1 `DESKTOP-OUU3M8J` | ❌ not yet — machine not yet on the LAN | ❌ |
+| Lab host `LAPTOP-3HH6OHHE` | ✅ **yes** — `192.168.100.165  MERCH-HOST` at line 25 of the hosts file | ✅ resolves and replies, verified 2026-08-18 |
+| Lab test workstation `DESKTOP-OUU3M8J` | ❌ not yet — machine not yet on the LAN | ❌ |
+
+**Demo environment** — the deliverable. Nothing here can be done until the demo rig exists (manifest §4.2):
+
+| Machine | Entry added | `ping MERCH-HOST` verified |
+|---|---|---|
+| Demo host | ❌ — rig not yet acquired | ❌ |
+| Demo workstation 1 | ❌ | ❌ |
+| Demo workstation 2 | ❌ | ❌ |
+| Demo workstation 3 | ❌ | ❌ |
 
 > **Correction, 2026-08-18.** This table previously recorded the host entry as *not applied*, on the basis that the P0-07 agent session could not elevate. It had in fact been applied out of band. Found by running `scripts/capture-client-baseline.ps1` on the host as a smoke test — `Resolve-DnsName MERCH-HOST` returned `192.168.100.165` and ping replied. The document was wrong, not the machine.
 >
-> **This still does not close P0-05.** Resolution on the host proves only that the host can find itself. The card requires resolution *from a client*, and the client entry must not be written until the host address is durable — see the warnings in §1.1.
+> **This still does not close P0-05.** Resolution on the host proves only that the host can find itself. Under ADR-012 the card closes when each **demo workstation** resolves `MERCH-HOST` on the demo LAN — not when a lab machine does.
 
 ---
 

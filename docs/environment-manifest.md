@@ -4,8 +4,8 @@
 
 The spec is explicit that "works on the developer's machine" is not acceptance. This file is what makes that testable — every version below must be captured from the **actual** classroom machines, not assumed.
 
-**Status:** ⬜ Incomplete — **no longer hardware-blocked.** A second physical machine now exists (`DESKTOP-OUU3M8J`, Client 1, §3) but has not yet been powered on and measured. What remains needs the machine on the LAN, a router DHCP reservation, and two screenshots — see §5.
-**Last updated:** 2026-08-18 (client machine acquired; P0-05 addressing corrected)
+**Status:** ⬜ Incomplete — **restructured 2026-08-18 by ADR-012 into lab vs demo.** §1, §2, §3.1 and §4.1 describe the author's development and test lab and are largely complete. §3.2 and §4.2 describe the environment the system is actually demonstrated on — the classmates' three workstations and a self-provided demo LAN — and **neither has been specified or captured.** That, not hardware, is what remains. See §5.
+**Last updated:** 2026-08-18 (delivery model reframed — ADR-012)
 
 ---
 
@@ -27,15 +27,17 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 ---
 
-## 2. Host laptop (API + database)
+## 2. Reference host — development and integration-test lab
+
+> **This machine is lab equipment, not the deliverable (ADR-012).** It is where the API and database are built and proven. It is **not** "the host" of anything handed over. The demo environment runs on the classmates' machines and on a self-provided demo LAN; nothing in this section travels there. Values here are recorded so that a difference on a demo machine is *visible* rather than assumed away — they are a reference, never a requirement.
 
 | Item | Value | How to capture |
 |---|---|---|
-| Machine name | `LAPTOP-3HH6OHHE` — this is the dev machine, also serving as the host laptop for this solo prototype | `hostname` |
+| Machine name | `LAPTOP-3HH6OHHE` — author's development machine, serving as the lab's API + database host | `hostname` |
 | Windows edition + build | Windows 11 Home Single Language, build 26200 (10.0.26200), 64-bit (x64) | `systeminfo` |
-| Reserved LAN IP | **NONE — reverted to DHCP on 2026-08-17.** The static `192.168.100.165/24` was removed because a static address binds to the *adapter*, not to a network, and blocked all connectivity on every other Wi-Fi the laptop joined. **Current lease (2026-08-18, back on `HUAWEI-5G-fP2f 2`): `192.168.100.165/24` — the router handed back the very address the static used, but as a ~24 h lease (`PrefixOrigin=Dhcp`, `ValidLifetime 22:40`), not a reservation.** Treat that as a trap, not as good news: it makes the stale hardcoded `.165` in `installation-guide.md` §1.1 pass today and fail after any lease expiry or router reboot. (Earlier office lease was `192.168.100.123/24`.) **A stable host address is still required and is still owed by P0-05** — the approved method is now a **router-side MAC DHCP reservation**, not a manual static. See §4 | `Get-NetIPAddress` |
+| Lab LAN address (**not a deliverable value**) | **NONE reserved — reverted to DHCP on 2026-08-17.** The static `192.168.100.165/24` was removed because a static address binds to the *adapter*, not to a network, and blocked all connectivity on every other Wi-Fi the laptop joined. **Current lease (2026-08-18, back on `HUAWEI-5G-fP2f 2`): `192.168.100.165/24` — the router handed back the very address the static used, but as a ~24 h lease (`PrefixOrigin=Dhcp`, `ValidLifetime 22:40`), not a reservation.** Treat that as a trap, not as good news: it makes the stale hardcoded `.165` in `installation-guide.md` §1.1 pass today and fail after any lease expiry or router reboot. (Earlier office lease was `192.168.100.123/24`.) Under ADR-012 this no longer needs fixing: the lab host may float on DHCP, because **no delivered artefact may contain a lab address**. A fixed address is required only on the demo rig (§4.2), where it is set directly on equipment we control. See §4 | `Get-NetIPAddress` |
 | Host name for clients | `MERCH-HOST` | Chosen — must match the certificate SAN |
-| Name resolution method | **hosts file** (no DNS server on this LAN). Procedure written up in `docs/installation-guide.md` §1. **Applied on the host** (`192.168.100.165  MERCH-HOST`, hosts file line 25) and verified resolving 2026-08-18 — this corrects an earlier claim that it had never been applied anywhere. **Not applied on any client**, and must not be until the host address is durable | Per machine |
+| Name resolution method | **hosts file** (no DNS server on this LAN). Procedure written up in `docs/installation-guide.md` §1. **Applied on the host** (`192.168.100.165  MERCH-HOST`, hosts file line 25) and verified resolving 2026-08-18 — this corrects an earlier claim that it had never been applied anywhere. **Not applied on any demo workstation**, correctly — no hosts entry should be written until the demo rig's addressing is fixed (§4.2). A lab address written onto a demo machine is worse than no entry, because it resolves to the wrong thing instead of failing | Per machine |
 | .NET runtimes present | AspNetCore.App 8.0.28 / 9.0.17 / **10.0.9**; NETCore.App 8.0.28 / 9.0.17 / **10.0.9**; WindowsDesktop.App 8.0.28 / 9.0.17 / **10.0.9** — same machine as §1 | `dotnet --list-runtimes` |
 | ASP.NET Core runtime present | **Yes — 10.0.9** | `dotnet --list-runtimes` |
 | .NET Desktop Runtime present | **Yes — 10.0.9** | `dotnet --list-runtimes` |
@@ -53,9 +55,9 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 | Other databases on this server | `merchsys_central` exists and is **not part of this project** — pre-existing, origin unknown | `SHOW DATABASES` |
 | Backup directory path | **`C:\MerchandisingBackups`** — outside the repo, outside `C:\xampp`, outside any application binary directory. Created and write-proven at P0-07 | — |
 | Backup directory ACL | Inheritance **disabled**; explicit rules only: `NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, `LAPTOP-3HH6OHHE\Admin` Modify. The inherited `Authenticated Users: Modify` was **removed** — a dump contains every password hash | `Get-Acl` |
-| Off-host backup destination | ⬜ **not chosen** — needs a physical drive Max selects. See §5 | — |
+| Off-host backup destination | ⬜ **not chosen.** Under ADR-012 this is a *handover* question, not a personal one: the package must let whoever installs it choose a destination, and the backup path must therefore be configuration rather than a constant. See §5 | — |
 | API HTTPS port | 8443 | Chosen |
-| Firewall rule for API port | ⬜ not yet created — belongs to P1-09. Note the active **Tailscale** interface (§4) when scoping "private subnet only" | `netsh advfirewall firewall show rule` |
+| Firewall rule for API port | ⬜ not yet created — belongs to P1-09. **Scope it to the demo LAN's subnet, not the lab's**, and disregard the Tailscale interface entirely: ADR-012 puts it out of scope, and hardening against a path that will not attend the presentation buys nothing | `netsh advfirewall firewall show rule` |
 
 **Attach:**
 
@@ -65,58 +67,119 @@ The spec is explicit that "works on the developer's machine" is not acceptance. 
 
 ---
 
-## 3. Client laptops
+## 3. Workstations
 
-Copy this block once **per client machine**. Every client is part of the tested system, not an assumption.
+**Two different populations of machine, and conflating them is the mistake this section exists to prevent (ADR-012).**
 
-**Status as of 2026-08-18: the first client machine exists but is not yet captured.** A Windows 10 desktop, `DESKTOP-OUU3M8J`, is designated **Client 1** — wired by Ethernet to the same Huawei router. Role split confirmed the same day: the laptop stays dev + API host + MariaDB, the desktop is a pure client. Nothing migrates, so P0-03, P0-04 and P1-04 are not re-opened.
+| | §3.1 Lab test workstation | §3.2 Demo workstations |
+|---|---|---|
+| Whose | The author's | The classmates' |
+| Purpose | Prove software behaviour across a real network boundary | Run the system at the presentation |
+| Proves | P1-09, P1-10, P1-15 — cert trust, port denial, WPF round trip | P0-02 acceptance |
+| Part of the deliverable | **No** | **Yes** |
 
-The block below is still **unfilled**, because the machine has not been powered on and measured. Capture it by running `scripts/capture-client-baseline.ps1` on the desktop — that script gathers every field here plus the P0-03 and P1-04 cross-machine negative tests in one pass. Do not tick the P0-02 client acceptance boxes from anything other than real measured output; a copy of the host row is not a substitute.
+A second machine — any second machine — is enough to prove the *software* works across a network. It is not enough to record facts about machines that will be present at the presentation. P0-02's acceptance is about the second kind, and cannot be closed with the first.
 
-> ⚠️ **Two things to check first, both of which can invalidate the plan.**
-> 1. **Windows 10 build and architecture.** The project targets `win-x64` and .NET 10. A 32-bit OS cannot run the published output at all. Windows 10 also passed end-of-support in October 2025 — acceptable for an academic prototype, but it belongs here as a recorded fact rather than a discovered one.
-> 2. **Wired/wireless isolation.** The client is on Ethernet, the host on Wi-Fi. Consumer routers usually bridge the two, but not always. If the client cannot ping the host, every downstream test is meaningless until that is fixed — the capture script gates on this explicitly.
+---
 
-### Client 1 — `DESKTOP-OUU3M8J` — _(role: Procurement / Inventory / POS — not yet assigned)_
+### 3.1 Lab test workstation — `DESKTOP-OUU3M8J` — **not a deliverable**
+
+Acquired 2026-08-18. A Windows 10 desktop, wired by Ethernet to the author's home router. Its value is that it is *not the build machine*: it is where "works on my laptop" gets tested against something that isn't the laptop.
+
+Capture it with `scripts/capture-client-baseline.ps1`, which also runs the P0-03 and P1-04 cross-machine negative tests in one pass.
 
 | Item | Value |
 |---|---|
-| Machine name | `DESKTOP-OUU3M8J` — known from the tailnet registration; **confirm on the machine**, not from this note |
-| Windows edition + build | _(record — Windows 10, exact edition/build/DisplayVersion outstanding)_ |
-| Architecture | _(expect x64 — **verify**, this is a hard gate)_ |
-| Screen resolution | _(record — baseline target is 1366×768; a desktop monitor will not exercise it)_ |
-| Display scaling | _(record — must remain usable at 125%)_ |
-| .NET Desktop Runtime | _(expect "not yet installed" — needs 10.0.9 x64 before P1-15. Runtime only: no SDK, no XAMPP, ever)_ |
-| LAN connection | Ethernet to the Huawei router — MAC to be recorded |
-| Tailscale | Registered as `100.69.76.37`, **offline, last seen ~25 d before 2026-08-18**. Not the store LAN — see §4 |
-| Resolves `MERCH-HOST` | ⬜ verified — attach `ping` output |
+| Machine name | `DESKTOP-OUU3M8J` — from the tailnet registration; **confirm on the machine** |
+| Windows edition + build | _(record — Windows 10; exact edition / build / DisplayVersion outstanding)_ |
+| Architecture | _(**verify x64** — a 32-bit OS cannot run `win-x64` output at all)_ |
+| Screen resolution / scaling | _(record — will **not** exercise the 1366×768 @125% baseline; that stays with the laptop)_ |
+| .NET Desktop Runtime | _(expect "not installed" — needs 10.0.9 x64 before P1-15. Runtime only: no SDK, no XAMPP)_ |
+| LAN connection | Ethernet to the home router — MAC to be recorded |
+
+> ⚠️ **Verify before trusting any cross-machine result: the lab client is wired, the lab host is on 5 GHz Wi-Fi.** Consumer routers normally bridge the two; some isolate the 5 GHz or guest SSID. If the client cannot ping the host, a refused connection in the negative tests is proving the *router's* behaviour, not the system's — the results are void rather than passing. The capture script gates on this explicitly.
+
+---
+
+### 3.2 Demo workstations — the classmates' machines — **the deliverable**
+
+**Status: none captured.** These are the three machines the system will actually be demonstrated on, one per role. They belong to the three classmates and have not been surveyed. **P0-02's client acceptance is about these machines and nothing else** — the desktop in §3.1 is not a substitute, and neither is a copy of the host row.
+
+What has to be collected from each, and the reason each matters:
+
+| Field | Why it can break the demo |
+|---|---|
+| Architecture | 32-bit cannot run `win-x64` output at all — a hard stop, not a degradation |
+| Windows edition + build | Determines whether .NET 10 is supported at all |
+| .NET Desktop Runtime | Framework-dependent WPF clients (ADR-010) fail **at launch** without 10.0.9 x64 |
+| Resolution + scaling | The UI baseline is 1366×768 at 125%; a machine below that has a layout problem to find early |
+| Local admin rights | Needed for the hosts entry and to trust the certificate. **A classmate without admin on their own machine is a blocker discovered late unless asked now** |
+
+Copy the block below once per classmate. Do not fill any of it from assumption.
+
+### Demo workstation 1 — _(classmate, role: Procurement / Inventory / POS)_
+
+| Item | Value |
+|---|---|
+| Owner (classmate) | _(record)_ |
+| Assigned role | _(Procurement / Inventory / POS)_ |
+| Machine name | _(record)_ |
+| Windows edition + build | _(record)_ |
+| Architecture | _(**must be x64**)_ |
+| Screen resolution | _(record — baseline 1366×768)_ |
+| Display scaling | _(record — must stay usable at 125%)_ |
+| .NET Desktop Runtime | _(10.0.9 x64 required before the demo)_ |
+| Local administrator rights | _(**ask now** — required for hosts entry and certificate trust)_ |
+| Resolves `MERCH-HOST` | ⬜ verified on the demo LAN — attach `ping` output |
 | Reaches API over HTTPS | ⬜ verified at task P1-09 |
 | **Cannot** reach MariaDB port | ⬜ verified at task P1-10 |
 | Certificate trusted | ⬜ verified at task P1-09 |
 
-### Client 2 — _(duplicate the block)_
+### Demo workstation 2 — _(duplicate the block)_
 
-### Client 3 — _(duplicate the block)_
+### Demo workstation 3 — _(duplicate the block)_
 
 ---
 
-## 4. Network
+## 4. Networks
+
+**Two networks, and only one of them is part of the deliverable (ADR-012).** §4.1 is where the system is built and tested. §4.2 is where it will actually be demonstrated. Everything measured in §4.1 is a *lab fact* — useful for reproducing a test, worthless as a configuration value for anyone else.
+
+---
+
+### 4.1 Lab network — the author's home LAN — **not a deliverable**
 
 | Item | Value |
 |---|---|
-| Network type | Wi-Fi (network **"HUAWEI-5G-fP2f 2"**) — solo-prototype stand-in for the eventual private store LAN |
-| Subnet | `192.168.100.0/24`, gateway `192.168.100.1` (MAC `20-53-83-04-99-D9`, reachable, ~3 ms) |
-| Router / AP model | Huawei (exact model not identified). Admin UI confirmed reachable at **`http://192.168.100.1`** — port 80 open, 443 and 8080 closed |
-| Host IP reservation method | **DHCP (no reservation yet).** The manual static was reverted on 2026-08-17 — see the Portability row and the change log. **Approved method going forward: a router-side MAC-based DHCP reservation**, which yields a stable address without breaking the adapter on other networks, and simultaneously removes the pool-conflict risk below because the router then knows the address is spoken for. Owed by P0-05 |
-| ⚠️ **Address conflict risk** | **Still OPEN as a question, but no longer live**, since no manual address is currently assigned. Live neighbours observed at `.1, .6, .74, .83, .149, .174, .175, .187, .191` — spanning **both sides** of `.165` and reaching `.191`, all with randomised (locally-administered) MACs typical of phones cycling through a DHCP pool. A pool that has issued `.191` very likely includes `.165`. **Max must still check the pool range in the router admin UI** before choosing the reservation address; picking one inside the pool via reservation is fine, picking one inside the pool via static is not. Belongs to P0-05 |
-| ⚠️ **Subnet collision with the OJT office network** | **Discovered 2026-08-17 and materially affects deployment planning.** The DILG-Aparri office Wi-Fi (profile **"LNB"**) uses **the same `192.168.100.0/24` subnet and the same `192.168.100.1` gateway** as the home Huawei network. Consequences: (1) the office failure was almost certainly *not* a subnet mismatch — the subnet matched exactly — but either an address conflict at `.165` or, more likely on managed government-office gear, DHCP snooping / IP source guard dropping traffic from an address the network never leased; (2) this reinforces that **a manual static address may be silently blocked on the deployment network**, so a DHCP reservation is the only method that can be relied on; (3) two distinct networks sharing one subnet makes any Tailscale subnet-routing between them ambiguous, and makes "which `192.168.100.x` am I on?" a real question during testing — always confirm by network profile name, not by address |
-| Additional network interface | **Tailscale tunnel active — `100.76.155.51/32`.** A second path into and out of the host that is not the store LAN. P1-09 firewall scoping and the P1-10 negative tests must account for it, or those tests prove less than they appear to |
-| Host adapter MAC (for the reservation) | `24-EB-16-3F-82-2A` — Wi-Fi, Intel(R) Wi-Fi 6 AX101, interface index 14. This is the MAC the router DHCP reservation binds to |
-| ⚠️ **Client is wired, host is wireless** | Client 1 (`DESKTOP-OUU3M8J`) reaches the router by **Ethernet**; the host is on **Wi-Fi** (`HUAWEI-5G-fP2f 2`, 5 GHz). Consumer routers normally bridge LAN and WLAN into one broadcast domain, but some isolate the 5 GHz or guest SSID. **Unverified — verify before drawing any conclusion from a cross-machine test.** If the client cannot ping the host, every P0-03 / P0-05 / P1-04 / P1-10 result is void rather than passing, because a refused connection would be proving the router's isolation rather than our configuration. `scripts/capture-client-baseline.ps1` gates on this explicitly |
-| Client 1 Tailscale registration | `100.69.76.37` (`desktop-ouu3m8j`), **offline, last seen ~25 d before 2026-08-18.** Means the negative tests over Tailscale will be meaningful once it is online — a client genuinely on the tailnet, rather than one refused for want of a route |
-| Portability | ⚠️ **Nothing in this section transfers — and this was proven the hard way on 2026-08-17.** Subnet, gateway, host address, hosts-file entries and any router reservation are all bound to a specific network and must be redone on the classroom or store network. P0-05 will need re-running at deployment. **Lesson recorded:** a Windows static IPv4 is a property of the *adapter*, not of a Wi-Fi profile, so it follows the laptop onto every network it joins and breaks all of them. Never configure the host by manual static again; use a router reservation, and leave the adapter on DHCP |
-| Internet access required | No — the system is LAN-only |
+| Network type | Wi-Fi (**"HUAWEI-5G-fP2f 2"**, 5 GHz) |
+| Subnet | `192.168.100.0/24`, gateway `192.168.100.1` (MAC `20-53-83-04-99-D9`, ~3 ms) |
+| Router / AP | Huawei, model not identified. Admin UI at `http://192.168.100.1` — port 80 open, 443 and 8080 closed |
+| Lab host address | **DHCP lease, no reservation.** Currently `192.168.100.165/24` — the router happened to lease back the same address a reverted static once used, on a ~24 h lifetime. **A coincidence, not a configuration.** See `evidence/phase-0/host-ip-reservation.txt` §3 |
+| Lab host adapter MAC | `24-EB-16-3F-82-2A` — Intel(R) Wi-Fi 6 AX101, interface index 14 |
+| ⚠️ Lab client is wired, lab host is wireless | The test workstation reaches the router by Ethernet, the host by 5 GHz Wi-Fi. Consumer routers normally bridge these; some isolate the 5 GHz or guest SSID. **Unverified.** If the client cannot ping the host, every P0-03 / P1-04 / P1-10 result is **void rather than passing** — a refused connection would be proving the router's isolation, not the system's configuration. `scripts/capture-client-baseline.ps1` gates on this before running anything else |
+| Tailscale (lab only) | Host `100.76.155.51/32`; test workstation registered `100.69.76.37`. **Out of project scope per ADR-012** — a personal tailnet on a personal account, present on no machine that will attend the presentation. Recorded so that a stray result over the tunnel is recognised as an artefact of the lab, not evidence about the system. It must **not** appear in P1-09 firewall scoping or the P1-10 test matrix |
+| Router DHCP reservation | **No longer a project task.** Was owed by P0-05 under the old framing; superseded by §4.2, where addressing is controlled directly |
+| Historical: OJT office subnet collision | The DILG-Aparri office Wi-Fi (profile "LNB") used the same `192.168.100.0/24` and the same `192.168.100.1` gateway as the home network. Retained for one reason only — it is the evidence that **a manual static address can be silently blocked by managed network equipment** (DHCP snooping / IP source guard), which is why §4.2 does not rely on one |
 
+---
+
+### 4.2 Demo network — self-provided equipment — **the deliverable runs here**
+
+**Status: ⬜ not yet specified or acquired.** This is the single largest un-mitigated risk to the presentation.
+
+**The rule: do not demonstrate on the venue's network.** School, campus and office Wi-Fi commonly enable **AP client isolation**, which permits each station to reach the internet but blocks station-to-station traffic. Every workstation would appear online, and none could reach the API host. The symptom arrives as a connection or certificate error minutes before presenting, and cannot be fixed without administrative access to equipment belonging to someone else.
+
+Bringing the network removes that entire failure class and turns the demo LAN into a constant that can be rehearsed identically every time.
+
+| Item | Decision |
+|---|---|
+| Equipment | ⬜ **to choose** — a travel router, or an unmanaged switch with short Ethernet runs. A phone hotspot works as fallback but is the weakest option: no wired ports, and isolation behaviour varies by handset |
+| Wired vs wireless | **Prefer wired.** No isolation, no roaming, no interference from a room full of phones, and one less variable when something fails during setup |
+| Subnet | ⬜ to choose. **Deliberately avoid `192.168.100.0/24`** — it collides with the lab network, and a machine carrying a stale lab config would appear to work while talking to the wrong thing |
+| Host address | ⬜ to fix on the demo rig. On self-provided equipment this is set once and stays set; no router-admin negotiation with anyone |
+| `MERCH-HOST` resolution | hosts file on the host and all three workstations, per `docs/installation-guide.md` §1, using the §4.2 address — never a lab address |
+| Internet access required | **No.** The system is LAN-only. The demo rig needs no uplink at all, which is itself a robustness feature |
+| Rehearsal | ⬜ owed before the presentation: full setup from cold on the demo rig, by someone other than the author, timed |
 ---
 
 ## 5. Verification checklist
@@ -124,18 +187,19 @@ The block below is still **unfilled**, because the machine has not been powered 
 Phase 0 is not complete until every box is ticked. A box is ticked only when the check was actually executed and its output exists on disk.
 
 - [x] Dev machine captured, with `dotnet --info` attached — `evidence/phase-0/dotnet-info-dev.txt`; Visual Studio 2026 and both required workloads independently confirmed via `vswhere -requires` at `evidence/phase-0/p0-07-visual-studio-workloads.txt`
-- [x] Host laptop captured, with MariaDB version and dump tool confirmed — `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
-- [ ] **Every** client laptop captured — no "same as above" shortcuts → **blocked: no client laptop exists** (P0-02)
-- [ ] `ping MERCH-HOST` succeeds from every client, output attached → **no longer hardware-blocked.** Client 1 (`DESKTOP-OUU3M8J`) exists as of 2026-08-18; it is not yet on the LAN. Now gated on the router MAC reservation, not on hardware — the client hosts entry must not be written against a DHCP lease. Host-side entry is applied and verified — see `docs/installation-guide.md` §1.5
+- [x] Reference lab host captured, with MariaDB version and dump tool confirmed — `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
+- [ ] **Every demo workstation captured** — no "same as above" shortcuts → **not started.** These are the classmates' three machines (§3.2), none of which has been surveyed. The author's test desktop does **not** satisfy this (P0-02, ADR-012). Ask each classmate for edition, build, architecture, resolution, scaling **and whether they hold local administrator rights** — the last one blocks certificate trust and is cheapest to discover now
+- [ ] `ping MERCH-HOST` succeeds from every demo workstation, output attached → **gated on the demo rig existing** (§4.2), not on hardware and no longer on router administration. Lab-side entry is applied and verified — see `docs/installation-guide.md` §1.5. A separate lab run across two machines is worth doing sooner, as it unblocks P1-09/P1-10/P1-15, but it does **not** tick this box
 - [x] XAMPP stripped to MariaDB only — `evidence/phase-0/xampp-services.txt` (PowerShell process/service/port output substituted for a screenshot, by agreement). *Cross-machine phpMyAdmin unreachability remains unverified — needs a client (P0-03).*
 - [x] MariaDB bound to loopback, config excerpt attached — `evidence/phase-0/mariadb-config.txt`
-- [ ] Backup directory **and** off-host destination chosen and writable → **half done.** `C:\MerchandisingBackups` created, ACL-restricted and write-proven (`evidence/phase-0/p0-07-network-and-backup.txt`); the **off-host destination is not chosen** and needs a physical drive Max selects. The box stays unticked because the requirement has two halves.
+- [ ] Backup directory **and** off-host destination chosen and writable → **half done.** `C:\MerchandisingBackups` created, ACL-restricted and write-proven (`evidence/phase-0/p0-07-network-and-backup.txt`) — but that is a *lab* path. Under ADR-012 both halves must become install-time configuration, so that a classmate's machine is not required to have a `C:\MerchandisingBackups` the author happened to create.
 - [x] Versions transferred into `docs/adr.md` ADR-002 — every row populated except the MySqlConnector package, which legitimately belongs to P1-05. ADR-003 is now ACCEPTED with the measured MariaDB 10.4 constraints.
 
 **Two additions to this checklist, found at P0-07 and not anticipated when it was written:**
 
 - [ ] `sql_mode` includes `STRICT_TRANS_TABLES`, server-side **and** per connection → **half done.** Server-side half fixed at P1-04 (`my.ini`, restarted, re-verified — `evidence/phase-1/p1-04-grants.txt`). The per-connection half (belt-and-braces against a future XAMPP reinstall reverting it) is still owed by P1-05, per ADR-003.2.
-- [ ] Host address made stable via a **router-side MAC DHCP reservation** (not a manual static), and the DHCP pool range confirmed in the router admin UI → **not done, needs router admin access.** The manual static was reverted on 2026-08-17 after it broke connectivity on other networks. See §4.
+- ⊘ ~~Host address made stable via a router-side MAC DHCP reservation~~ → **WITHDRAWN 2026-08-18 by ADR-012 — not done, and no longer required.** Deliberately not ticked: this requirement was removed, not satisfied, and a `[x]` here would misreport the gate. It would have stabilised a *lab* address that no delivered artefact is permitted to contain, and it depended on administering a router that will not be at the presentation. Replaced by §4.2: fix the address on self-provided demo equipment. **The underlying lesson stands** — never configure a host by manual static; the 2026-08-17 failure is recorded in `evidence/phase-0/host-ip-reservation.txt` §2.
+- [ ] **Demo network chosen, acquired and rehearsed** (§4.2) → **not started — currently the largest un-mitigated risk to the presentation.** Venue Wi-Fi commonly isolates stations from each other, which breaks a client-server demo in a way that cannot be fixed on the day.
 
 ---
 
