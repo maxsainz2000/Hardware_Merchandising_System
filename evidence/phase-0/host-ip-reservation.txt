@@ -1,3 +1,10 @@
+STATUS: SECTION 1 IS HISTORICAL. The static configuration it records was
+        REVERTED on 2026-08-17. See SECTION 2 for the current state.
+
+===========================================================================
+SECTION 1 - Static IP configuration applied 2026-08-15 (SUPERSEDED)
+===========================================================================
+
 === Static IP configuration applied via elevated PowerShell ===
 Adapter: Wi-Fi (InterfaceIndex 14, Intel(R) Wi-Fi 6 AX101), network 'HUAWEI-5G-fP2f 2'
 IPv4 Address: 192.168.100.165/24 (was DHCP-assigned, now static)
@@ -15,3 +22,111 @@ Set-NetIPInterface -InterfaceIndex 14 -Dhcp Disabled
 Remove-NetIPAddress -InterfaceIndex 14 -AddressFamily IPv4 -Confirm:$false
 New-NetIPAddress -InterfaceIndex 14 -IPAddress 192.168.100.165 -PrefixLength 24 -DefaultGateway 192.168.100.1
 Set-DnsClientServerAddress -InterfaceIndex 14 -ServerAddresses 192.168.100.1
+
+
+===========================================================================
+SECTION 2 - Reverted to DHCP 2026-08-17 (CURRENT STATE)
+===========================================================================
+
+=== Why it was reverted ===
+A Windows static IPv4 address is a property of the ADAPTER, not of a Wi-Fi
+profile. The manual 192.168.100.165/24 therefore followed the laptop onto
+every network it joined. At the DILG-Aparri OJT office the machine associated
+with the office Wi-Fi but reported "connected, no internet" and could not
+route or resolve.
+
+=== Notable finding: the office network shares the home subnet ===
+The office Wi-Fi (profile "LNB") uses 192.168.100.0/24 with gateway
+192.168.100.1 - IDENTICAL to the home Huawei network. The failure was
+therefore NOT a subnet mismatch. The two plausible causes are:
+
+  (a) another device on the office LAN already held .165, or
+  (b) more likely on managed government-office equipment: DHCP snooping /
+      IP source guard dropping traffic from an address the network never
+      leased.
+
+Either way the operational conclusion is the same and it is important for
+deployment: A MANUAL STATIC ADDRESS MAY BE SILENTLY BLOCKED ON THE
+DEPLOYMENT NETWORK. A router-side MAC DHCP reservation is the only method
+that can be relied on. This supersedes the P0-05 approach in SECTION 1.
+
+Secondary consequence: two distinct networks sharing one subnet makes any
+Tailscale subnet routing between them ambiguous, and makes "which
+192.168.100.x network am I on?" a real question during testing. Confirm by
+network profile name (NetProfile.Name), never by address alone.
+
+=== Commands run (elevated PowerShell 7.6.5) ===
+$idx = (Get-NetAdapter -Name "Wi-Fi").ifIndex
+Set-NetIPInterface       -InterfaceIndex $idx -Dhcp Enabled
+Remove-NetIPAddress      -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+Remove-NetRoute          -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+Set-DnsClientServerAddress -InterfaceIndex $idx -ResetServerAddresses
+ipconfig /renew
+ipconfig /flushdns
+
+=== Post-revert state (Get-NetIPConfiguration, at the OJT office) ===
+InterfaceAlias       : Wi-Fi
+InterfaceIndex       : 14
+InterfaceDescription : Intel(R) Wi-Fi 6 AX101
+NetProfile.Name      : LNB
+IPv4Address          : 192.168.100.123
+IPv4DefaultGateway   : 192.168.100.1
+DNSServer            : 192.168.100.1
+Result               : internet access restored
+
+Also present (unchanged, and still relevant to P1-09/P1-10 scoping):
+Tailscale            : 100.76.155.51/32, DNS suffix tail74f74a.ts.net
+
+=== Project impact: NONE ===
+No repository artefact, migration, guardrail, certificate or test depended on
+the host holding .165. P0-05 was already BLOCKED pending a client laptop, so
+nothing regressed. The hosts-file entry mapping 192.168.100.165 -> MERCH-HOST
+had not yet been applied on any machine (it needs an elevated shell), so there
+is no stale mapping to clean up either.
+
+=== What P0-05 now requires ===
+1. In the home router admin UI (http://192.168.100.1): record the DHCP pool
+   range, then create a MAC-based reservation for this laptop's Wi-Fi
+   adapter. Leave the adapter on DHCP.
+2. Apply the hosts-file entry on the host and on each client, per
+   docs/installation-guide.md section 1.
+3. Verify `ping MERCH-HOST` from every client.
+4. At deployment, repeat all of the above on the classroom or store network.
+   Do NOT assume the reserved address transfers.
+
+
+===========================================================================
+SECTION 3 - Back on the home network 2026-08-18 (CURRENT STATE)
+===========================================================================
+
+=== The trap: DHCP handed back the SAME address as the old static ===
+On rejoining 'HUAWEI-5G-fP2f 2' the host was leased 192.168.100.165/24 -
+byte for byte the address that SECTION 1 configured statically and
+SECTION 2 removed. The router evidently still associates that address with
+this adapter's MAC.
+
+This is more dangerous than an obviously wrong address, because it makes
+the stale hardcoded value in docs/installation-guide.md section 1.1 pass a
+test today and fail later. It is a LEASE, not a reservation:
+
+Get-NetIPAddress -InterfaceIndex 14 -AddressFamily IPv4
+  IPAddress     : 192.168.100.165
+  PrefixLength  : 24
+  PrefixOrigin  : Dhcp          <-- NOT Manual. The revert held.
+  SuffixOrigin  : Dhcp
+  AddressState  : Preferred
+  ValidLifetime : 22:40:25      <-- ~24h lease, no renewal guarantee
+
+(Get-NetIPInterface -InterfaceIndex 14 -AddressFamily IPv4).Dhcp : Enabled
+DNS server                                                       : 192.168.100.1
+
+=== Operational conclusion ===
+Do NOT read "the host is on .165" as "the host address is settled". Nothing
+may depend on .165 until a router-side MAC reservation makes it durable.
+P0-05 remains open on exactly that step.
+
+=== Interfaces present, for P1-09/P1-10 scoping ===
+Wi-Fi     Idx 14  192.168.100.165/24  gw 192.168.100.1  profile 'HUAWEI-5G-fP2f 2'
+Tailscale Idx 23  100.76.155.51/32    (second path into the host - still in scope
+                                       for the P0-03 and P1-10 negative tests)
+Bluetooth Idx 10  169.254.14.41       APIPA, no gateway, not a LAN path
