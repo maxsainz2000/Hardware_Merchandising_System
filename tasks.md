@@ -743,6 +743,8 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > **Log scan clean.** Every plaintext password used anywhere in this card's proof was grepped against the API's console log and queried against every `AuditLogs` text column (`Action`, `Target`, `Result`, `Detail`) — zero matches in both. `evidence/phase-1/p1-08-log-scan.txt` also traces why this holds structurally (the password parameter never reaches an `AuditLogWriter` call in `AuthService`), not just on the runs captured.
 >
 > **Flagged, not fixed here — out of this card's scope.** `AuditLogs.CorrelationId` is `CHAR(36) NOT NULL` with no length check before `CorrelationIdMiddleware`'s client-supplied `X-Correlation-Id` reaches the audit `INSERT`; a caller sending one longer than 36 characters would hit `ERROR 1406` under strict mode instead of a controlled 400. Noted in the evidence file for whichever later task hardens general request validation.
+>
+> > **Resolved at P1-10, and it was worse than this note assumed.** The consequence was not merely an uncontrolled 400 — with no exception handler registered anywhere, the `MySqlException` was returned to the caller in full: column name, 25-frame stack trace, and absolute source paths, **without authentication**, since the failure happens while auditing the login *attempt*. Fixed there by `ExceptionHandlingMiddleware` plus canonical-UUID validation; contract recorded in **ADR-014**; before/after capture in `p1-10-denials.txt` PART A. Kept here as a reminder that "defer the validation" and "defer the leak" are not the same judgement.
 
 ---
 
@@ -784,9 +786,9 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-10 · Negative security tests
+### 🟡 P1-10 · Negative security tests — host-side complete, phpMyAdmin box needs a second machine
 
-**Spec:** §17 · **Closes:** G-03, G-10
+**Spec:** §17 · **Closes:** G-03, G-10 · **Decides:** ADR-014 (raised here)
 
 **Do:** From a **second machine**: attempt a direct MariaDB connection; call a protected endpoint unauthenticated; call it with a valid token but insufficient role.
 
@@ -796,13 +798,27 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 >
 > **Tailscale is excluded** — it will not exist at the presentation.
 
+> **Result — the card's own premise turned out to be half wrong, and that is the useful finding.**
+>
+> The ADR-012 note above says every check here is a host property provable from anywhere. **Four of the five are. The fifth is not**, and the difference is worth keeping: MariaDB binds `127.0.0.1` (`my.ini:46`), so there is no routable listener for anyone to reach and the claim holds from any vantage point — but Apache binds **all** interfaces (`httpd.conf:60`), and phpMyAdmin is protected by `Require local`, which evaluates *the requester's* address. A self-test is therefore granted by definition and would produce a false FAIL. Box 5 stays open for that reason, not for want of effort. `p1-10-port-scan.txt` records the full argument and the three-step procedure that closes it in one sitting once any second machine exists.
+>
+> **Box 1 is ticked on a stronger claim than the card asked for.** A remote refusal cannot distinguish "nothing is listening" from "a firewall dropped it" from "the network isolated us", and only the first is a property of the system. The absence of a routable listener is. The scan is proven discriminating rather than merely silent: at the same instant, the API on `0.0.0.0:8443` **answered** at the host's own routable address while MariaDB refused.
+>
+> **Box 4 was failing, and not in a small way.** The card assumed error bodies just needed inspecting. In fact `Program.vb` registered **no exception handler at all**, so P1-08's deferred correlation-ID defect was live and reachable **unauthenticated**: `POST /api/v1/auth/login` with a 100-character `X-Correlation-Id` returned `HTTP 500 text/plain` carrying a `MySqlException` naming the column, a 25-frame stack trace, the internal `AuthController → AuthService → AuditLogWriter` call chain, and **absolute source paths on the developer's disk**. In Production the same request returned an empty body — equally non-conforming, just silent. This was measured, not inferred: the two files were reverted to `c6f3a12`, rebuilt, and the request re-issued. Before/after transcript in `p1-10-denials.txt` PART A.
+>
+> Fixed with two independent layers: `ExceptionHandlingMiddleware` registered outermost (the general case — the next unanticipated exception cannot leak either), and canonical-UUID validation in `CorrelationIdMiddleware` (the specific path, refused with a controlled 400 before the value can be bound as a SQL parameter). **ADR-014** records the resulting error-envelope and correlation-ID contract, since it binds every future client. Ten new tests cover both.
+>
+> **A VB trap worth remembering:** `Await` inside a `Catch` is legal in C# and a compile error in VB (`BC36943`). The exception is captured and handled after the `Try` closes. CLAUDE.md §3 territory.
+>
+> **Finding outside this card's boxes — `MERCH-HOST` now resolves to a stale address.** `Resolve-DnsName MERCH-HOST` → `192.168.100.165`; this host actually holds `192.168.100.123`. The lease moved, so P1-09's "hosts entry verifies clean" note is no longer true on this network. It does not change ADR-012's conclusion, but P1-09's note must not be read as a standing guarantee, and any future run needing the *name* must re-check resolution first. Correcting it needs elevation — pair it with P1-09's unapplied firewall rule in one elevated sitting.
+
 **Done when:**
 
-- [ ] MariaDB port unreachable from the client
-- [ ] Unauthenticated → 401
-- [ ] Wrong role → 403
-- [ ] Error bodies carry a correlation ID and **no** stack trace, SQL, or connection detail
-- [ ] phpMyAdmin unreachable from the client
+- [x] MariaDB port unreachable from the client — **no routable listener exists** (`my.ini:46` + live socket table + refused connect to the host's own LAN address, with the API answering on 8443 as a positive control). The literal "observed from a second machine" reading is **not** satisfied; see the honesty note in the evidence
+- [x] Unauthenticated → 401 — three cases live (no token, garbage bearer token, `/me`)
+- [x] Wrong role → 403 — valid Cashier token on the Admin endpoint, with an Admin 200 as the discriminating control
+- [x] Error bodies carry a correlation ID and **no** stack trace, SQL, or connection detail — 8 error bodies scanned against 29 forbidden fragments, 0 hits; every body carries a parseable correlation ID
+- [ ] phpMyAdmin unreachable from the client — **needs a second machine.** `Require local` grants a self-test by definition, so this cannot be proven here; Apache is also currently stopped. Procedure to close it is in `p1-10-port-scan.txt`
 
 **Evidence:** `p1-10-port-scan.txt`, `p1-10-denials.txt`
 

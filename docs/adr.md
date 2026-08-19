@@ -599,6 +599,41 @@ Adding `DROP` to `merch_api` would have solved that by making the runtime accoun
 
 ---
 
+---
+
+## ADR-014 · Error envelope and the correlation-ID contract
+
+**Status:** ACCEPTED
+**Date:** 2026-08-19
+**Decides:** what an API error response is guaranteed to contain, what it is guaranteed never to contain, and what a client may send as `X-Correlation-Id`. Closes the error-model half of gaps G-03 and G-10. Raised and settled at P1-10.
+
+**Decision.**
+
+1. **Every** error response is a JSON `ApiErrorResponse` — stable `errorCode`, human-readable `message`, `correlationId`, and `errors` field detail where applicable. No exceptions, including responses produced by unhandled exceptions.
+2. `ExceptionHandlingMiddleware` is registered **outermost**, ahead of correlation-ID handling, and converts any unhandled exception into that envelope with `errorCode = INTERNAL_ERROR`. The original exception is logged server-side in full against the same correlation ID handed to the caller, and nothing about it — type, message, stack, path — reaches the client.
+3. A client-supplied `X-Correlation-Id` **must** be a UUID in the canonical 36-character `D` form. Anything else is rejected with a controlled `400 INVALID_CORRELATION_ID` before the value is bound as a SQL parameter. Omitting the header is always valid and causes one to be minted.
+
+**Reasoning.**
+
+Rule 3 is not input hygiene, it is the fix for a measured information leak. `AuditLogs.CorrelationId` is `CHAR(36) NOT NULL`, so under `STRICT_TRANS_TABLES` an over-length value raises `ERROR 1406` rather than truncating, and MySqlConnector's exception message names the table and column. With no exception handler in place, that message was returned verbatim to the caller together with a full stack trace and absolute source paths — **reachable unauthenticated**, because the failure occurs while writing the audit row for a login *attempt*. Captured before and after in the evidence below.
+
+Requiring the canonical form rather than accepting anything `Guid.TryParse` allows closes three holes with one rule: over-length (the `ERROR 1406` path), CR/LF injection (the value is echoed into a *response* header), and non-UUID junk reaching the `StockMovements.CorrelationId` join key the Track D cards depend on. `TryParseExact` with `"D"` also guarantees the echoed ID is byte-identical to the one the caller sent — the `B`, `P`, `N` and `X` formats parse but round-trip to a different string, so a caller quoting its own ID to an operator would not match the logs.
+
+Rules 1 and 2 are the general case. Rule 3 alone would have fixed this bug and left the *class* of bug open; the handler means the next unanticipated exception cannot leak either.
+
+**Rejected.**
+
+- *ASP.NET Core `ProblemDetails` / `UseExceptionHandler`.* Would have worked, but this project already has `ApiErrorResponse` as its published shape (P1-08), and two error envelopes on one API is worse than a hand-written handler.
+- *Accepting any `Guid.TryParse` form.* Rejected for the round-trip-identity reason above.
+- *Truncating an over-length ID to 36 characters instead of refusing it.* Silently changes an identifier whose entire purpose is to match across systems.
+- *Leaving correlation-ID validation to "a later request-validation task",* which is where P1-08 put it. It is an error-body leak, so it belongs to the card that tests error bodies.
+
+**Consequence for clients.** No conforming client changes: `Guid.NewGuid().ToString()` already produces the accepted form, and that is what this system generates everywhere. `ClientCommon`'s HTTP client (P1-15) must not invent its own ID format.
+
+**Evidence.** `evidence/phase-1/p1-10-denials.txt` (PART A holds the before/after capture), plus `ExceptionHandlingMiddlewareTests` and `CorrelationIdMiddlewareTests`.
+
+---
+
 ## Template for new entries
 
 ```markdown
@@ -616,3 +651,4 @@ Adding `DROP` to `merch_api` would have solved that by making the runtime accoun
 
 **Evidence.** Path under evidence/.
 ```
+

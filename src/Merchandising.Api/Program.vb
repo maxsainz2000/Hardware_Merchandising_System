@@ -113,7 +113,30 @@ Public Module Program
 
         Dim app = builder.Build()
 
-        ' Correlation Id first, so every downstream handler - including the
+        ' P1-10: the exception handler is OUTERMOST, ahead of even the
+        ' correlation middleware, so nothing in the pipeline can throw its way
+        ' past it - including CorrelationIdMiddleware itself. Before this card
+        ' there was no handler at all, which meant a stack trace to the caller
+        ' in Development and an empty-bodied 500 in Production; both fail spec
+        ' section 13. See the middleware's own header for the full account.
+        '
+        ' The framework registers DeveloperExceptionPage ahead of any
+        ' user middleware in Development and offers no way to remove it from a
+        ' WebApplication. That is harmless: it only formats exceptions that
+        ' reach it, and this handler - being inside it - has already converted
+        ' every one into a controlled response, so it never sees one.
+        '
+        ' HOW FAR THAT IS PROVEN, precisely: ExceptionHandlingMiddlewareTests
+        ' exercises the real middleware and shows it handles rather than
+        ' propagates. The end-to-end claim - a live request to a running
+        ' Kestrel in Development returning the envelope and not the developer
+        ' page - is NOT captured, because inducing an unhandled exception
+        ' through the real pipeline needs the test-only fault-injection seam
+        ' that P1-12 owns and P1-19's WebApplicationFactory wiring to drive.
+        ' See p1-10-denials.txt, "What this file does not prove".
+        app.UseMiddleware(Of ExceptionHandlingMiddleware)()
+
+        ' Correlation Id next, so every downstream handler - including the
         ' authentication handler's own 401/403 bodies - can read it.
         app.UseMiddleware(Of CorrelationIdMiddleware)()
 

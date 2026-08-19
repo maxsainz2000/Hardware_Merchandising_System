@@ -1,0 +1,139 @@
+P1-10  NEGATIVE SECURITY TESTS - DATABASE AND ADMIN-TOOL EXPOSURE
+Captured : 2026-08-19 03:10:54Z
+Host     : LAPTOP-3HH6OHHE  (LAN IPv4 192.168.100.123)
+Server   : MariaDB 10.4.32 via XAMPP 8.2.12-0 (ADR-002)
+
+===============================================================================
+BOX 1 - MariaDB must be unreachable from a client
+===============================================================================
+
+THE CLAIM: no machine on the LAN can open a TCP connection to MariaDB on this
+host, and that is true regardless of firewall state, because the listener does
+not exist on any routable address in the first place.
+
+Three independent observations, weakest to strongest.
+
+--- 1. Configuration: my.ini binds loopback only ---
+
+  C:\xampp\mysql\bin\my.ini:20  port=3306
+  C:\xampp\mysql\bin\my.ini:29  port=3306
+  C:\xampp\mysql\bin\my.ini:46  bind-address="127.0.0.1"
+
+--- 2. Runtime: the live listening-socket table agrees with the config ---
+
+    A config file states an intention; this is what the kernel actually has open.
+
+    port 3306        : 127.0.0.1        pid 4576 (mysqld)
+
+    Note what is NOT in that table: there is no 0.0.0.0:3306 and no
+    192.168.100.123:3306 row. Port 3306 exists only on 127.0.0.1.
+
+--- 3. Behaviour: a TCP connect to this host OWN routable address is refused ---
+
+    This is the observation a second machine would make, made from the host
+    itself. It is valid here for one specific reason: the question is whether a
+    LISTENER EXISTS on that address, and that has the same answer from any
+    machine. See the honesty note at the end for what this does NOT establish.
+
+    192.168.100.123:3306  -> refused / no listener
+    192.168.100.123:80    -> refused / no listener
+    192.168.100.123:443   -> refused / no listener
+    192.168.100.123:8443  -> refused / no listener
+
+--- Listening sockets, with the API running (so the scan has a positive control) ---
+
+    port 3306    : 127.0.0.1        pid 4576 (mysqld)
+    port 8443    : 0.0.0.0          pid 13472 (Merchandising.Api)
+
+--- TCP connect to this host own routable address ---
+
+    192.168.100.123:3306  -> refused / no listener
+    192.168.100.123:80    -> refused / no listener
+    192.168.100.123:443   -> refused / no listener
+    192.168.100.123:8443  -> ANSWERED
+
+===============================================================================
+BOX 1 - THE POSITIVE CONTROL THAT MAKES THE ABOVE MEAN SOMETHING
+===============================================================================
+
+A scan where everything is refused proves nothing on its own - a broken probe
+looks identical to a well-secured host. The run above is discriminating:
+
+    same probe, same host, same instant
+      192.168.100.123:8443  -> ANSWERED               (Merchandising.Api, 0.0.0.0)
+      192.168.100.123:3306  -> refused / no listener  (mysqld, 127.0.0.1 only)
+
+The API deliberately binds 0.0.0.0 and answers at the routable address; MariaDB
+deliberately binds 127.0.0.1 and does not. The probe can plainly see a listener
+when one exists, so its silence on 3306 is a fact about MariaDB, not about the
+probe.
+
+===============================================================================
+BOX 1 - WHAT THIS DOES AND DOES NOT ESTABLISH. READ BEFORE CITING IT.
+===============================================================================
+
+ESTABLISHED, and not weakened by the absence of a second machine:
+
+  MariaDB has no listening socket on any routable address on this host. A
+  remote client therefore cannot open a TCP connection to 3306 no matter what
+  the firewall does, because there is nothing on the other end to connect to.
+  This is a stronger claim than a remote refusal would be. A refusal observed
+  from a second machine cannot distinguish between
+      (a) nothing is listening,
+      (b) a firewall dropped the packet, and
+      (c) the network isolated the two stations from each other,
+  and only (a) is a property of the system under test. ADR-012's rule - "a
+  card testing software behaviour is proved by any second machine" - has its
+  mirror image here: a card testing a HOST property does not need one.
+
+NOT ESTABLISHED here:
+
+  Firewall behaviour. Windows exempts traffic to a host own addresses from
+  inbound filtering, so this run says nothing about whether the firewall would
+  block 3306 from a genuine remote peer. That does not matter for the claim
+  above - bind-address makes the firewall redundant for 3306 - but it must not
+  be cited as firewall evidence. The 8443 firewall rule remains P1-09's open
+  box and still needs an elevated session.
+
+  The literal wording of the card - "MariaDB port unreachable FROM THE CLIENT",
+  observed from a second machine. That observation has not been made. The box
+  is ticked on the stronger structural claim, with this paragraph attached.
+
+===============================================================================
+BOX 5 - phpMyAdmin unreachable from the client: NOT PROVEN, AND NOT PROVABLE HERE
+===============================================================================
+
+This box is left UNTICKED deliberately. It is the one check on this card that
+genuinely requires a second machine, and the reason is worth writing down so
+nobody later mistakes it for an oversight.
+
+MariaDB and Apache are not in the same situation:
+
+  MariaDB : bind-address=127.0.0.1  -> no routable listener at all.
+            Provable from anywhere, as above.
+  Apache  : httpd.conf:60 "Listen 80" -> binds ALL interfaces. The protection
+            is NOT the bind address. It is "Require local" in
+            httpd-xampp.conf (lines 87, 94, 106) plus the host firewall.
+
+"Require local" is evaluated against THE REQUESTER'S address. A request issued
+from this machine is local by definition, so a self-test would be GRANTED - it
+would produce a false FAIL and prove the opposite of what it looks like. There
+is no way to make the host impersonate a remote requester for that directive.
+
+Second, weaker reason: Apache (httpd) is not currently running on this host at
+all, so today a probe of port 80 is refused because the service is stopped.
+That is a statement about the XAMPP control panel, not about configuration.
+
+WHAT WOULD CLOSE THIS BOX, in one sitting, once any second machine is present:
+  1. Start Apache from the XAMPP control panel (it must be running, or the
+     test is vacuous).
+  2. From the second machine, run scripts/capture-client-baseline.ps1, which
+     already performs exactly these checks and gates on same-subnet
+     reachability first.
+  3. Expect: 3306, 80, 443, 8080 all refused, and http://<host>/phpmyadmin/
+     unreachable or 403.
+
+DO NOT run capture-client-baseline.ps1 on the host to close this box. It is
+written to run FROM a client; on the host its reachability gate is
+self-satisfying and its three "must be unreachable" assertions invert in
+meaning.

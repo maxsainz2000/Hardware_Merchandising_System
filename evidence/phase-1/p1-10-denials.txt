@@ -1,0 +1,355 @@
+P1-10  NEGATIVE SECURITY TESTS - AUTHORIZATION DENIALS AND ERROR-BODY SAFETY
+Boxes 2, 3 and 4. Box 1 is in p1-10-port-scan.txt; box 5 is open, and that file
+explains why.
+
+SCOPE OF THIS RUN. Captured on one machine, deliberately. Every check below is
+a property of the HOST - who the API lets through, and what it says when it
+refuses - so the machine issuing the request is irrelevant to the result
+(ADR-012). Box 1 needed the same argument and gets it in the other file; box 5
+does not survive it and is therefore left open.
+
+TARGET. https://127.0.0.1:8443 - the production-like HTTPS listener, not the
+Development loopback HTTP profile. Addressed by IP because the hosts-file entry
+for MERCH-HOST is STALE (see the finding at the end), so certificate validation
+is skipped for this run. That costs nothing here: the certificate carries one
+SAN, DNS Name=MERCH-HOST, so an IP-addressed request fails validation BY
+DESIGN, and P1-09 already proved exactly that (RemoteCertificateNameMismatch).
+P1-10 tests authorization and error bodies; TLS trust is P1-09's box.
+
+ENVIRONMENT. The API was started with ASPNETCORE_ENVIRONMENT=Development on
+purpose - it is the environment in which ASP.NET Core auto-registers the
+developer exception page, so it is the harder case for box 4, not the easier
+one.
+
+===============================================================================
+PART A - THE DEFECT THIS CARD FOUND, PROVEN BEFORE AND AFTER
+===============================================================================
+
+P1-08 flagged that X-Correlation-Id reached a CHAR(36) NOT NULL audit insert
+unvalidated, and deferred it to "whichever later task hardens general request
+validation" (p1-08-log-scan.txt). It landed here, because it is not a tidiness
+issue - it is an error-body leak, which is precisely what box 4 forbids.
+
+Rather than assert the pre-fix behaviour, it was MEASURED. Program.vb and
+CorrelationIdMiddleware.vb were reverted to HEAD (commit c6f3a12), the API
+rebuilt and restarted, and one request issued.
+
+--- BEFORE: POST /api/v1/auth/login, X-Correlation-Id = "A" x 100 ---
+
+    HTTP 500, Content-Type: text/plain
+
+STATUS: 500
+BODY  : MySqlConnector.MySqlException (0x80004005): Data too long for column 'CorrelationId' at row 1
+   at MySqlConnector.Core.ServerSession.ReceiveReplyAsync(IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ServerSession.cs:line 1185
+   at MySqlConnector.Core.ResultSet.ReadResultSetHeaderAsync(IOBehavior ioBehavior) in /_/src/MySqlConnector/Core/ResultSet.cs:line 37
+   at MySqlConnector.MySqlDataReader.ActivateResultSet(CancellationToken cancellationToken) in /_/src/MySqlConnector/MySqlDataReader.cs:line 133
+   at MySqlConnector.MySqlDataReader.InitAsync(CommandListPosition commandListPosition, ICommandPayloadCreator payloadCreator, IDictionary`2 cachedProcedures, IMySqlCommand command, CommandBehavior behavior, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/MySqlDataReader.cs:line 489
+   at MySqlConnector.Core.CommandExecutor.ExecuteReaderAsync(CommandListPosition commandListPosition, ICommandPayloadCreator payloadCreator, CommandBehavior behavior, Activity activity, MySqlConnectorSemanticConventionsKinds conventionsKinds, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/CommandExecutor.cs:line 58
+   at MySqlConnector.MySqlCommand.ExecuteNonQueryAsync(IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/MySqlCommand.cs:line 304
+   at Merchandising.Infrastructure.Data.AuditLogWriter.WriteAsync(MySqlConnection connection, Nullable`1 actorUserId, String action, String target, String result, String correlationId, String detail, CancellationToken cancellationToken) in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\Data\AuditLogWriter.vb:line 46
+   at Merchandising.Api.Security.AuthService.LoginAsync(String username, String password, String correlationId, CancellationToken cancellationToken) in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Security\AuthService.vb:line 93
+   at Merchandising.Api.Controllers.AuthController.Login(LoginRequest request) in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Controllers\AuthController.vb:line 56
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.TaskOfIActionResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Routing.EndpointMiddleware.<Invoke>g__AwaitRequestTask|7_0(Endpoint endpoint, Task requestTask, ILogger logger)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at Merchandising.Api.Middleware.NonProductionWarningMiddleware.InvokeAsync(HttpContext context) in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Middleware\NonProductionWarningMiddleware.vb:line 39
+   at Merchandising.Api.Middleware.CorrelationIdMiddleware.InvokeAsync(HttpContext context) in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\Middleware\CorrelationIdMiddleware.vb:line 41
+   at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+
+HEADERS
+=======
+Host: 127.0.0.1:8443
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Microsoft Windows 10.0.26200; en-PH) PowerShell/7.6.5
+Accept-Encoding: gzip, deflate, br
+Content-Type: application/json
+Content-Length: 71
+X-Correlation-Id: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+That is the complete, unedited response body a remote caller received. It
+contains, in one response, every category box 4 exists to exclude:
+
+    schema detail      "Data too long for column 'CorrelationId' at row 1"
+    the exception type MySqlConnector.MySqlException
+    a full stack trace 25+ frames
+    ABSOLUTE SOURCE PATHS on the developer's disk -
+                       C:\Users\Admin\Documents\Hardware_Merchandising_System\
+                       src\Merchandising.Infrastructure\Data\AuditLogWriter.vb:line 46
+    the internal call chain - AuthController -> AuthService -> AuditLogWriter,
+                       and every middleware in the pipeline by name
+    the caller's own headers, echoed back
+    NO error code, NO correlation id, NO JSON envelope at all
+
+Note the last frame: DeveloperExceptionPageMiddlewareImpl. In Production the
+same request produced no body whatsoever - equally non-conforming, just silent
+instead of loud. Both fail spec section 13's "every error response has a stable
+error code, human-readable message, correlation identifier".
+
+Severity, stated plainly: this was reachable by an unauthenticated caller. The
+login endpoint is anonymous, and the failure happens while writing the audit row
+for the login ATTEMPT - so no credential was needed to extract the schema
+detail and the filesystem layout above.
+
+--- AFTER: the same request against the fixed build ---
+
+    HTTP 400
+    {"errorCode":"INVALID_CORRELATION_ID","message":"The supplied correlation ID
+     header is not valid.","correlationId":"2e6323ad-4566-47b0-b5b9-4fe839331c3b",
+     "errors":{"X-Correlation-Id":["Must be a UUID in the canonical 36-character
+     form, ... Omit the header entirely to have one assigned."]}}
+
+Two changes produced that, and they are independent layers:
+
+  1. CorrelationIdMiddleware now requires a canonical 36-character UUID and
+     refuses anything else with a controlled 400 BEFORE the value can be bound
+     as a SQL parameter. This closes the specific path.
+  2. ExceptionHandlingMiddleware, registered OUTERMOST, converts any unhandled
+     exception into the standard envelope and logs the original server-side.
+     This closes the general case - the next unanticipated exception, whatever
+     throws it, cannot leak either.
+
+Layer 2 is the one that matters for the future. Layer 1 alone would have fixed
+this bug and left the class of bug open.
+
+===============================================================================
+PART B - THE FULL LIVE MATRIX AGAINST THE FIXED BUILD
+===============================================================================
+
+P1-10  NEGATIVE SECURITY TESTS - LIVE DENIAL CAPTURE
+Captured : 2026-08-19 03:14:27Z
+Target   : https://127.0.0.1:8443
+Env      : the capture client runs out-of-process; the API under test was started with ASPNETCORE_ENVIRONMENT=Development (confirmed by its startup log, which emits the non-production HTTP warning)
+Host     : LAPTOP-3HH6OHHE
+
+===============================================================================
+POSITIVE CONTROL - the API is actually up and answering
+===============================================================================
+A run of denials proves nothing if everything is failing. /health must answer
+200 before any 401/403 below counts as evidence of authorization rather than
+evidence of a dead process.
+
+[PASS] health endpoint answers (control)
+       GET /health -> expected 200, got 200
+       X-Correlation-Id header: 63b7676a-9ba1-45bb-98ad-46326b55c034
+       body: {"status":"ok","version":"0.1.0","utcTime":"2026-08-19T03:14:27.4025351Z"}
+
+===============================================================================
+BOX 2 - UNAUTHENTICATED -> 401
+===============================================================================
+[PASS] protected endpoint, no token
+       GET /api/v1/admin/ping -> expected 401, got 401
+       X-Correlation-Id header: 9a61932a-e741-4f21-b88d-0305bf2bf8c7
+       body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"9a61932a-e741-4f21-b88d-0305bf2bf8c7","errors":null}
+
+[PASS] protected endpoint, garbage bearer token
+       GET /api/v1/admin/ping -> expected 401, got 401
+       X-Correlation-Id header: 6e74c778-f5ff-449a-9db5-0bc6f0db19f0
+       body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"6e74c778-f5ff-449a-9db5-0bc6f0db19f0","errors":null}
+
+[PASS] /me, no token
+       GET /api/v1/auth/me -> expected 401, got 401
+       X-Correlation-Id header: 7bb1db15-07ac-4dce-a671-c32e3648aea7
+       body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"7bb1db15-07ac-4dce-a671-c32e3648aea7","errors":null}
+
+===============================================================================
+BOX 3 - VALID TOKEN, INSUFFICIENT ROLE -> 403
+===============================================================================
+[PASS] login as Cashier (setup for the 403)
+       POST /api/v1/auth/login -> expected 200, got 200
+       X-Correlation-Id header: 38466d47-7ba5-4a98-9744-c3cf042edc01
+       body: {"token":"KomK6JG7DhJ_-yeE3N7w5od-raYGkJInwLY2ebtq8Tk","expiresAtUtc":"2026-08-19T11:14:28.3198561Z","username":"p1_08_fixture_login","roles":["Cashier"]}
+
+[PASS] Admin-only endpoint with a valid Cashier token
+       GET /api/v1/admin/ping -> expected 403, got 403
+       X-Correlation-Id header: 95642e9a-6d2c-4dc6-bd9a-88270a369e64
+       body: {"errorCode":"FORBIDDEN","message":"This account does not hold a role authorized for this endpoint.","correlationId":"95642e9a-6d2c-4dc6-bd9a-88270a369e64","errors":null}
+
+--- Discriminating control: the same endpoint DOES answer for an Admin ---
+Without this, a 403 could just mean the endpoint is broken for everyone.
+
+[PASS] login as Admin
+       POST /api/v1/auth/login -> expected 200, got 200
+       X-Correlation-Id header: 91e3951f-7efb-4c7e-bddc-f94a91471ec2
+       body: {"token":"_LICaCicgyUa-elt-JaK_oa4oZm3KPZrSCsayMskbrE","expiresAtUtc":"2026-08-19T11:14:28.5541881Z","username":"p1_08_fixture_admin","roles":["Admin"]}
+
+[PASS] Admin-only endpoint with a valid Admin token
+       GET /api/v1/admin/ping -> expected 200, got 200
+       X-Correlation-Id header: 70cf2bdb-2512-4e11-a09b-4c94f8d9ec8a
+       body: {"status":"ok","username":"p1_08_fixture_admin","roles":["Admin"]}
+
+===============================================================================
+BOX 4 - ERROR BODIES: CORRELATION ID PRESENT, INTERNALS ABSENT
+===============================================================================
+The three cases below are the defect P1-08 found and deferred:
+X-Correlation-Id went unvalidated into a CHAR(36) NOT NULL audit insert, so a
+long header raised ERROR 1406 under STRICT_TRANS_TABLES and a MySqlException
+message names the table and column. Before P1-10 these were 500s that leaked
+schema; they are now controlled 400s.
+
+[PASS] over-length correlation id (100 chars) -> controlled 400
+       POST /api/v1/auth/login -> expected 400, got 400
+       X-Correlation-Id header: 32233989-4e6b-4ebf-83a5-6793b2bb5de8
+       body: {"errorCode":"INVALID_CORRELATION_ID","message":"The supplied correlation ID header is not valid.","correlationId":"32233989-4e6b-4ebf-83a5-6793b2bb5de8","errors":{"X-Correlation-Id":["Must be a UUID in the canonical 36-character form, for example 3f2504e0-4f89-41d3-9a0c-0305e82c3301. Omit the header entirely to have one assigned."]}}
+
+[PASS] 36 chars but not a UUID -> controlled 400
+       POST /api/v1/auth/login -> expected 400, got 400
+       X-Correlation-Id header: b77f44ca-0376-41c1-aac9-0177c5e71c6d
+       body: {"errorCode":"INVALID_CORRELATION_ID","message":"The supplied correlation ID header is not valid.","correlationId":"b77f44ca-0376-41c1-aac9-0177c5e71c6d","errors":{"X-Correlation-Id":["Must be a UUID in the canonical 36-character form, for example 3f2504e0-4f89-41d3-9a0c-0305e82c3301. Omit the header entirely to have one assigned."]}}
+
+[PASS] non-canonical UUID form (braces) -> controlled 400
+       POST /api/v1/auth/login -> expected 400, got 400
+       X-Correlation-Id header: be191a71-44ea-4dc3-9929-558917ee76e1
+       body: {"errorCode":"INVALID_CORRELATION_ID","message":"The supplied correlation ID header is not valid.","correlationId":"be191a71-44ea-4dc3-9929-558917ee76e1","errors":{"X-Correlation-Id":["Must be a UUID in the canonical 36-character form, for example 3f2504e0-4f89-41d3-9a0c-0305e82c3301. Omit the header entirely to have one assigned."]}}
+
+--- A conforming client is unaffected: a canonical UUID still round-trips ---
+
+[PASS] valid correlation id is preserved and echoed
+       GET /api/v1/admin/ping -> expected 401, got 401
+       X-Correlation-Id header: 98ae162c-61d8-4aa0-bd33-4aff7310e23a
+       body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"98ae162c-61d8-4aa0-bd33-4aff7310e23a","errors":null}
+
+[PASS] supplied 98ae162c-61d8-4aa0-bd33-4aff7310e23a -> header 98ae162c-61d8-4aa0-bd33-4aff7310e23a -> body 98ae162c-61d8-4aa0-bd33-4aff7310e23a
+
+===============================================================================
+BOX 4 - LEAK SCAN OVER EVERY ERROR BODY CAPTURED ABOVE
+===============================================================================
+Each fragment below is something a real .NET or MySqlConnector failure would
+carry. None may appear in any error body a client can see.
+
+Error bodies scanned: 8
+  [PASS] 'Exception' absent from every error body
+  [PASS] 'StackTrace' absent from every error body
+  [PASS] '   at ' absent from every error body
+  [PASS] '.vb:line' absent from every error body
+  [PASS] 'MySql' absent from every error body
+  [PASS] 'MySqlConnector' absent from every error body
+  [PASS] 'SELECT ' absent from every error body
+  [PASS] 'INSERT INTO' absent from every error body
+  [PASS] 'UPDATE ' absent from every error body
+  [PASS] 'DELETE FROM' absent from every error body
+  [PASS] 'FROM Users' absent from every error body
+  [PASS] 'AuditLogs' absent from every error body
+  [PASS] 'Server=' absent from every error body
+  [PASS] 'Port=3306' absent from every error body
+  [PASS] 'Database=merchandising' absent from every error body
+  [PASS] 'Uid=' absent from every error body
+  [PASS] 'Pwd=' absent from every error body
+  [PASS] 'Password=' absent from every error body
+  [PASS] 'merch_api' absent from every error body
+  [PASS] 'merch_migrator' absent from every error body
+  [PASS] 'merch_backup' absent from every error body
+  [PASS] 'C:\\' absent from every error body
+  [PASS] 'ProgramData' absent from every error body
+  [PASS] 'Merchandising.Api' absent from every error body
+  [PASS] 'Merchandising.Infrastructure' absent from every error body
+  [PASS] 'localhost' absent from every error body
+  [PASS] '127.0.0.1' absent from every error body
+  [PASS] 'ERROR 1406' absent from every error body
+  [PASS] 'Data too long' absent from every error body
+
+Leak scan: 0 fragment(s) found.
+
+--- Every error body must also carry a usable correlation id ---
+  [PASS] correlationId 9a61932a-e741-4f21-b88d-0305bf2bf8c7 (UNAUTHORIZED)
+  [PASS] correlationId 6e74c778-f5ff-449a-9db5-0bc6f0db19f0 (UNAUTHORIZED)
+  [PASS] correlationId 7bb1db15-07ac-4dce-a671-c32e3648aea7 (UNAUTHORIZED)
+  [PASS] correlationId 95642e9a-6d2c-4dc6-bd9a-88270a369e64 (FORBIDDEN)
+  [PASS] correlationId 32233989-4e6b-4ebf-83a5-6793b2bb5de8 (INVALID_CORRELATION_ID)
+  [PASS] correlationId b77f44ca-0376-41c1-aac9-0177c5e71c6d (INVALID_CORRELATION_ID)
+  [PASS] correlationId be191a71-44ea-4dc3-9929-558917ee76e1 (INVALID_CORRELATION_ID)
+  [PASS] correlationId 98ae162c-61d8-4aa0-bd33-4aff7310e23a (UNAUTHORIZED)
+
+===============================================================================
+RESULT: ALL CASES PASSED
+===============================================================================
+
+===============================================================================
+PART C - AUTOMATED TESTS BEHIND THE SAME BOXES
+===============================================================================
+
+Ten tests, run by scripts/run-tests.ps1 on every pass:
+
+  ExceptionHandlingMiddlewareTests (5)
+    UnhandledException_ReturnsCompleteErrorEnvelope
+    UnhandledException_BodyLeaksNoInternalDetail
+    UnhandledException_WithNoCorrelationIdStamped_StillCarriesOne
+    SuccessfulRequest_PassesThroughUntouched
+    ExceptionAfterResponseStarted_RethrowsRatherThanCorrupting
+
+  CorrelationIdMiddlewareTests (5)
+    OverLengthCorrelationId_IsRejectedWithControlled400
+    CorrelationIdContainingCrLf_IsRejectedWithControlled400
+    CorrelationIdOfCorrectLengthButNotAGuid_IsRejected
+    EmptyCorrelationIdHeader_IsTreatedAsAbsentAndMinted
+    ValidGuidCorrelationId_IsPreservedAndEchoed
+
+Full suite immediately before capturing this file:
+    Guardrails : G-A / G-B / G-C / G-D all pass
+    Build      : 0 Warning(s), 0 Error(s)
+    Unit       : Passed! Failed: 0, Passed: 8,  Total: 8
+    Integration: Passed! Failed: 0, Passed: 25, Total: 25
+
+===============================================================================
+WHAT THIS FILE DOES NOT PROVE
+===============================================================================
+
+1. AN END-TO-END 500 THROUGH THE LIVE PIPELINE.
+   PART A shows a real unhandled MySqlException converted from a leak into a
+   controlled response, which is the strongest available evidence, but it works
+   by removing the fix rather than by inducing a fault against the fixed build.
+   Driving an arbitrary unhandled exception through a RUNNING API needs the
+   test-only fault-injection seam that P1-12 owns, plus P1-19's
+   WebApplicationFactory wiring. Until then the general case rests on
+   ExceptionHandlingMiddlewareTests, which exercises the real middleware with
+   real ASP.NET Core types.
+
+   Consequence for the developer-exception-page claim: it is proven that the
+   handler handles rather than propagates, and therefore that the developer page
+   has nothing left to format. It is NOT proven by observing a live 500 in
+   Development.
+
+2. CRLF HEADER INJECTION, LIVE. Covered by
+   CorrelationIdMiddlewareTests.CorrelationIdContainingCrLf_..., not by an HTTP
+   capture: the client library refuses to transmit a header value containing
+   CR/LF, so the request cannot leave the machine to be tested end to end.
+
+3. ANYTHING ABOUT A SECOND MACHINE. See the scope note at the top.
+
+===============================================================================
+FINDING RAISED BY THIS RUN, OUTSIDE THIS CARD'S BOXES
+===============================================================================
+
+MERCH-HOST RESOLVES TO A STALE ADDRESS ON THIS NETWORK.
+
+    Resolve-DnsName MERCH-HOST  ->  192.168.100.165
+    this host's actual LAN IPv4 ->  192.168.100.123
+
+The hosts-file entry recorded as verified at P1-09 ("Resolve-DnsName MERCH-HOST
+resolves and replies") is no longer true: the lease moved. Connecting to
+https://MERCH-HOST:8443 from this machine now times out against an address that
+is either unused or belongs to some other device on the LAN.
+
+This is the DHCP trap this project has already been bitten by once and wrote
+down (P0-05, evidence/phase-0/host-ip-reservation.txt section 2). It changes
+nothing about the "never configure a host by manual static IP" conclusion - the
+fix is still an address fixed on network equipment we control, per ADR-012 - but
+it does mean:
+
+  - P1-09's hosts-file note should not be read as a standing guarantee. It was
+    true on the network the machine sat on that day.
+  - Any future run that needs the NAME to work must re-check resolution first
+    and correct the hosts entry (elevation required) before concluding anything
+    about certificates or trust.
+
+Not fixed here: correcting the hosts file needs an elevated session, the same
+gap that leaves P1-09's firewall box open. Both should be done in one elevated
+sitting.
+
