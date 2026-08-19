@@ -4,6 +4,14 @@
 
 **Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as intended for development environments. Nothing in this guide should be read as a production-readiness claim.
 
+> **Most of §3 is now automated.** `pwsh ./scripts/bootstrap.ps1` performs the database, account, credential, schema, grant and certificate steps in the one order that works, generating a password per account for that installation, and it verifies the append-only guarantee rather than assuming it. Start there; this guide remains the reference for what it does, and the authority for the three things it deliberately leaves to a human:
+>
+> - **§1 — name resolution.** Per-network, and the certificate is name-only.
+> - **§4.2 — client certificate trust.** Per-client machine.
+> - **§5 — firewall.** Needs its own elevated step.
+>
+> The guide is also what you read when bootstrap refuses: every check it makes maps to a section here.
+
 ---
 
 ## 1. `MERCH-HOST` name resolution
