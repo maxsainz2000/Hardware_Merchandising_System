@@ -11,6 +11,7 @@
 ' InternalsVisibleTo half of that seam belongs to P1-19, not here.
 
 Imports System.Net
+Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
@@ -99,6 +100,9 @@ Public Module Program
         builder.Services.AddSingleton(databaseOptions)
         builder.Services.AddSingleton(Of ConnectionFactory)()
         builder.Services.AddScoped(Of AuthService)()
+
+        ' P1-11 / ADR-006: the atomic stock decrement.
+        builder.Services.AddScoped(Of StockService)()
 
         ' P1-08 / ADR-005: opaque server-side session token, not JWT bearer -
         ' see Merchandising.Infrastructure.vbproj's comment for why. The

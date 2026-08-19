@@ -22,6 +22,17 @@ Namespace Data
         ''' place a secret could leak from, not the first place it is kept
         ''' out.
         ''' </summary>
+        ''' <param name="transaction">
+        ''' Optional, added at P1-11. Pass the caller's transaction so this
+        ''' insert commits or rolls back atomically with the rest of a
+        ''' multi-table command (ADR-006) - for example StockService, which
+        ''' writes a StockMovements row and this audit row in the same
+        ''' transaction as the balance update. Nothing (the default) keeps
+        ''' every P1-08 call site unchanged: the command runs outside any
+        ''' explicit transaction, exactly as before this parameter existed.
+        ''' Appended last, after the existing Optional parameters, so no
+        ''' positional call site written before P1-11 shifts arguments.
+        ''' </param>
         Public Shared Async Function WriteAsync(
             connection As MySqlConnection,
             actorUserId As Integer?,
@@ -30,9 +41,13 @@ Namespace Data
             result As String,
             correlationId As String,
             Optional detail As String = Nothing,
-            Optional cancellationToken As CancellationToken = Nothing) As Task
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional transaction As MySqlTransaction = Nothing) As Task
 
             Using command As MySqlCommand = connection.CreateCommand()
+                If transaction IsNot Nothing Then
+                    command.Transaction = transaction
+                End If
                 command.CommandText =
                     "INSERT INTO AuditLogs (ActorUserId, Action, Target, Result, CorrelationId, Detail, CreatedAtUtc) " &
                     "VALUES (@actorUserId, @action, @target, @result, @correlationId, @detail, UTC_TIMESTAMP(6));"

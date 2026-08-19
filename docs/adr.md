@@ -272,6 +272,8 @@ The failure mode is not a wrong-looking number. It is **drift**: the API compute
 
 **Verification required:** P1-07 and P1-11 each carry an integration test that inserts an over-scale value and asserts the API rejected or explicitly rounded it. A test that merely observes the stored value is correct at the declared scale proves nothing — the silent rounding produces exactly that result.
 
+> **P1-11 done (2026-08-19).** `StockDecrementTests.Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten` asserts `StockService.DecrementAsync` throws `ArgumentException` for a 4-decimal-place quantity before any connection opens, against the real database — a genuine integration test this time, not P1-07's justified unit-test workaround, since P1-11 has a real service method to call. Also proven at the HTTP boundary: a live request with `quantity:1.9999` returns 400 `VALIDATION_FAILED` with field-level detail. Evidence: `evidence/phase-1/p1-11-decimal-scale.txt`.
+
 ---
 
 ## ADR-005 · Authentication and token scheme
@@ -324,6 +326,8 @@ UPDATE StockBalances
 **Reasoning.** Read-then-write has a race window no isolation level closes cheaply. The conditional update pushes the check into the same atomic statement as the mutation, so the loser of a race simply affects zero rows and is rolled back with a controlled response. Isolation level alone is explicitly **not** relied upon.
 
 **Evidence required:** `p1-13-concurrency.txt` showing ten simultaneous requests against one unit of stock produce exactly one success and a final balance of zero.
+
+> **P1-11 progress (2026-08-19) — mechanism implemented and proven; status stays PENDING.** The exact SQL above is live in `StockRepository.TryDecrementAsync` (`src/Merchandising.Infrastructure/Data/StockRepository.vb`), called from `StockService.DecrementAsync` inside one transaction alongside the `StockMovements` and `AuditLogs` inserts (P1-11: `POST /api/v1/inventory/stock/decrement`). Proven so far: the happy path produces exactly one movement/audit row with a correct balance; an insufficient-stock request is rejected with a controlled 409 and writes zero rows; both are backed by an integration test against the real database *and* a live HTTP capture cross-checked directly against the schema (`evidence/phase-1/p1-11-happy-path.txt`, `p1-11-insufficient-stock.txt`). **What this does not yet prove:** the actual concurrency claim this ADR exists for — that two or more simultaneous requests against the same low-stock row cannot both succeed. `READ COMMITTED` is set per-connection (ADR-003.2/P1-05) but, per the Reasoning above, is not what this design relies on; InnoDB row-locking on the conditional `UPDATE` is what should serialize concurrent attempts, and that claim is untested until P1-13 fires real concurrent requests at it. Status stays **PENDING** until then — P1-12 (rollback) and P1-13 (concurrency) are still open.
 
 ---
 

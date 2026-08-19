@@ -1,0 +1,103 @@
+P1-11  ATOMIC STOCK DECREMENT - DECIMAL SCALE (ADR-004.1)
+Done-when box 5: a decrement whose computed value exceeds storage scale
+(quantity >3 dp) is rejected before insert. StockBalances.Quantity is
+DECIMAL(19,3) (ADR-004); the value tested here has 4 decimal places.
+
+Judgment call, same one P1-07 made for DecimalScaleGuard and recorded in
+p1-07-precision-check.txt section 3: the guard is exercised in TWO places
+here, not one -
+
+  1. An "Integration test" against the real database (the card's own
+     wording), proving the precondition holds at the StockService method
+     itself - StockDecrementTests.Decrement_OverScaleQuantity_
+     RejectedBeforeAnyRowWritten (PART A below).
+  2. A live HTTP call through InventoryController, proving the same
+     rejection happens at the actual API boundary a real client crosses,
+     with the field-level 400 body ADR-004.1 requires (PART B below).
+
+Server : 10.4.32-MariaDB
+API    : same live process as the other two P1-11 evidence files.
+
+===============================================================================
+PART A - StockDecrementTests.Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~Decrement_OverScaleQuantity"
+
+Test run for ...Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1
+
+Calls StockService.DecrementAsync(_productId, 1.9999D, ...) directly - no
+HTTP, no controller. Asserts:
+  - Assert.ThrowsExactlyAsync(Of ArgumentException) around the call, per
+    DecimalScaleGuard.EnsureQuantityScale (ADR-004.1: a validation failure,
+    not a value to silently round)
+  - StockBalances.Quantity for the fixture product is UNCHANGED afterward
+  - COUNT(*) FROM StockMovements WHERE CorrelationId = <this test's Id> = 0
+
+This proves the guard runs BEFORE any connection is even opened
+(DecimalScaleGuard.EnsureQuantityScale is the first line of
+StockService.DecrementAsync) - "before insert" in the strongest sense
+available: no SQL statement referencing this value is ever constructed.
+
+===============================================================================
+PART B - live HTTP run, https://127.0.0.1:8443
+===============================================================================
+
+Request:  POST https://127.0.0.1:8443/api/v1/inventory/stock/decrement
+          Authorization: Bearer <token, p1_11_fixture_actor, InventoryClerk>
+          X-Correlation-Id: 42074acc-20f8-498c-8af1-c19dca53ad08
+          Body: {"productId":2,"quantity":1.9999,"reason":"P1-11 live capture - decimal scale"}
+Status:   400
+Body:
+{
+  "errorCode": "VALIDATION_FAILED",
+  "message": "The stock decrement request failed validation.",
+  "correlationId": "42074acc-20f8-498c-8af1-c19dca53ad08",
+  "errors": {
+    "quantity": [
+      "Value '1.9999' exceeds the storage scale of 3 decimal place(s). Client-supplied money and quantity values must be rejected, not silently rounded (ADR-004.1). (Parameter 'value')"
+    ]
+  }
+}
+
+  [PASS] 400, not 200 with a silently-rounded value - the exact failure mode
+  ADR-004.1 exists to prevent (compare to the database's own behaviour,
+  demonstrated in p1-07-precision-check.txt section 2: 0.19995 into
+  DECIMAL(19,4) is accepted and silently rounded to 0.2000, "Note 1265", not
+  an error)
+  [PASS] Field-level detail names the offending field ("quantity") and
+  states why, per CLAUDE.md section 5's error contract
+  [PASS] No stack trace, SQL text, or internal detail in the body
+
+--- Direct database check (root, read-only, immediately after) ---
+$ mysql -u root -e "SELECT ProductId, Quantity FROM merchandising.stockbalances WHERE ProductId=2;"
+ProductId  Quantity
+2          98.000
+
+  [PASS] Unchanged from the value after the happy-path request
+  (p1-11-happy-path.txt) - the rejected 1.9999 request never reached a bound
+  parameter, so there is nothing for the database to have rounded
+
+$ mysql -u root -e "SELECT COUNT(*) FROM merchandising.stockmovements WHERE CorrelationId='42074acc-20f8-498c-8af1-c19dca53ad08';"
+COUNT(*)
+0
+
+  [PASS] Zero StockMovements rows for this correlation Id
+
+===============================================================================
+WHY THIS IS NOT THE SAME AS "A CORRECTLY-SCALED VALUE WAS STORED"
+===============================================================================
+Per ADR-004.1's own warning, a stored value at the right scale proves
+nothing on its own - the server rounds silently either way. What this file
+proves instead is that 1.9999 never became a bound parameter in the first
+place: PART A shows the guard throws before StockRepository is ever called,
+and PART B shows the same rejection surfaces to a real caller as a 400 with
+field-level detail, not a 200 carrying a quietly-rounded number.
+
+===============================================================================
+SUMMARY
+===============================================================================
+Box 5: PASS. Proven at both the method boundary (PART A, real database,
+"Integration test" per the card's literal wording) and the HTTP boundary
+(PART B, the shape a real client actually experiences).

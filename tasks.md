@@ -826,7 +826,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track D — Transactional core
 
-### ⬜ P1-11 · Atomic stock decrement
+### ✅ P1-11 · Atomic stock decrement
 
 **Spec:** §11 · **Closes:** G-11 (begins), G-12 (begins) · **Decides:** ADR-006
 
@@ -834,13 +834,27 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Success produces exactly one movement, one audit row, correct balance
-- [ ] Insufficient stock returns a controlled response and creates **zero** rows
-- [ ] Affected-row count is verified before returning success
-- [ ] Correlation ID recorded on both movement and audit rows
-- [ ] **Integration test:** a decrement whose computed value exceeds storage scale (quantity >3 dp, or any money value >4 dp on the same command) is **rejected** or **explicitly rounded by the API** before insert, per ADR-004.1's half-up policy. Assert on the API's own behaviour — the server rounds silently and would report success either way.
+- [x] Success produces exactly one movement, one audit row, correct balance
+- [x] Insufficient stock returns a controlled response and creates **zero** rows
+- [x] Affected-row count is verified before returning success
+- [x] Correlation ID recorded on both movement and audit rows
+- [x] **Integration test:** a decrement whose computed value exceeds storage scale (quantity >3 dp, or any money value >4 dp on the same command) is **rejected** or **explicitly rounded by the API** before insert, per ADR-004.1's half-up policy. Assert on the API's own behaviour — the server rounds silently and would report success either way.
 
 **Evidence:** `p1-11-happy-path.txt`, `p1-11-insufficient-stock.txt`, `p1-11-decimal-scale.txt`
+
+> **Result.** `POST /api/v1/inventory/stock/decrement` (`InventoryController`, gated `Roles:="Admin,SuperAdmin,InventoryClerk"` — the roles spec section 9 assigns adjustment responsibility to). `StockService.DecrementAsync` runs ADR-006's exact conditional `UPDATE` (`StockRepository.TryDecrementAsync`) inside one transaction: insufficient stock → explicit rollback, zero rows written anywhere; success → `StockMovements` row (`StockMovementWriter`, new), then `AuditLogs` row in the **same transaction** (`AuditLogWriter` gained a trailing `Optional transaction` parameter — backward-compatible, every P1-08 call site unchanged), then commit. No migration needed: `Products`/`StockBalances`/`StockMovements`/`AuditLogs` and their grants all landed at P1-07.
+>
+> **No schema needed for "one product."** A permanent fixture product (`Sku=p1_11_fixture_sku`) and fixture actor (`p1_11_fixture_actor`, role `InventoryClerk`) are created idempotently by `StockDecrementTests.vb`, the same "real rows, reset state not rows" shape `AuthenticationTests` uses — `Products`/`StockBalances` have no `DELETE` grant for `merch_api` either.
+>
+> **ADR-004.1 checked in two places, deliberately.** `InventoryController` validates first (field-level 400, the only layer with an HTTP concept to report one through). `StockService.DecrementAsync` **also** calls `DecimalScaleGuard.EnsureQuantityScale` as its own first line, before any connection opens — a hard precondition of the method itself, independent of whichever caller reaches it, and provable as a genuine integration test against the real database (`Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten`) rather than P1-07's unit-test workaround.
+>
+> **A real defect found writing the tests, not the feature.** MySqlConnector returns a `CHAR(36)` column back as a `System.Guid` object, not a `String` — `CStr()` on it throws `InvalidCastException`. Fixed by calling `.ToString()` on the scalar result instead (`Guid.ToString()`'s default "D" format matches `Guid.NewGuid().ToString()` exactly, so the round trip is exact). Read-back detail only; nothing written by this task's repositories is affected, since they only ever bind `String` parameters going in.
+>
+> **Unexpected-exception safety deliberately relies on an existing pattern, not new code.** `StockService.DecrementAsync` catches nothing beyond the explicit "insufficient stock" rollback — any genuine `MySqlException` propagates out through the enclosing `Using connection`, whose synchronous `Dispose()` severs the connection and lets MariaDB roll back the still-open transaction server-side. Same shape `Merchandising.Maintenance.Users.CreateUserCommand` already relies on for its own non-duplicate-key failures. This is what lets P1-12's fault injection prove the rollback guarantee without this method needing to know about it in advance.
+>
+> 29/29 integration tests green (4 new), 8/8 unit tests green, 0 build warnings, all four guardrails pass. Full HTTP matrix (200/409/400/401/403) captured live against `https://127.0.0.1:8443` and cross-checked directly against the database — see the three evidence files.
+>
+> **ADR-006 stays PENDING** — this card proves the mechanism and the happy/insufficient/scale paths; the concurrency claim ("can never go negative under concurrent sales") is P1-13's evidence, not this card's.
 
 ---
 

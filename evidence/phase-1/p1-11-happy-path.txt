@@ -1,0 +1,128 @@
+P1-11  ATOMIC STOCK DECREMENT - HAPPY PATH
+Done-when boxes 1 (exactly one movement, one audit row, correct balance),
+3 (affected-row count verified before success) and 4 (correlation Id on
+both rows). Boxes 2 and 5 (insufficient stock, decimal scale) are in the
+other two evidence files this card names.
+
+Server    : 10.4.32-MariaDB
+API       : Merchandising.Api, ASPNETCORE_ENVIRONMENT=Development,
+            https://0.0.0.0:8443 (production-like listener; the loopback
+            HTTP profile on 8080 exists only for the non-production warning
+            check, P1-09) - same target P1-10 used, for the same reason
+            (ADR-012: a software behaviour, provable from any machine).
+Scheme    : Opaque server-side session token (ADR-005) - same as P1-08.
+
+This file has two halves, the same split P1-08 used:
+
+  PART A - StockDecrementTests.vb (StockService called directly, no HTTP)
+           against the real, pinned MariaDB instance.
+  PART B - a live HTTP run through InventoryController, since
+           WebApplicationFactory is not wired until P1-19.
+
+===============================================================================
+PART A - dotnet test src/tests/Merchandising.Tests.Integration (StockDecrementTests only)
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~StockDecrementTests"
+
+Test run for ...Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     4, Skipped:     0, Total:     4, Duration: 553 ms
+
+Test list:
+  Decrement_Success_CreatesOneMovementOneAuditRowAndCorrectBalance   (box 1, box 3)
+  Decrement_Success_RecordsCorrelationIdOnMovementAndAudit           (box 4)
+  Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows (box 2 - see p1-11-insufficient-stock.txt)
+  Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten            (ADR-004.1 - see p1-11-decimal-scale.txt)
+
+Full suite (unit + integration, all Phase 1 tasks) immediately before this capture:
+  Unit:        Passed! Failed: 0, Passed: 8,  Total: 8
+  Integration: Passed! Failed: 0, Passed: 29, Total: 29
+  Guardrails:  G-A/G-B/G-C/G-D all pass
+  Build:       0 Warning(s), 0 Error(s)
+
+A REAL DEFECT FOUND WHILE WRITING THIS SUITE, before PART B was ever run:
+MySqlConnector returns a CHAR(36) column (StockMovements.CorrelationId,
+AuditLogs.CorrelationId) back as a System.Guid object, not a String.
+`CStr(scalarResult)` on a Guid throws InvalidCastException - VB's CStr does
+not support that conversion. Fixed in the test by calling `.ToString()` on
+the scalar result instead (Guid.ToString()'s default "D" format is the same
+lowercase-with-hyphens shape Guid.NewGuid().ToString() produces, which is
+what was stored, so the round trip is exact either way). This is a read-back
+detail specific to how the test verifies the database's own content - it
+does not affect anything written by StockRepository/StockMovementWriter/
+AuditLogWriter, which only ever bind String parameters on the way in.
+
+===============================================================================
+PART B - live HTTP run, https://127.0.0.1:8443
+===============================================================================
+
+Actor: p1_11_fixture_actor (role InventoryClerk - the role spec section 9
+assigns "adjustment requests" to). Fixture product: Sku=p1_11_fixture_sku,
+Id=2 (created idempotently by StockDecrementTests.EnsureFixtureProductAsync;
+Products/StockBalances have no DELETE grant for merch_api, so this is a
+permanent row, the same "fixture accounts are real rows" shape
+AuthenticationTests uses - see that file's own header).
+
+--- Login ---
+POST https://127.0.0.1:8443/api/v1/auth/login
+Body: {"username":"p1_11_fixture_actor","password":"P1-11 Fixture Passw0rd!"}
+Status: 200
+Roles returned: InventoryClerk
+
+--- Decrement: happy path ---
+Request:  POST https://127.0.0.1:8443/api/v1/inventory/stock/decrement
+          Authorization: Bearer <token>
+          X-Correlation-Id: f176ad0a-9778-41f6-8fb5-e5ba96bce746
+          Body: {"productId":2,"quantity":2.000,"reason":"P1-11 live capture - happy path"}
+Status:   200
+Body:     {"productId":2,"movementId":7,"quantityBefore":100.000,"quantityAfter":98.000,"correlationId":"f176ad0a-9778-41f6-8fb5-e5ba96bce746"}
+
+  [PASS] 200, quantityAfter = quantityBefore - quantity exactly (98.000 = 100.000 - 2.000)
+  [PASS] correlationId in the response body matches the X-Correlation-Id sent
+
+--- Direct database check (root, read-only, immediately after) ---
+$ mysql -u root -e "SELECT Id, Delta, QuantityBefore, QuantityAfter, Reason, CorrelationId FROM merchandising.stockmovements WHERE ProductId=2 ORDER BY Id DESC LIMIT 1;"
+
+Id  Delta    QuantityBefore  QuantityAfter  Reason                            CorrelationId
+7   -2.000   100.000         98.000         P1-11 live capture - happy path  f176ad0a-9778-41f6-8fb5-e5ba96bce746
+
+  [PASS] Delta is negative (-2.000), QuantityBefore/QuantityAfter match the response exactly
+  [PASS] CorrelationId on the movement row matches the request's X-Correlation-Id (box 4)
+
+$ mysql -u root -e "SELECT ProductId, Quantity FROM merchandising.stockbalances WHERE ProductId=2;"
+ProductId  Quantity
+2          98.000
+
+  [PASS] StockBalances reflects the same value the response and the movement row agree on
+
+$ mysql -u root -e "SELECT Id, ActorUserId, Action, Target, Result, CorrelationId, Detail FROM merchandising.auditlogs WHERE CorrelationId='f176ad0a-9778-41f6-8fb5-e5ba96bce746';"
+
+Id   ActorUserId  Action            Target      Result   CorrelationId                          Detail
+263  8            StockDecremented  Product:2   Success  f176ad0a-9778-41f6-8fb5-e5ba96bce746   Quantity 100.000 -> 98.000 (movement 7)
+
+  [PASS] Exactly one AuditLogs row for this correlation Id, and its CorrelationId
+  matches the movement row's and the request's (box 4)
+
+--- Authorization matrix (proves this is genuinely the protected endpoint the box implies) ---
+401 (no Authorization header at all):                           401
+403 (valid token, Cashier role - wrong role for this endpoint): 403
+
+  [PASS] Unauthenticated and wrong-role callers are both rejected before reaching StockService
+
+===============================================================================
+SUMMARY
+===============================================================================
+Box 1 (exactly one movement, one audit row, correct balance): PASS - proven twice,
+  once programmatically (PART A) and once via a live HTTP call cross-checked
+  directly against the database (PART B).
+Box 3 (affected-row count verified before success): PASS by construction -
+  StockRepository.TryDecrementAsync's UPDATE carries the WHERE Quantity >= @qty
+  guard from ADR-006 and checks ExecuteNonQueryAsync's own return value before
+  any movement/audit row is ever written; see the repository source and
+  Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows in
+  p1-11-insufficient-stock.txt for the negative proof.
+Box 4 (correlation Id on both rows): PASS - Decrement_Success_
+  RecordsCorrelationIdOnMovementAndAudit (PART A) and the direct query above
+  (PART B) agree.

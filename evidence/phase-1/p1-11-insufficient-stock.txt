@@ -1,0 +1,86 @@
+P1-11  ATOMIC STOCK DECREMENT - INSUFFICIENT STOCK
+Done-when box 2: insufficient stock returns a controlled response and
+creates zero rows. ADR-006: "the losing command returns a controlled
+insufficient-stock or concurrency response and does not create partial
+records."
+
+Server : 10.4.32-MariaDB
+API    : same live process as p1-11-happy-path.txt (https://127.0.0.1:8443,
+         ASPNETCORE_ENVIRONMENT=Development), captured in the same session
+         immediately after the happy-path request.
+
+===============================================================================
+PART A - StockDecrementTests.Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows
+===============================================================================
+
+Requests BaselineQuantity + 1.000 (i.e. one more unit than the fixture
+balance holds, reset to exactly 100.000 in TestInitialize) against the same
+fixture product StockRepository.TryDecrementAsync guards with
+"WHERE ProductId = @productId AND Quantity >= @qty".
+
+Asserts, all against the real database, not the outcome object alone:
+  - outcome.Kind = InsufficientStock, outcome.Response = Nothing
+  - StockBalances.Quantity for the fixture product is UNCHANGED (still 100.000)
+  - COUNT(*) FROM StockMovements WHERE CorrelationId = <this test's Id> = 0
+  - COUNT(*) FROM AuditLogs WHERE CorrelationId = <this test's Id> AND Action = 'StockDecremented' = 0
+
+Result: PASS (see p1-11-happy-path.txt PART A for the full 4/4 run this
+test is one of).
+
+===============================================================================
+PART B - live HTTP run, https://127.0.0.1:8443
+===============================================================================
+
+Fixture product Id=2 stood at 98.000 at this point in the session (after the
+happy-path request in p1-11-happy-path.txt decremented it from 100.000).
+A quantity of 999999.000 is requested - far beyond any plausible balance,
+so the WHERE clause's "Quantity >= @qty" cannot match regardless of the
+exact prior value, and the API is never told what that value is.
+
+Request:  POST https://127.0.0.1:8443/api/v1/inventory/stock/decrement
+          Authorization: Bearer <token, p1_11_fixture_actor, InventoryClerk>
+          X-Correlation-Id: ff72a920-5132-443a-9b35-95797367043c
+          Body: {"productId":2,"quantity":999999.000,"reason":"P1-11 live capture - insufficient stock"}
+Status:   409
+Body:
+{
+  "errorCode": "INSUFFICIENT_STOCK",
+  "message": "The requested quantity is not available for this product.",
+  "correlationId": "ff72a920-5132-443a-9b35-95797367043c",
+  "errors": null
+}
+
+  [PASS] 409, not 500 or a bare error - a controlled response with a stable
+  error code and the same correlation Id the caller sent
+  [PASS] No stack trace, SQL text, or internal detail in the body (CLAUDE.md
+  section 5 / ADR-014's error-envelope contract, same shape P1-10 verified)
+
+--- Direct database check (root, read-only, immediately after) ---
+$ mysql -u root -e "SELECT ProductId, Quantity FROM merchandising.stockbalances WHERE ProductId=2;"
+ProductId  Quantity
+2          98.000
+
+  [PASS] Balance is exactly what it was before this request (98.000, from the
+  happy-path decrement) - the rejected 999999.000 request touched nothing
+
+$ mysql -u root -e "SELECT COUNT(*) FROM merchandising.stockmovements WHERE CorrelationId='ff72a920-5132-443a-9b35-95797367043c';"
+COUNT(*)
+0
+
+$ mysql -u root -e "SELECT COUNT(*) FROM merchandising.auditlogs WHERE CorrelationId='ff72a920-5132-443a-9b35-95797367043c';"
+COUNT(*)
+0
+
+  [PASS] Zero rows in StockMovements and zero in AuditLogs for this
+  correlation Id - the whole point of box 2. The rollback in
+  StockService.DecrementAsync ran before either INSERT was ever issued, not
+  after a failed one - there is nothing here for a transaction to have
+  undone, because nothing was ever written in the first place.
+
+===============================================================================
+SUMMARY
+===============================================================================
+Box 2: PASS. Proven twice - StockDecrementTests (PART A, against the
+database directly) and a live HTTP call cross-checked against the same
+database a moment later (PART B). Both agree: insufficient stock produces
+exactly one response (409, INSUFFICIENT_STOCK) and zero rows anywhere.
