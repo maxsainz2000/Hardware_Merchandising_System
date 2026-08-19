@@ -1,0 +1,66 @@
+=== P1-09 evidence: untrusted client behaviour vs. trusted client behaviour ===
+Captured: 2026-08-19 01:58:56 UTC on LAPTOP-3HH6OHHE
+
+SUBSTITUTION NOTE (by the same convention as evidence/phase-0/xampp-services.txt):
+a genuine second-machine screenshot is not available this session - the lab test
+workstation is not currently on this network (docs/installation-guide.md section 1.5).
+This capture exercises the identical TLS trust mechanism (connect by name MERCH-HOST,
+validate the presented chain, fail or succeed based only on whether the client has
+imported merch-host.cer) that a second machine would go through. It does not
+substitute for a literal cross-machine run, which stays an open item on this card.
+
+--- STEP 1: client has NOT imported the certificate ---
+TLS HANDSHAKE FAILED
+Exception: System.Management.Automation.MethodInvocationException - Exception calling "AuthenticateAsClient" with "1" argument(s): "The remote certificate was rejected by the provided RemoteCertificateValidationCallback."
+Inner: The remote certificate was rejected by the provided RemoteCertificateValidationCallback.
+SslPolicyErrors: RemoteCertificateChainErrors
+Negotiated cert subject: CN=MERCH-HOST
+
+--- STEP 2: import merch-host.cer into the client's Trusted Root store ---
+(simulating docs/installation-guide.md section 4's client trust procedure)
+Imported thumbprint 759021AA351D8572EF19DD24ADDEF1A94A4849C9 into Cert:\CurrentUser\Root.
+
+--- STEP 3: same client, same certificate, connecting again ---
+TLS HANDSHAKE SUCCEEDED
+Negotiated protocol: Tls13
+SslPolicyErrors: None
+Negotiated cert subject: CN=MERCH-HOST
+
+--- STEP 4: full HTTP response over the now-trusted HTTPS connection ---
+HTTP/1.1 200 OK
+Connection: close
+Content-Type: application/json; charset=utf-8
+Date: Wed, 19 Aug 2026 01:59:30 GMT
+Server: Kestrel
+Transfer-Encoding: chunked
+X-Correlation-Id: f21d43aa-9008-4dec-a615-69e28e434fa5
+
+4a
+{"status":"ok","version":"0.1.0","utcTime":"2026-08-19T01:59:31.5349334Z"}
+0
+
+
+
+--- STEP 5: connecting by IP instead of name still fails, even though the cert is now trusted ---
+(this is the behaviour ADR-011's name-only-SAN decision predicts and requires)
+Failed as expected: The SSL connection could not be established, see inner exception.
+  Inner: The remote certificate is invalid according to the validation procedure: RemoteCertificateNameMismatch
+
+--- STEP 6: dev HTTP listener (127.0.0.1:8080) always carries the non-production marker ---
+Status: 200
+X-Non-Production-Http: true - development HTTP profile, never use for a demonstration
+
+--- STEP 7: the HTTPS/8443 listener never carries that marker, even while running in Development ---
+HTTP/1.1 200 OK
+Connection: close
+Content-Type: application/json; charset=utf-8
+Date: Wed, 19 Aug 2026 01:59:32 GMT
+Server: Kestrel
+Transfer-Encoding: chunked
+X-Correlation-Id: c20d48f4-c226-42aa-8108-ad081cce6974
+
+4a
+{"status":"ok","version":"0.1.0","utcTime":"2026-08-19T01:59:32.8807198Z"}
+0
+
+

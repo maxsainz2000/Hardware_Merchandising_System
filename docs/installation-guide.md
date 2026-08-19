@@ -98,7 +98,7 @@ These sections are owned by later tasks and are deliberately absent rather than 
 | Section | Owed by |
 |---|---|
 | MariaDB accounts, grants, and `sql_mode` hardening | P1-04 — **accounts and grants now scripted, see §3.2** |
-| Certificate installation and client trust procedure | P1-09 |
+| Certificate installation and client trust procedure | P1-09 — **written, see §4. Cross-machine confirmation still open** |
 | Windows Service registration and recovery settings | P1-16 |
 | Backup schedule, retention, and off-host destination | P1-17 |
 | Restore procedure and maintenance mode | P1-18 |
@@ -223,3 +223,105 @@ rather than by discipline (CLAUDE.md §5). Verify after step 3 — both must fai
 > **On this lab host, MariaDB `root` has no password** — loopback-only, and the instance is
 > shared with an unrelated project. **On a demo install this is not acceptable and must be
 > set**, because that instance is fresh and single-purpose. See manifest §2.
+
+---
+
+## 4. HTTPS certificate and client trust procedure (P1-09, ADR-011)
+
+**Why the certificate is name-only.** The API host in this project is a laptop that moves
+between at least three networks during development — home, school, and office Wi-Fi — and will
+later move again to a self-provided demo LAN (ADR-012). A certificate carrying an IP address in
+its Subject Alternative Name would be valid on exactly one of those networks and produce a trust
+warning on every other one, at whichever moment is least convenient. The certificate instead
+carries **only** the DNS name `MERCH-HOST`, which never changes. The thing that changes per
+network — the name-to-address mapping — is absorbed entirely by the hosts file (§1), which is
+the whole reason that manual step earns its inconvenience. This resolves ADR-011: **decision is
+a name-only SAN**, confirming the revised lean rather than the original baseline.
+
+### 4.1 Generating the host's certificate
+
+Run once per installation (fresh host, or a reinstalled XAMPP that lost its config directory).
+Does **not** need an elevated session — see the script's own header comment for why:
+
+```powershell
+pwsh ./scripts/create-dev-certificate.ps1
+```
+
+This writes three things, none of them committed to the repository:
+
+| File | Location | Contains |
+|---|---|---|
+| `certificate.json` | `C:\ProgramData\MerchandisingSystem\config\` | Path to the `.pfx` + its password. Read by `CertificateOptionsLoader` at API startup. Same ACL as `database.json` (§3). |
+| `merch-host.pfx` | `C:\ProgramData\MerchandisingSystem\certs\` | Certificate **and private key**. Host only. Never copy this file anywhere. |
+| `merch-host.cer` | `C:\ProgramData\MerchandisingSystem\certs\` | Certificate **only**, no private key. This is the one file every client needs. |
+
+Record the generated certificate's subject/SAN/thumbprint as evidence — see
+`evidence/phase-1/p1-09-cert-details.txt` for this installation's values, and confirm the SAN
+extension shows exactly `DNS Name=MERCH-HOST` and nothing else before distributing `.cer` to any
+client.
+
+### 4.2 Client trust procedure — run once per client
+
+Full procedure, verification steps, a failure table, and a live worked example are in
+`evidence/phase-1/p1-09-client-trust-steps.md`. Summary:
+
+1. Get `merch-host.cer` from the host administrator, **never** a `.pfx`.
+2. Get the expected thumbprint out of band (phone, in person, chat) — not from the same channel
+   that delivered the file. This manual comparison is the entire point of a manual trust step.
+3. Import into `Cert:\LocalMachine\Root` (all users, needs admin) or `Cert:\CurrentUser\Root`
+   (this account only, no admin needed) — see the evidence file for the exact commands.
+4. Verify: `Invoke-WebRequest https://MERCH-HOST:8443/health` returns `200 OK` with **no**
+   certificate warning and **no** `-SkipCertificateCheck`.
+
+An untrusted client is expected to fail the TLS handshake with `RemoteCertificateChainErrors` —
+that is the system working correctly, not a bug to route around.
+
+### 4.3 The development HTTP listener
+
+`http://127.0.0.1:8080` exists **only** when `ASPNETCORE_ENVIRONMENT=Development`, binds to
+loopback only — never `0.0.0.0` — and every response from it carries an
+`X-Non-Production-Http` header plus a startup console warning. It cannot be reached from another
+machine regardless of firewall state, and it is never used for a demonstration. The
+production-like listener is always `https://MERCH-HOST:8443`, in every environment.
+
+### 4.4 Current status
+
+| Machine | Certificate generated | Trust installed | `https://MERCH-HOST:8443/health` verified |
+|---|---|---|---|
+| Lab host `LAPTOP-3HH6OHHE` | ✅ 2026-08-19, thumbprint `759021AA...849C9` | ✅ (`CurrentUser\Root`, same machine) | ✅ via name-targeted TLS test — `evidence/phase-1/p1-09-invalid-cert-behaviour.txt` |
+| Lab test workstation `DESKTOP-OUU3M8J` | — | ❌ not yet on this network | ❌ |
+| Demo host / workstations | — | — | — rig not yet acquired (manifest §4.2) |
+
+**A literal second-machine confirmation is still open**, same gap as §1.5 — the mechanism is
+proven, a second physical machine following §4.2 is not yet proven.
+
+---
+
+## 5. Firewall — port 8443 (P1-09)
+
+**Rule is scoped dynamically, not to a fixed subnet, for the same reason the certificate is
+name-only:** this host's actual subnet changes every time it changes Wi-Fi. A rule hard-coded to
+one address range would be wrong everywhere except the network it was written on.
+
+```powershell
+pwsh ./scripts/configure-firewall-dev.ps1
+```
+
+Requires an elevated (**Run as Administrator**) session — the script checks and refuses to run
+otherwise rather than failing halfway through. It creates one inbound rule: TCP 8443,
+`-RemoteAddress LocalSubnet` (resolves to whatever subnet the active adapter is on right now),
+`-Profile Private` only. On school or office Wi-Fi — typically classified Public by Windows —
+this rule simply does not apply, and Windows Firewall's own default-deny keeps 8443 closed with
+no manual switching required.
+
+**This is the development rule for this laptop, not the demo rig's firewall configuration.**
+The demo host's firewall is configured once, on that hardware, at install time — a fixed subnet
+is correct there in a way it is not correct here, because the demo rig (ADR-012) does not move.
+That step is not yet written; it belongs in this section once the demo rig exists.
+
+**Not yet run in this session** — this working session is not admin-elevated (same gap noted at
+P0-05). Run `scripts/configure-firewall-dev.ps1` from an elevated session and verify with:
+
+```powershell
+Get-NetFirewallRule -DisplayName "Merchandising API HTTPS (dev, private networks only)" | Get-NetFirewallPortFilter
+```

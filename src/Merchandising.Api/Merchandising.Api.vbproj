@@ -43,8 +43,12 @@
     NO appsettings.json AND NO Properties/launchSettings.json. Runtime
     configuration is read from an ACL protected host location outside the
     binaries and outside the repository (P1-05). Kestrel endpoints and
-    HTTPS are P1-09. Until then ASPNETCORE_URLS supplies the address, so
-    no development URL is committed to the repository.
+    HTTPS are configured the same way as of P1-09: the certificate path and
+    password live in certificate.json next to database.json, never in a
+    committed file, and the port numbers (8443 HTTPS, 8080 loopback-only
+    dev HTTP) are hand-coded in Program.vb rather than sourced from
+    ASPNETCORE_URLS, so no development URL is committed to the repository
+    either.
 
     ==================================================================
     TWO THINGS WORTH KNOWING BEFORE YOU EDIT THIS FILE

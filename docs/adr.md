@@ -457,7 +457,8 @@ P1-16 raises the stakes: the API runs as a **Windows Service** with automatic re
 
 ## ADR-011 · Certificate strategy
 
-**Status:** PENDING — cert strategy resolves at task P1-09; host name choice confirmed at P0-05
+**Status:** ACCEPTED
+**Date:** 2026-08-19
 **Decides:** how HTTPS is trusted on client laptops. Closes gaps G-07 and G-25.
 
 **Baseline lean:** self-signed certificate with subject/SAN covering the host name `MERCH-HOST` (and the reserved IP if client configuration will use it), with a documented manual trust-installation procedure per client.
@@ -470,9 +471,15 @@ P1-16 raises the stakes: the API runs as a **Windows Service** with automatic re
 
 Resolution is configured on the lab host and on **no** demo workstation, which is correct: no hosts entry should be written until the demo rig's addressing is fixed.
 
-**Decision:** _(record after P1-09)_
+**Decision, confirmed at P1-09: name-only SAN.** The lean stands, and a second reason arrived before the demo LAN even entered the picture: the development machine itself is a laptop that moves between home, school, and office Wi-Fi in the ordinary course of building this system, each with its own subnet. An IP-bound SAN would have generated a fresh trust warning on every network change *during development*, not just at the demo. `scripts/create-dev-certificate.ps1` generates a self-signed certificate with subject `CN=MERCH-HOST` and a single SAN entry, `DNS Name=MERCH-HOST` — confirmed by direct inspection of the generated certificate, not assumed: `evidence/phase-1/p1-09-cert-details.txt`. `New-SelfSignedCertificate -DnsName MERCH-HOST` alone was sufficient; no `-IPAddress` parameter is present anywhere in the script.
 
-**Fixed:** HTTPS mandatory for production-like operation on port 8443. HTTP permitted only on an isolated developer machine, visibly labelled non-production.
+**Trust mechanism, proven live.** `evidence/phase-1/p1-09-invalid-cert-behaviour.txt` walks a real client through the full cycle against the real Kestrel process: before trust is installed, the TLS handshake fails with `RemoteCertificateChainErrors`; after importing `merch-host.cer` into the client's Trusted Root store, the identical connection succeeds over TLS 1.3 with `SslPolicyErrors: None`. A separate check confirms the name-only decision is actually enforced and not just documented: connecting to the same trusted certificate by **IP address** instead of `MERCH-HOST` still fails, with `RemoteCertificateNameMismatch`.
+
+**Friction encountered, and what is still open.** The evidence above ran on one machine — the lab host acting as its own client via a raw `SslStream` targeting the name `MERCH-HOST` over a loopback socket — because the lab test workstation was not on this network during this task (same gap already tracked at `installation-guide.md` §1.5). That proves the trust *mechanism* correctly, but a literal second physical machine following `evidence/phase-1/p1-09-client-trust-steps.md` has not yet happened and stays an open item on the P1-09 task card, not on this ADR: the certificate strategy itself is decided.
+
+**Fixed:** HTTPS mandatory for production-like operation on port 8443. HTTP permitted only on an isolated developer machine, visibly labelled non-production — implemented as a loopback-only (`127.0.0.1`) listener active only when `ASPNETCORE_ENVIRONMENT=Development`, with an `X-Non-Production-Http` response header and a startup console warning (`Merchandising.Api.Middleware.NonProductionWarningMiddleware`).
+
+**Evidence:** `evidence/phase-1/p1-09-cert-details.txt`, `evidence/phase-1/p1-09-client-trust-steps.md`, `evidence/phase-1/p1-09-invalid-cert-behaviour.txt`
 
 ---
 

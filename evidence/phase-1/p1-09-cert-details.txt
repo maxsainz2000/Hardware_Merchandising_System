@@ -1,0 +1,26 @@
+=== P1-09 evidence: certificate details ===
+Captured: 2026-08-19 09:57:23 local / 2026-08-19 01:57:23 UTC
+Host: LAPTOP-3HH6OHHE
+
+Source file: C:\ProgramData\MerchandisingSystem\certs\merch-host.cer (public certificate only, no private key)
+Subject: CN=MERCH-HOST
+Issuer: CN=MERCH-HOST  (self-signed, per ADR-011 baseline lean)
+NotBefore (UTC): 08/19/2026 01:42:14
+NotAfter (UTC): 08/19/2028 01:52:12
+Thumbprint: 759021AA351D8572EF19DD24ADDEF1A94A4849C9
+Signature Algorithm: sha256RSA
+Key: RSA, 2048 bits
+
+Subject Alternative Name extension:
+  DNS Name=MERCH-HOST
+
+
+CONFIRMS ADR-011's revised lean: name-only SAN (MERCH-HOST), no IP address entry.
+This is deliberate - see scripts/create-dev-certificate.ps1 header comment and
+ADR-011 in docs/adr.md. An IP-bound SAN would tie the certificate to one
+network; this dev machine moves between home, school and office Wi-Fi during
+development, and will later move again to a self-provided demo LAN (ADR-012).
+
+certificate.json (contents redacted - password never captured in evidence):
+  pfxPath: C:\ProgramData\MerchandisingSystem\certs\merch-host.pfx
+  password: <redacted, 32 characters>

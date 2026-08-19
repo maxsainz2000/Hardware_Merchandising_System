@@ -153,7 +153,7 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 - [x] Host IP reserved; method recorded (static IP on host adapter, not a router DHCP reservation — see manifest §4 for why)
 - [ ] `ping MERCH-HOST` succeeds from **every demo workstation** — **not satisfied.** A lab-to-lab run proves the mechanism and unblocks P1-09/P1-10/P1-15, but does not tick this box (ADR-012)
 - [x] Subnet recorded in manifest §4
-- [x] Name choice recorded in ADR-011 (confirmation note only; ADR itself stays PENDING for P1-09)
+- [x] Name choice recorded in ADR-011 (confirmation note; ADR itself resolved ACCEPTED at P1-09)
 
 **Unblocked by:** the demo rig existing (manifest §4.2). **Router admin access is no longer required** — see the re-scope note below.
 
@@ -746,19 +746,29 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-09 · HTTPS with a LAN-valid certificate
+### 🟡 P1-09 · HTTPS with a LAN-valid certificate — mechanism proven on one machine, cross-machine and firewall still open
 
 **Spec:** §8, §17 · **Closes:** G-07, G-25 · **Decides:** ADR-011
 
 **Do:** Kestrel on `https://0.0.0.0:8443`. Certificate subject/SAN covering `MERCH-HOST` (and the reserved IP if clients will use it). Document the client trust procedure. Dev HTTP profile isolated and visibly labelled non-production.
 
+> **Result.** Kestrel now binds `https://0.0.0.0:8443` in every environment, loading a certificate via a new `CertificateOptions`/`CertificateOptionsLoader` pair in `Merchandising.Infrastructure.Security` that mirrors `DatabaseOptions` exactly — an ACL-protected JSON file at `%ProgramData%\MerchandisingSystem\config\certificate.json`, never appsettings.json, never committed. `scripts/create-dev-certificate.ps1` generates the certificate: self-signed, subject `CN=MERCH-HOST`, **one** SAN entry (`DNS Name=MERCH-HOST`, no IP) — confirmed by direct inspection, not assumed (`evidence/phase-1/p1-09-cert-details.txt`). ADR-011 resolved name-only, and a second reason arrived beyond the demo-LAN one it already had: this laptop is the dev host and moves between home, school, and office Wi-Fi during ordinary development, so an IP-bound SAN would have broken on every network change, not just at the demo.
+>
+> **Trust mechanism proven live**, not just described: `evidence/phase-1/p1-09-invalid-cert-behaviour.txt` walks a real client through the real Kestrel process — before trust, `RemoteCertificateChainErrors`; after importing `merch-host.cer`, the same connection succeeds over TLS 1.3 with `SslPolicyErrors: None`; connecting by IP instead of name still fails afterward (`RemoteCertificateNameMismatch`), proving the name-only decision is enforced, not just documented. Full procedure at `evidence/phase-1/p1-09-client-trust-steps.md` and `docs/installation-guide.md` §4.
+>
+> **Dev HTTP profile:** `http://127.0.0.1:8080`, loopback only, active only when `ASPNETCORE_ENVIRONMENT=Development`, every response tagged `X-Non-Production-Http` by `NonProductionWarningMiddleware`, plus a startup console warning. Confirmed the HTTPS/8443 listener never carries that header, even while running in Development — see evidence transcript steps 6–7.
+>
+> **Firewall:** `scripts/configure-firewall-dev.ps1` scopes the rule to `-RemoteAddress LocalSubnet -Profile Private` rather than a hard-coded subnet, for the same reason the certificate is name-only — this host's actual subnet changes with its Wi-Fi. Confirmed it refuses cleanly rather than half-applying when not elevated (this session isn't — same gap as P0-05). **Not yet run from an elevated session, so the rule does not exist yet.**
+>
+> **What is genuinely open, and why the boxes below stay unchecked rather than ticked on a technicality.** All of the above ran on **one machine** acting as its own client (a raw `SslStream` targeting the name `MERCH-HOST` over loopback, since the lab test workstation isn't on this network right now — same gap as `installation-guide.md` §1.5). That proves the mechanism; it is not "a second machine reached it," and this project's own evidence culture (P0-03, P0-05) says not to tick a box on the weaker claim. The WPF-surfaces-a-message half of the third box is explicitly **P1-15's** job — `ClientCommon`'s HTTP client doesn't exist yet, and building it now would be exactly the Phase 1 scope creep CLAUDE.md warns against.
+
 **Done when:**
 
-- [ ] Client reaches `https://MERCH-HOST:8443/health` with no certificate warning after following the procedure
-- [ ] Trust procedure written and followed on **every** client
-- [ ] An untrusted client fails clearly; the WPF client surfaces a readable message rather than silently proceeding
-- [ ] Dev HTTP profile displays a non-production warning
-- [ ] Firewall allows 8443 from the private subnet only
+- [ ] Client reaches `https://MERCH-HOST:8443/health` with no certificate warning after following the procedure — **mechanism proven same-host; a literal second machine has not run this yet**
+- [ ] Trust procedure written and followed on **every** client — **written** (`docs/installation-guide.md` §4, `p1-09-client-trust-steps.md`); followed on the lab host only so far
+- [ ] An untrusted client fails clearly; the WPF client surfaces a readable message rather than silently proceeding — **untrusted-client failure proven** (`RemoteCertificateChainErrors`, clean exception); the WPF half belongs to **P1-15**, not built here
+- [x] Dev HTTP profile displays a non-production warning — `X-Non-Production-Http` header + startup log, proven not to leak onto the HTTPS listener even in Development
+- [ ] Firewall allows 8443 from the private subnet only — script written and its elevation guard proven, **not yet applied** (needs an elevated session on this machine)
 
 > **ADR-012 note — unblocked, and one design lean firmed up.**
 >
@@ -767,8 +777,10 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > **Lean strongly to a name-only SAN.** ADR-011's baseline said "`MERCH-HOST` and the reserved IP". **An IP in the SAN binds the certificate to one network** — it would be valid on the lab LAN and produce a trust warning on the demo rig, at the worst possible moment. A name-only SAN keeps one certificate valid everywhere and is the entire reason the manual hosts-file step earns its inconvenience. Confirm or overturn here; ADR-011 is updated with the reasoning.
 >
 > **Scope the firewall rule to the demo LAN's subnet, and ignore Tailscale** — out of scope, and it will not be present at the presentation.
+>
+> **Refined at P1-09.** A subnet hard-coded to the demo LAN would be actively wrong on every network this laptop develops on — home, school, office — since none of them is that subnet. `scripts/configure-firewall-dev.ps1` uses `-RemoteAddress LocalSubnet -Profile Private` instead: it resolves dynamically to whichever subnet the adapter is on, and only applies at all on networks Windows already classifies Private (school/office Wi-Fi is typically Public, so 8443 stays closed there by Windows' own default-deny). The demo rig's own firewall rule, scoped to its actual fixed subnet, is a separate install-time step for when that hardware exists — not this script.
 
-**Evidence:** `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.png`
+**Evidence:** `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.txt` (screenshot substituted with a captured terminal transcript — no second machine was reachable this session, same substitution precedent as P0-03)
 
 ---
 
