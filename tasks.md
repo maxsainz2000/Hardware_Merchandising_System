@@ -884,21 +884,25 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-13 · Concurrency proof
+### ✅ P1-13 · Concurrency proof
 
-**Spec:** §11 · **Closes:** G-11
+**Spec:** §11 · **Closes:** G-11 · **Decides:** ADR-006
 
 **Do:** Integration test firing two, then ten, simultaneous decrements against a product with exactly **one** unit of stock.
 
 **Done when:**
 
-- [ ] Exactly one request succeeds
-- [ ] All others receive a controlled conflict/insufficient response
-- [ ] Final balance is `0` — never negative
-- [ ] Movement count is exactly 1
-- [ ] Raw result distribution recorded, not just a pass/fail
+- [x] Exactly one request succeeds
+- [x] All others receive a controlled conflict/insufficient response
+- [x] Final balance is `0` — never negative
+- [x] Movement count is exactly 1
+- [x] Raw result distribution recorded, not just a pass/fail
 
 **Evidence:** `p1-13-concurrency.txt`
+
+> New integration test `Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound` in `StockDecrementTests.vb`, against a dedicated `p1_13_fixture_sku` product (Id 3) so it can't disturb the `p1_11`/`p1_12` fixture's baseline. Each round resets the balance to `1.000`, fires N calls to `StockService.DecrementAsync` without awaiting between them so all N are genuinely underway before any is awaited, and wraps each attempt in its own try/catch so an unexpected exception is captured as data rather than aborting the round. Ran seven times total (one N=2/N=10 pair each) against the real pinned MariaDB — every round produced exactly one `Success` and the rest `InsufficientStock`, zero exceptions, cross-checked directly against `StockMovements`/`StockBalances` afterwards (14 rows total across 14 rounds, always exactly one per round, final balance `0.000`). No production code changed — this proves `StockRepository.TryDecrementAsync`'s existing conditional `UPDATE` (ADR-006), serialized by InnoDB row-locking, not by `READ COMMITTED`. Full suite: 31\31 integration tests green (1 new), 8\8 unit tests, guardrails pass, 0 warnings. See `evidence/phase-1/p1-13-concurrency.txt`.
+>
+> **ADR-006 moves PENDING → ACCEPTED** — this was the last open question it was waiting on (P1-11: mechanism + happy/insufficient/scale paths; P1-12: rollback; this card: the concurrency claim itself).
 
 ---
 

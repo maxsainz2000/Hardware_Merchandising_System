@@ -308,7 +308,8 @@ The failure mode is not a wrong-looking number. It is **drift**: the API compute
 
 ## ADR-006 · Concurrency control for stock changes
 
-**Status:** PENDING — prove at tasks P1-11 through P1-13
+**Status:** ACCEPTED
+**Date:** 2026-08-19
 **Decides:** how the system guarantees stock can never go negative under concurrent sales. Closes gaps G-11 and G-12.
 
 **Decision.** Server-side **conditional update** plus affected-row verification, inside an explicit transaction at `READ COMMITTED`:
@@ -325,11 +326,13 @@ UPDATE StockBalances
 
 **Reasoning.** Read-then-write has a race window no isolation level closes cheaply. The conditional update pushes the check into the same atomic statement as the mutation, so the loser of a race simply affects zero rows and is rolled back with a controlled response. Isolation level alone is explicitly **not** relied upon.
 
-**Evidence required:** `p1-13-concurrency.txt` showing ten simultaneous requests against one unit of stock produce exactly one success and a final balance of zero.
+**Evidence:** `evidence/phase-1/p1-13-concurrency.txt` — two, then ten, simultaneous requests against one unit of stock, run seven times, always produce exactly one success and a final balance of zero.
 
 > **P1-11 progress (2026-08-19) — mechanism implemented and proven; status stays PENDING.** The exact SQL above is live in `StockRepository.TryDecrementAsync` (`src/Merchandising.Infrastructure/Data/StockRepository.vb`), called from `StockService.DecrementAsync` inside one transaction alongside the `StockMovements` and `AuditLogs` inserts (P1-11: `POST /api/v1/inventory/stock/decrement`). Proven so far: the happy path produces exactly one movement/audit row with a correct balance; an insufficient-stock request is rejected with a controlled 409 and writes zero rows; both are backed by an integration test against the real database *and* a live HTTP capture cross-checked directly against the schema (`evidence/phase-1/p1-11-happy-path.txt`, `p1-11-insufficient-stock.txt`). **What this does not yet prove:** the actual concurrency claim this ADR exists for — that two or more simultaneous requests against the same low-stock row cannot both succeed. `READ COMMITTED` is set per-connection (ADR-003.2/P1-05) but, per the Reasoning above, is not what this design relies on; InnoDB row-locking on the conditional `UPDATE` is what should serialize concurrent attempts, and that claim is untested until P1-13 fires real concurrent requests at it. Status stays **PENDING** until then — P1-12 (rollback) and P1-13 (concurrency) are still open.
 >
 > **P1-12 progress (2026-08-19) — rollback proven; status stays PENDING.** A test-only fault injection point was added to `StockService.DecrementAsync`: an exception thrown after both the `StockMovements` and `AuditLogs` inserts, still inside the open transaction, immediately before `CommitAsync`. It is deliberately uncaught — it propagates out through the enclosing `Using connection`, whose `Dispose()` severs the connection and lets MariaDB roll back whatever was still open, per the Decision above ("else roll back"). Proven: balance, movement row, and audit row are all identically absent before and after the forced failure (`evidence/phase-1/p1-12-rollback.txt`), and the same fault is structurally inert in a Release build — proven empirically by running the identical call under both configurations, not just by inspection. **What this still does not prove:** the concurrency claim. Status stays **PENDING** until P1-13.
+>
+> **P1-13 (2026-08-19) — concurrency claim proven; status moves to ACCEPTED.** `Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound` (`StockDecrementTests.vb`) fires two, then ten, simultaneous `DecrementAsync` calls against a dedicated fixture product holding exactly one unit of stock — each call opens its own connection and transaction, so this is genuine concurrent contention at the database, not a simulation. Run seven times against the real pinned MariaDB instance (fourteen rounds total): every round produced exactly one `Success` and the rest `InsufficientStock`, zero unexpected exceptions, final balance `0.000`, exactly one `StockMovements` row per round — cross-checked directly against the database, not just through the test's own assertions (`evidence/phase-1/p1-13-concurrency.txt`). This is what the Reasoning above predicted: InnoDB row-locking on the conditional `UPDATE` serializes the race; `READ COMMITTED` is set (ADR-003.2/P1-05) but is not what the guarantee depends on. All three legs this ADR needed — mechanism (P1-11), rollback (P1-12), concurrency (P1-13) — are now proven against the real database. **Status: ACCEPTED.**
 
 ---
 

@@ -1,0 +1,129 @@
+P1-13  CONCURRENCY PROOF
+Done-when boxes: 1 (exactly one request succeeds), 2 (all others receive a
+controlled conflict/insufficient response), 3 (final balance is 0 - never
+negative), 4 (movement count is exactly 1), 5 (raw result distribution
+recorded, not just a pass/fail).
+
+Server    : 10.4.32-MariaDB
+Fixture   : Sku=p1_13_fixture_sku, Id=3 - a separate permanent fixture from
+            p1_11_fixture_sku, created idempotently by
+            EnsureConcurrencyFixtureProductAsync, so this proof cannot
+            disturb the other tests' baseline balance and vice versa.
+Mechanism : StockRepository.TryDecrementAsync's conditional UPDATE (ADR-006)
+            carries `WHERE ProductId = @productId AND Quantity >= @qty` in
+            the same statement as the mutation. Each simultaneous call opens
+            its OWN connection and transaction (ConnectionFactory.
+            CreateOpenConnectionAsync is called fresh per DecrementAsync
+            invocation), so this is genuine concurrent contention at the
+            database, serialized by InnoDB row-locking on that UPDATE - not
+            by the READ COMMITTED isolation level, which ADR-006's own
+            Reasoning says is explicitly not what this design relies on.
+
+Test: StockDecrementTests.Decrement_TwoThenTenSimultaneousRequests_
+ExactlyOneSucceedsEachRound (src/tests/Merchandising.Tests.Integration/
+StockDecrementTests.vb). Balance is reset to exactly 1.000 before each
+round; N calls are fired without awaiting between them so all N are
+underway before any is awaited; each attempt is wrapped in its own
+try/catch so one unexpected exception cannot hide the outcome of the other
+N-1 attempts.
+
+===============================================================================
+PART A - the test alone, detailed output, real MariaDB
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~Decrement_TwoThenTenSimultaneousRequests" --logger "console;verbosity=detailed"
+
+Test run for ...Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+  Passed Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound [466 ms]
+  Standard Output Messages:
+ P1-13 x2 raw distribution -> InsufficientStock: no response body | Success: quantityBefore=1.000, quantityAfter=0.000
+ P1-13 x2 summary -> Success:1 InsufficientStock:1 Exception:0
+ P1-13 x10 raw distribution -> Success: quantityBefore=1.000, quantityAfter=0.000 | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body
+ P1-13 x10 summary -> Success:1 InsufficientStock:9 Exception:0
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+
+  [PASS] box 5 - the full per-attempt outcome list is printed for both rounds,
+  not just the pass/fail the test framework reports.
+  [PASS] box 1 - exactly one Success per round (x2: 1 of 2; x10: 1 of 10).
+  [PASS] box 2 - every other attempt returned InsufficientStock, the same
+  controlled outcome P1-11's insufficient-stock test uses (CLAUDE.md section
+  5 / spec section 11: "a controlled insufficient-stock or concurrency
+  response" - this system does not distinguish the two cases, deliberately,
+  per StockRepository.TryDecrementAsync's own doc comment). Zero exceptions
+  in either round.
+
+===============================================================================
+PART B - repeatability, not a one-off lucky race
+===============================================================================
+
+The same test (both rounds, x2 then x10) was run seven times in total across
+this evidence capture, all real runs against the pinned MariaDB instance:
+
+$ for i in 1..7; do dotnet test ... --filter "FullyQualifiedName~Decrement_TwoThenTenSimultaneousRequests"; done
+
+Run 1 (detailed): Success:1 InsufficientStock:1 Exception:0 (x2); Success:1 InsufficientStock:9 Exception:0 (x10)
+Run 2:  Passed! - Failed: 0, Passed: 1, Total: 1
+Run 3:  Passed! - Failed: 0, Passed: 1, Total: 1
+Run 4:  Passed! - Failed: 0, Passed: 1, Total: 1
+Run 5:  Passed! - Failed: 0, Passed: 1, Total: 1
+Run 6:  Passed! - Failed: 0, Passed: 1, Total: 1
+Run 7 (detailed, captured above in Part A): Success:1 InsufficientStock:1/9 Exception:0
+
+All seven passed. Exactly one winner every round, every run - never zero,
+never more than one.
+
+===============================================================================
+PART C - direct database cross-check (root, read-only) after all seven runs
+===============================================================================
+
+$ mysql -u root -e "SELECT ProductId, Quantity FROM merchandising.stockbalances WHERE ProductId=3;"
+ProductId  Quantity
+3          0.000
+
+  [PASS] box 3 - final balance is exactly 0.000, never negative, after
+  fourteen rounds (7 runs x 2 rounds) of concurrent contention.
+
+$ mysql -u root -e "SELECT Id, Delta, QuantityBefore, QuantityAfter, Reason, CorrelationId FROM merchandising.stockmovements WHERE ProductId=3 ORDER BY Id;"
+Id  Delta    QuantityBefore  QuantityAfter  Reason                        CorrelationId
+18  -1.000   1.000           0.000          P1-13 concurrency proof x2    af7eab7a-5582-470b-a127-b7b5718b38cc
+19  -1.000   1.000           0.000          P1-13 concurrency proof x10   8f368566-142e-4539-9633-5e5c7b5983b8
+20  -1.000   1.000           0.000          P1-13 concurrency proof x2    fb1a3e6a-4349-4511-a4df-124fca8051f6
+21  -1.000   1.000           0.000          P1-13 concurrency proof x10   6a53e72a-5325-4139-9463-98964e45109d
+22  -1.000   1.000           0.000          P1-13 concurrency proof x2    be022d9d-aea8-49fa-bf62-c4e55607685b
+23  -1.000   1.000           0.000          P1-13 concurrency proof x10   8aef2db1-7edf-4cd0-b718-c3dc85b3d04f
+24  -1.000   1.000           0.000          P1-13 concurrency proof x2    0fba3b5c-3230-4677-9546-a368a16b3b8b
+25  -1.000   1.000           0.000          P1-13 concurrency proof x10   1470c054-3dd8-4800-bf5a-b6c711bd86c0
+26  -1.000   1.000           0.000          P1-13 concurrency proof x2    91d2e101-b398-400c-b225-4dc71a43346a
+27  -1.000   1.000           0.000          P1-13 concurrency proof x10   4a408c9f-db21-49c2-b17f-fd71c809505f
+31  -1.000   1.000           0.000          P1-13 concurrency proof x2    b50cc007-2de4-4471-8a74-4bf44463a21b
+32  -1.000   1.000           0.000          P1-13 concurrency proof x10   cf7bad59-fe61-489a-9a37-87208e3023cb
+33  -1.000   1.000           0.000          P1-13 concurrency proof x2    feecf761-917c-45ad-8540-35f585740953
+34  -1.000   1.000           0.000          P1-13 concurrency proof x10   9a1c9fa7-afa0-4f78-99f4-f31517de79d4
+
+  [PASS] box 4 - exactly 14 rows total across 14 rounds (7 runs x 2 rounds
+  each) - exactly one row per round, every round, cross-checked directly
+  against the per-round assertion inside the test itself (which counts
+  movements scoped to that round's own correlation Ids only, so this total
+  is corroborating evidence, not the test's own mechanism). Delta is always
+  -1.000, QuantityBefore/QuantityAfter always 1.000 -> 0.000 - no round ever
+  produced a second movement or a negative balance.
+
+===============================================================================
+SUMMARY
+===============================================================================
+Box 1 (exactly one request succeeds): PASS - every round, every run.
+Box 2 (all others receive a controlled conflict/insufficient response): PASS -
+  zero unexpected exceptions across 14 rounds; every non-winner is
+  InsufficientStock.
+Box 3 (final balance is 0, never negative): PASS - Part C.
+Box 4 (movement count is exactly 1): PASS - per-round assertion inside the
+  test, corroborated by the direct database count in Part C.
+Box 5 (raw result distribution recorded): PASS - Part A's Standard Output.
+
+ADR-006 moves PENDING -> ACCEPTED on this evidence: this was the last open
+question it was waiting on (P1-11 proved the mechanism and the
+happy/insufficient/scale paths; P1-12 proved rollback; this closes the
+concurrency claim itself).

@@ -37,6 +37,12 @@ Public Class StockDecrementTests
 
     Private Const BaselineQuantity As Decimal = 100.000D
 
+    ' P1-13: a separate fixture product, not the p1_11/p1_12 one above - the
+    ' concurrency proof needs a balance of exactly one unit, reset between
+    ' rounds, and must not disturb BaselineQuantity for the other tests in
+    ' this class.
+    Private Const ConcurrencyFixtureSku As String = "p1_13_fixture_sku"
+
     Private _apiFactory As ConnectionFactory
     Private _stockService As StockService
     Private _productId As Integer
@@ -230,6 +236,183 @@ Public Class StockDecrementTests
         Assert.AreEqual(balanceBefore, balanceAfter, "A rolled-back decrement must leave the balance untouched.")
         Assert.AreEqual(0L, movementCountAfter, "A rolled-back decrement must leave zero StockMovements rows.")
         Assert.AreEqual(0L, auditCountAfter, "A rolled-back decrement must leave zero AuditLogs rows.")
+
+    End Function
+
+    ''' <summary>
+    ''' P1-13/ADR-006: fires N concurrent DecrementAsync calls against a
+    ''' product holding exactly one unit of stock, twice - once with N=2,
+    ''' once with N=10, resetting the balance to 1.000 between rounds.
+    ''' StockRepository.TryDecrementAsync's conditional UPDATE carries the
+    ''' sufficiency check inside the same statement as the mutation, so this
+    ''' is InnoDB row-locking on that UPDATE doing the serializing, not
+    ''' READ COMMITTED (see ADR-006's Reasoning - isolation level alone is
+    ''' explicitly not relied upon). Each attempt is caught individually so
+    ''' one unexpected exception cannot hide the outcome of the other N-1
+    ''' attempts - "raw result distribution recorded" needs all of them.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound() As Task
+
+        Dim concurrencyProductId As Integer = Await EnsureConcurrencyFixtureProductAsync()
+
+        Await RunConcurrencyRoundAsync(concurrencyProductId, requestCount:=2)
+        Await RunConcurrencyRoundAsync(concurrencyProductId, requestCount:=10)
+
+    End Function
+
+    Private Async Function RunConcurrencyRoundAsync(productId As Integer, requestCount As Integer) As Task
+
+        Await ResetStockBalanceAsync(productId, 1.000D)
+
+        Dim correlationIds(requestCount - 1) As String
+        For i = 0 To requestCount - 1
+            correlationIds(i) = Guid.NewGuid().ToString()
+        Next
+
+        ' None of these are awaited individually, so all requestCount calls
+        ' are underway - each on its own connection and transaction, per
+        ' ConnectionFactory - before this method awaits any of them.
+        Dim tasks(requestCount - 1) As Task(Of (Kind As String, Detail As String))
+        For i = 0 To requestCount - 1
+            tasks(i) = AttemptDecrementAsync(productId, correlationIds(i), requestCount)
+        Next
+
+        Dim results = Await Task.WhenAll(tasks)
+
+        Dim successCount As Integer = 0
+        Dim insufficientCount As Integer = 0
+        Dim exceptionCount As Integer = 0
+        Dim distribution As New System.Text.StringBuilder()
+
+        For i = 0 To requestCount - 1
+            Select Case results(i).Kind
+                Case NameOf(StockDecrementOutcomeKind.Success)
+                    successCount += 1
+                Case NameOf(StockDecrementOutcomeKind.InsufficientStock)
+                    insufficientCount += 1
+                Case Else
+                    exceptionCount += 1
+            End Select
+            If i > 0 Then distribution.Append(" | ")
+            distribution.Append($"{results(i).Kind}: {results(i).Detail}")
+        Next
+
+        Console.WriteLine($"P1-13 x{requestCount} raw distribution -> {distribution}")
+        Console.WriteLine($"P1-13 x{requestCount} summary -> Success:{successCount} InsufficientStock:{insufficientCount} Exception:{exceptionCount}")
+
+        Assert.AreEqual(1, successCount, $"Exactly one of {requestCount} simultaneous requests must succeed.")
+        Assert.AreEqual(0, exceptionCount, "No attempt may fail with an unexpected exception - only Success or InsufficientStock are controlled outcomes.")
+        Assert.AreEqual(requestCount - 1, insufficientCount, "Every non-winning request must receive the controlled insufficient-stock/concurrency response.")
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Dim balanceAfter As Decimal = Await ReadBalanceAsync(connection, productId)
+            Assert.AreEqual(0.000D, balanceAfter, "Final balance must be exactly zero - never negative.")
+
+            Dim movementCount As Long = Await CountMovementRowsForAnyCorrelationIdAsync(connection, correlationIds)
+            Assert.AreEqual(1L, movementCount, $"Exactly one StockMovements row may exist across all {requestCount} attempts this round.")
+
+            Dim auditCount As Long = Await CountAuditRowsForAnyCorrelationIdAsync(connection, correlationIds, "StockDecremented")
+            Assert.AreEqual(1L, auditCount, $"Exactly one AuditLogs row may exist across all {requestCount} attempts this round.")
+
+        End Using
+
+    End Function
+
+    Private Async Function AttemptDecrementAsync(productId As Integer, correlationId As String, requestCount As Integer) As Task(Of (Kind As String, Detail As String))
+
+        Try
+            Dim outcome As StockDecrementOutcome =
+                Await _stockService.DecrementAsync(productId, 1.000D, $"P1-13 concurrency proof x{requestCount}", _actorUserId, correlationId)
+
+            Dim detail As String =
+                If(outcome.Response IsNot Nothing,
+                   $"quantityBefore={outcome.Response.QuantityBefore:0.000}, quantityAfter={outcome.Response.QuantityAfter:0.000}",
+                   "no response body")
+
+            Return (Kind:=outcome.Kind.ToString(), Detail:=detail)
+
+        Catch ex As Exception
+            Return (Kind:="Exception", Detail:=$"{ex.GetType().Name}: {ex.Message}")
+        End Try
+
+    End Function
+
+    Private Async Function EnsureConcurrencyFixtureProductAsync() As Task(Of Integer)
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Using selectCommand As MySqlCommand = connection.CreateCommand()
+                selectCommand.CommandText = "SELECT Id FROM Products WHERE Sku = @sku;"
+                selectCommand.Parameters.AddWithValue("@sku", ConcurrencyFixtureSku)
+                Dim existing As Object = Await selectCommand.ExecuteScalarAsync()
+                If existing IsNot Nothing Then
+                    Return CInt(existing)
+                End If
+            End Using
+
+            Dim productId As Integer
+
+            Using insertCommand As MySqlCommand = connection.CreateCommand()
+                insertCommand.CommandText =
+                    "INSERT INTO Products (Sku, Barcode, Name, Price, Cost, IsActive, CreatedAtUtc, UpdatedAtUtc) " &
+                    "VALUES (@sku, NULL, 'P1-13 Fixture Product', 1.0000, 0.5000, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6));"
+                insertCommand.Parameters.AddWithValue("@sku", ConcurrencyFixtureSku)
+                Await insertCommand.ExecuteNonQueryAsync()
+                productId = CInt(insertCommand.LastInsertedId)
+            End Using
+
+            Using balanceCommand As MySqlCommand = connection.CreateCommand()
+                balanceCommand.CommandText =
+                    "INSERT INTO StockBalances (ProductId, Quantity, RowVersion, UpdatedAtUtc) " &
+                    "VALUES (@productId, @quantity, 0, UTC_TIMESTAMP(6));"
+                balanceCommand.Parameters.AddWithValue("@productId", productId)
+                balanceCommand.Parameters.AddWithValue("@quantity", 1.000D)
+                Await balanceCommand.ExecuteNonQueryAsync()
+            End Using
+
+            Return productId
+
+        End Using
+
+    End Function
+
+    Private Shared Async Function CountMovementRowsForAnyCorrelationIdAsync(connection As MySqlConnection, correlationIds As String()) As Task(Of Long)
+
+        Using command As MySqlCommand = connection.CreateCommand()
+
+            Dim placeholders(correlationIds.Length - 1) As String
+            For i = 0 To correlationIds.Length - 1
+                Dim paramName As String = $"@correlationId{i}"
+                placeholders(i) = paramName
+                command.Parameters.AddWithValue(paramName, correlationIds(i))
+            Next
+
+            command.CommandText = $"SELECT COUNT(*) FROM StockMovements WHERE CorrelationId IN ({String.Join(",", placeholders)});"
+            Return CLng(Await command.ExecuteScalarAsync())
+
+        End Using
+
+    End Function
+
+    Private Shared Async Function CountAuditRowsForAnyCorrelationIdAsync(connection As MySqlConnection, correlationIds As String(), action As String) As Task(Of Long)
+
+        Using command As MySqlCommand = connection.CreateCommand()
+
+            Dim placeholders(correlationIds.Length - 1) As String
+            For i = 0 To correlationIds.Length - 1
+                Dim paramName As String = $"@correlationId{i}"
+                placeholders(i) = paramName
+                command.Parameters.AddWithValue(paramName, correlationIds(i))
+            Next
+            command.Parameters.AddWithValue("@action", action)
+
+            command.CommandText =
+                $"SELECT COUNT(*) FROM AuditLogs WHERE Action = @action AND CorrelationId IN ({String.Join(",", placeholders)});"
+            Return CLng(Await command.ExecuteScalarAsync())
+
+        End Using
 
     End Function
 
