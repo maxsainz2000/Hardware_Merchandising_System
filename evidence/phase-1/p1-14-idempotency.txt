@@ -1,0 +1,171 @@
+P1-14: Idempotency proof — evidence
+Spec §11 · Closes G-13 · Decides ADR-007 (PENDING -> ACCEPTED by this evidence)
+
+=============================================================================
+DESIGN, AS IMPLEMENTED
+=============================================================================
+
+ADR-007's decision: IdempotencyKeys table, unique on (Scope, KeyValue).
+Insert-first strategy - the command claims its key before doing work, and
+the committed response payload is stored and replayed verbatim on repeat.
+
+The table and merch_api's INSERT/UPDATE/DELETE grant on it already existed
+(migration 0001_foundation.sql, grants 0002) - this card is application code
+against StockService.DecrementAsync, the only transactional command that
+exists in this phase (Phase 1 scope discipline).
+
+Mechanism (Merchandising.Infrastructure.Data.IdempotencyStore,
+Merchandising.Api.Inventory.StockService):
+
+  1. TryClaimAsync INSERTs (Scope='Inventory.StockDecrement', KeyValue=key)
+     as the FIRST statement inside the same transaction as the balance
+     decrement / movement / audit writes.
+  2. Claim succeeds -> proceed exactly as P1-11/12/13 already do. Before
+     commit, CompleteAsync UPDATEs that same row's ResponsePayload
+     (reflection-based System.Text.Json.JsonSerializer - source generation
+     is C#-only) and CompletedAtUtc, in the same transaction. Claim,
+     movement, audit row, and stored response commit together or not at
+     all.
+  3. Claim fails with a duplicate-key error -> another transaction already
+     holds this key. MariaDB locks the unique-index entry at INSERT time,
+     before commit, so a genuinely concurrent second INSERT BLOCKS on that
+     lock and only resolves once the first transaction commits or rolls
+     back - this is the same row-locking mechanism ADR-006/P1-13 already
+     proved for StockRepository.TryDecrementAsync's conditional UPDATE, not
+     a fresh assumption. By the time the duplicate-key error is observed,
+     the winner has committed (a rolled-back winner releases the lock and
+     the row never existed to collide with). Roll back the local no-op
+     transaction, read the winner's stored payload back (visible under
+     READ COMMITTED, ADR-006), and replay it verbatim.
+  4. Because the claim lives in the same transaction as everything else, an
+     InsufficientStock rollback also rolls back the claim - a key from a
+     failed attempt is free for a legitimate retry with no separate
+     expiry/cleanup code.
+
+=============================================================================
+DONE-WHEN BOXES, MAPPED TO TESTS (StockDecrementTests.vb)
+=============================================================================
+
+Box 1 "The same key sent five times produces one movement and five
+identical responses":
+  Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses
+  - five sequential calls, one idempotencyKey, each with its own fresh
+    correlationId (as five separate HTTP retries would send) - asserts all
+    five responses carry the ORIGINAL correlationId (proving replay, not
+    recomputation), one StockMovements row, one IdempotencyKeys row, and
+    the balance moved exactly once.
+
+Box 2 "A different key produces a second movement":
+  Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements
+  - two distinct keys -> two distinct movement Ids, balance decremented
+    twice.
+
+Box 3 "Concurrent requests with the same key produce one movement":
+  Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement
+  - 10 calls fired without awaiting any individually (same pattern P1-13
+    used for real concurrency), all sharing one idempotencyKey. Every one
+    of the 10 succeeds (a losing claim replays, it does not error) and all
+    10 report the same movement Id. Raw distribution captured below, not
+    just pass/fail.
+
+Box 4 "A key from a failed command does not block a legitimate retry":
+  Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry
+  - same key used first on an over-large (InsufficientStock) request, then
+    reused on a valid one. The retry succeeds, is a genuine new command
+    (its own correlationId, not a replay of the failed attempt), and
+    exactly one IdempotencyKeys row exists afterwards for the key - the
+    failed attempt's claim did not linger.
+
+=============================================================================
+TEST RUN — StockDecrementTests, verbose, real pinned MariaDB
+=============================================================================
+
+  Passed Decrement_Success_CreatesOneMovementOneAuditRowAndCorrectBalance [807 ms]
+  Passed Decrement_Success_RecordsCorrelationIdOnMovementAndAudit [26 ms]
+  Passed Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows [60 ms]
+  Passed Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten [73 ms]
+  Passed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [66 ms]
+  Standard Output Messages:
+ P1-12 before/after - balance: 100.000 -> 100.000; movement rows: 0 -> 0; audit rows: 0 -> 0
+
+  Passed Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound [129 ms]
+  Standard Output Messages:
+ P1-13 x2 raw distribution -> Success: quantityBefore=1.000, quantityAfter=0.000 | InsufficientStock: no response body
+ P1-13 x2 summary -> Success:1 InsufficientStock:1 Exception:0
+ P1-13 x10 raw distribution -> InsufficientStock: no response body | InsufficientStock: no response body | Success: quantityBefore=1.000, quantityAfter=0.000 | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body | InsufficientStock: no response body
+ P1-13 x10 summary -> Success:1 InsufficientStock:9 Exception:0
+
+  Passed Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses [80 ms]
+  Passed Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements [46 ms]
+  Passed Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement [31 ms]
+  Standard Output Messages:
+ P1-14 x10 same-key raw distribution -> Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73 | Success: movementId=73
+
+  Passed Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry [61 ms]
+
+Test Run Successful.
+Total tests: 10
+     Passed: 10
+ Total time: 3.9182 Seconds
+
+Note on the box-3 evidence: all 10 concurrent attempts report movementId=73
+- the same movement, confirming exactly one of the 10 actually performed the
+decrement and the other 9 replayed its stored response rather than each
+attempting (and being individually rejected for) their own decrement. This
+is the qualitative difference from P1-13's distribution immediately above
+it in this same run: P1-13's 9 losers are InsufficientStock (an error
+outcome, by design - two DIFFERENT commands racing for the same unit of
+stock); P1-14's 9 losers are Success (not an error - the SAME command,
+replayed). Placing both distributions side by side in one evidence file is
+deliberate: it is the clearest way to show the two mechanisms are related
+(same row-locking primitive) but produce opposite-looking outcomes on
+purpose.
+
+=============================================================================
+FULL SUITE — pwsh ./scripts/run-tests.ps1
+=============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:     8, Skipped:     0, Total:     8, Duration: 120 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:    35, Skipped:     0, Total:    35, Duration: 6 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+(35 integration tests = 31 pre-existing (P1-01 through P1-13) + 4 new P1-14
+tests. No regressions - every existing StockDecrementTests call site was
+updated to pass its own fresh idempotencyKey, since DecrementAsync's
+signature grew a required parameter.)
+
+=============================================================================
+FILES CHANGED
+=============================================================================
+
+- src/Merchandising.Contracts/Inventory/StockDecrementRequest.vb
+    + IdempotencyKey property (required, JSON "idempotencyKey")
+- src/Merchandising.Infrastructure/Data/IdempotencyStore.vb (new)
+    TryClaimAsync / CompleteAsync / FindCompletedResponsePayloadAsync
+- src/Merchandising.Api/Inventory/StockService.vb
+    DecrementAsync: claim-first, replay-on-duplicate, complete-before-commit
+- src/Merchandising.Api/Controllers/InventoryController.vb
+    idempotencyKey required + well-formed-GUID validation (400, mirrors
+    CorrelationIdMiddleware's own check and its ERROR-1406 reasoning)
+- src/tests/Merchandising.Tests.Integration/StockDecrementTests.vb
+    4 new tests (one per Done-when box) + CountIdempotencyKeyRowsAsync
+    helper + every pre-existing DecrementAsync call site updated
+- docs/adr.md
+    ADR-007 PENDING -> ACCEPTED

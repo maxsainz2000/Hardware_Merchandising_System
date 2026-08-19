@@ -18,9 +18,11 @@
 ' asserting, never rows - the same shape AuthenticationTests uses for its
 ' fixture accounts.
 
+Imports System.Collections.Generic
 Imports System.IO
 Imports System.Threading.Tasks
 Imports Merchandising.Api.Inventory
+Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Users
 Imports Microsoft.VisualStudio.TestTools.UnitTesting
@@ -42,6 +44,11 @@ Public Class StockDecrementTests
     ' rounds, and must not disturb BaselineQuantity for the other tests in
     ' this class.
     Private Const ConcurrencyFixtureSku As String = "p1_13_fixture_sku"
+
+    ' P1-14: must match StockService's own private IdempotencyScope Const -
+    ' duplicated here because the constant is an implementation detail of
+    ' the class under test, not part of its public surface.
+    Private Const IdempotencyScope As String = "Inventory.StockDecrement"
 
     Private _apiFactory As ConnectionFactory
     Private _stockService As StockService
@@ -68,7 +75,7 @@ Public Class StockDecrementTests
         Dim decrementQuantity As Decimal = 12.500D
 
         Dim outcome As StockDecrementOutcome =
-            Await _stockService.DecrementAsync(_productId, decrementQuantity, "P1-11 happy path", _actorUserId, correlationId)
+            Await _stockService.DecrementAsync(_productId, decrementQuantity, "P1-11 happy path", _actorUserId, correlationId, Guid.NewGuid().ToString())
 
         Assert.AreEqual(StockDecrementOutcomeKind.Success, outcome.Kind)
         Assert.IsNotNull(outcome.Response)
@@ -98,7 +105,7 @@ Public Class StockDecrementTests
         Dim correlationId As String = Guid.NewGuid().ToString()
 
         Dim outcome As StockDecrementOutcome =
-            Await _stockService.DecrementAsync(_productId, 1.000D, "P1-11 correlation check", _actorUserId, correlationId)
+            Await _stockService.DecrementAsync(_productId, 1.000D, "P1-11 correlation check", _actorUserId, correlationId, Guid.NewGuid().ToString())
 
         Assert.AreEqual(StockDecrementOutcomeKind.Success, outcome.Kind)
 
@@ -136,7 +143,7 @@ Public Class StockDecrementTests
         Dim tooMuch As Decimal = BaselineQuantity + 1.000D
 
         Dim outcome As StockDecrementOutcome =
-            Await _stockService.DecrementAsync(_productId, tooMuch, "P1-11 insufficient stock", _actorUserId, correlationId)
+            Await _stockService.DecrementAsync(_productId, tooMuch, "P1-11 insufficient stock", _actorUserId, correlationId, Guid.NewGuid().ToString())
 
         Assert.AreEqual(StockDecrementOutcomeKind.InsufficientStock, outcome.Kind)
         Assert.IsNull(outcome.Response)
@@ -164,7 +171,7 @@ Public Class StockDecrementTests
         Dim overScaleQuantity As Decimal = 1.9999D ' 4 decimal places; StockBalances.Quantity is DECIMAL(19,3)
 
         Await Assert.ThrowsExactlyAsync(Of ArgumentException)(
-            Function() _stockService.DecrementAsync(_productId, overScaleQuantity, "P1-11 decimal scale", _actorUserId, correlationId))
+            Function() _stockService.DecrementAsync(_productId, overScaleQuantity, "P1-11 decimal scale", _actorUserId, correlationId, Guid.NewGuid().ToString()))
 
         Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
 
@@ -211,7 +218,7 @@ Public Class StockDecrementTests
 
         Await Assert.ThrowsExactlyAsync(Of InvalidOperationException)(
             Function() _stockService.DecrementAsync(
-                _productId, decrementQuantity, "P1-12 forced-failure rollback proof", _actorUserId, correlationId,
+                _productId, decrementQuantity, "P1-12 forced-failure rollback proof", _actorUserId, correlationId, Guid.NewGuid().ToString(),
                 testOnlyFaultAfterAuditInsert:=Sub()
                                                    faultInjected = True
                                                    Throw New InvalidOperationException("P1-12 forced failure: after audit insert, before commit.")
@@ -258,6 +265,163 @@ Public Class StockDecrementTests
 
         Await RunConcurrencyRoundAsync(concurrencyProductId, requestCount:=2)
         Await RunConcurrencyRoundAsync(concurrencyProductId, requestCount:=10)
+
+    End Function
+
+    ''' <summary>Done-when box 1: the same key sent five times produces one movement and five identical responses.</summary>
+    <TestMethod>
+    Public Async Function Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses() As Task
+
+        Dim idempotencyKey As String = Guid.NewGuid().ToString()
+        Dim decrementQuantity As Decimal = 3.000D
+        Dim responses As New List(Of StockDecrementResponse)
+
+        For attempt = 1 To 5
+            Dim outcome As StockDecrementOutcome =
+                Await _stockService.DecrementAsync(
+                    _productId, decrementQuantity, "P1-14 same key x5", _actorUserId, Guid.NewGuid().ToString(), idempotencyKey)
+
+            Assert.AreEqual(StockDecrementOutcomeKind.Success, outcome.Kind, $"Attempt {attempt} must succeed.")
+            responses.Add(outcome.Response)
+        Next
+
+        Dim first As StockDecrementResponse = responses(0)
+        For attempt = 1 To 4
+            Dim response As StockDecrementResponse = responses(attempt)
+            Assert.AreEqual(first.MovementId, response.MovementId, $"Attempt {attempt + 1}'s movement Id must match the original.")
+            Assert.AreEqual(first.ProductId, response.ProductId, $"Attempt {attempt + 1}'s product Id must match the original.")
+            Assert.AreEqual(first.QuantityBefore, response.QuantityBefore, $"Attempt {attempt + 1}'s quantityBefore must match the original.")
+            Assert.AreEqual(first.QuantityAfter, response.QuantityAfter, $"Attempt {attempt + 1}'s quantityAfter must match the original.")
+            Assert.AreEqual(first.CorrelationId, response.CorrelationId, $"Attempt {attempt + 1} must replay the ORIGINAL correlation Id, not recompute one.")
+        Next
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Dim balance As Decimal = Await ReadBalanceAsync(connection, _productId)
+            Assert.AreEqual(BaselineQuantity - decrementQuantity, balance, "Five replays of the same key must decrement the balance exactly once.")
+
+            Dim movementCount As Long = Await CountMovementRowsAsync(connection, first.CorrelationId)
+            Assert.AreEqual(1L, movementCount, "Exactly one StockMovements row may exist across all five attempts.")
+
+            Dim idempotencyRowCount As Long = Await CountIdempotencyKeyRowsAsync(connection, IdempotencyScope, idempotencyKey)
+            Assert.AreEqual(1L, idempotencyRowCount, "Exactly one IdempotencyKeys row may exist for this key.")
+
+        End Using
+
+    End Function
+
+    ''' <summary>Done-when box 2: a different key produces a second, independent movement.</summary>
+    <TestMethod>
+    Public Async Function Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements() As Task
+
+        Dim firstKey As String = Guid.NewGuid().ToString()
+        Dim secondKey As String = Guid.NewGuid().ToString()
+        Dim decrementQuantity As Decimal = 2.000D
+
+        Dim firstOutcome As StockDecrementOutcome =
+            Await _stockService.DecrementAsync(_productId, decrementQuantity, "P1-14 first key", _actorUserId, Guid.NewGuid().ToString(), firstKey)
+        Dim secondOutcome As StockDecrementOutcome =
+            Await _stockService.DecrementAsync(_productId, decrementQuantity, "P1-14 second key", _actorUserId, Guid.NewGuid().ToString(), secondKey)
+
+        Assert.AreEqual(StockDecrementOutcomeKind.Success, firstOutcome.Kind)
+        Assert.AreEqual(StockDecrementOutcomeKind.Success, secondOutcome.Kind)
+        Assert.AreNotEqual(firstOutcome.Response.MovementId, secondOutcome.Response.MovementId, "Two different keys must produce two different movements.")
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Dim balance As Decimal = Await ReadBalanceAsync(connection, _productId)
+            Assert.AreEqual(BaselineQuantity - decrementQuantity - decrementQuantity, balance, "Two different keys must both take effect.")
+
+        End Using
+
+    End Function
+
+    ''' <summary>Done-when box 3: concurrent requests with the same key produce one movement.</summary>
+    <TestMethod>
+    Public Async Function Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement() As Task
+
+        Const requestCount As Integer = 10
+        Dim idempotencyKey As String = Guid.NewGuid().ToString()
+        Dim decrementQuantity As Decimal = 1.000D
+
+        ' None of these are awaited individually - all requestCount calls are
+        ' underway, sharing one idempotencyKey, before this method awaits
+        ' any of them. Unlike P1-13, every one of these is expected to
+        ' SUCCEED: idempotency replay is not an error outcome, so the losers
+        ' of the IdempotencyKeys claim must still return the winner's
+        ' response rather than a conflict.
+        Dim tasks(requestCount - 1) As Task(Of StockDecrementOutcome)
+        For i = 0 To requestCount - 1
+            tasks(i) = _stockService.DecrementAsync(
+                _productId, decrementQuantity, "P1-14 concurrent same key", _actorUserId, Guid.NewGuid().ToString(), idempotencyKey)
+        Next
+
+        Dim outcomes = Await Task.WhenAll(tasks)
+
+        Dim distribution As New System.Text.StringBuilder()
+        For i = 0 To requestCount - 1
+            If i > 0 Then distribution.Append(" | ")
+            distribution.Append($"{outcomes(i).Kind}: movementId={If(outcomes(i).Response IsNot Nothing, outcomes(i).Response.MovementId.ToString(), "n/a")}")
+        Next
+        Console.WriteLine($"P1-14 x{requestCount} same-key raw distribution -> {distribution}")
+
+        For i = 0 To requestCount - 1
+            Assert.AreEqual(StockDecrementOutcomeKind.Success, outcomes(i).Kind, $"Request {i} must succeed - a losing claim replays, it does not fail.")
+        Next
+
+        Dim firstMovementId As Integer = outcomes(0).Response.MovementId
+        For i = 1 To requestCount - 1
+            Assert.AreEqual(firstMovementId, outcomes(i).Response.MovementId, $"Request {i} must report the same movement as request 0.")
+        Next
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Dim balance As Decimal = Await ReadBalanceAsync(connection, _productId)
+            Assert.AreEqual(BaselineQuantity - decrementQuantity, balance, $"{requestCount} concurrent requests sharing one key must decrement the balance exactly once.")
+
+            Dim movementCount As Long = Await CountMovementRowsAsync(connection, outcomes(0).Response.CorrelationId)
+            Assert.AreEqual(1L, movementCount, $"Exactly one StockMovements row may exist across all {requestCount} concurrent requests.")
+
+            Dim idempotencyRowCount As Long = Await CountIdempotencyKeyRowsAsync(connection, IdempotencyScope, idempotencyKey)
+            Assert.AreEqual(1L, idempotencyRowCount, "Exactly one IdempotencyKeys row may exist for this key.")
+
+        End Using
+
+    End Function
+
+    ''' <summary>Done-when box 4: a key from a failed command does not block a legitimate retry.</summary>
+    <TestMethod>
+    Public Async Function Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry() As Task
+
+        Dim idempotencyKey As String = Guid.NewGuid().ToString()
+        Dim tooMuch As Decimal = BaselineQuantity + 1.000D
+        Dim validQuantity As Decimal = 4.000D
+
+        Dim failedOutcome As StockDecrementOutcome =
+            Await _stockService.DecrementAsync(
+                _productId, tooMuch, "P1-14 failed attempt", _actorUserId, Guid.NewGuid().ToString(), idempotencyKey)
+        Assert.AreEqual(StockDecrementOutcomeKind.InsufficientStock, failedOutcome.Kind)
+
+        Dim retryCorrelationId As String = Guid.NewGuid().ToString()
+        Dim retryOutcome As StockDecrementOutcome =
+            Await _stockService.DecrementAsync(
+                _productId, validQuantity, "P1-14 legitimate retry", _actorUserId, retryCorrelationId, idempotencyKey)
+
+        Assert.AreEqual(StockDecrementOutcomeKind.Success, retryOutcome.Kind, "The same key must be free to reuse after a failed (rolled-back) attempt.")
+        Assert.AreEqual(retryCorrelationId, retryOutcome.Response.CorrelationId, "The retry must be a genuine new command, not a replay of the failed attempt.")
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+
+            Dim balance As Decimal = Await ReadBalanceAsync(connection, _productId)
+            Assert.AreEqual(BaselineQuantity - validQuantity, balance, "The retry must actually take effect.")
+
+            Dim movementCount As Long = Await CountMovementRowsAsync(connection, retryCorrelationId)
+            Assert.AreEqual(1L, movementCount, "The retry must create exactly one StockMovements row.")
+
+            Dim idempotencyRowCount As Long = Await CountIdempotencyKeyRowsAsync(connection, IdempotencyScope, idempotencyKey)
+            Assert.AreEqual(1L, idempotencyRowCount, "The failed attempt's rolled-back claim must not linger alongside the retry's successful one.")
+
+        End Using
 
     End Function
 
@@ -323,8 +487,14 @@ Public Class StockDecrementTests
     Private Async Function AttemptDecrementAsync(productId As Integer, correlationId As String, requestCount As Integer) As Task(Of (Kind As String, Detail As String))
 
         Try
+            ' A fresh idempotency key per attempt - P1-13 is proving
+            ' concurrency at the StockRepository/StockBalances level, not
+            ' idempotency dedup, so each attempt must be an independent
+            ' command (P1-14's own concurrency proof reuses one key on
+            ' purpose - see Decrement_ConcurrentRequestsSameIdempotencyKey_
+            ' ProduceExactlyOneMovement below).
             Dim outcome As StockDecrementOutcome =
-                Await _stockService.DecrementAsync(productId, 1.000D, $"P1-13 concurrency proof x{requestCount}", _actorUserId, correlationId)
+                Await _stockService.DecrementAsync(productId, 1.000D, $"P1-13 concurrency proof x{requestCount}", _actorUserId, correlationId, Guid.NewGuid().ToString())
 
             Dim detail As String =
                 If(outcome.Response IsNot Nothing,
@@ -513,6 +683,17 @@ Public Class StockDecrementTests
             command.CommandText = "SELECT COUNT(*) FROM AuditLogs WHERE CorrelationId = @correlationId AND Action = @action;"
             command.Parameters.AddWithValue("@correlationId", correlationId)
             command.Parameters.AddWithValue("@action", action)
+            Return CLng(Await command.ExecuteScalarAsync())
+        End Using
+
+    End Function
+
+    Private Shared Async Function CountIdempotencyKeyRowsAsync(connection As MySqlConnection, scope As String, keyValue As String) As Task(Of Long)
+
+        Using command As MySqlCommand = connection.CreateCommand()
+            command.CommandText = "SELECT COUNT(*) FROM IdempotencyKeys WHERE Scope = @scope AND KeyValue = @keyValue;"
+            command.Parameters.AddWithValue("@scope", scope)
+            command.Parameters.AddWithValue("@keyValue", keyValue)
             Return CLng(Await command.ExecuteScalarAsync())
         End Using
 

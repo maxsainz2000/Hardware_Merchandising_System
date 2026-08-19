@@ -338,10 +338,17 @@ UPDATE StockBalances
 
 ## ADR-007 · Idempotency for transactional commands
 
-**Status:** PENDING — prove at task P1-14
+**Status:** ACCEPTED
+**Date:** 2026-08-19
 **Decides:** how retries avoid creating duplicate sales, receipts, returns, or adjustments. Closes gap G-13.
 
 **Decision.** `IdempotencyKeys` table with a unique constraint on `(Scope, KeyValue)`. Insert-first strategy: the command claims its key before doing work, and the committed response payload is stored and replayed verbatim on repeat.
+
+**Proven at P1-14** against `StockService.DecrementAsync` — the only transactional command that exists in this phase. `IdempotencyStore.TryClaimAsync` inserts the claim as the first statement inside the same transaction as the balance/movement/audit writes; `CompleteAsync` writes the response payload onto that row, still inside the same transaction, immediately before commit. A losing claim means MariaDB's unique-index row lock made a concurrent `INSERT` block until the winning transaction resolved — the same locking mechanism ADR-006/P1-13 already proved, applied here rather than assumed fresh. The loser rolls back its own no-op transaction and reads the winner's committed payload back under `READ COMMITTED` to replay verbatim.
+
+**One friction point, resolved without changing the design.** Because the claim lives inside the same transaction as the rest of the command, an `InsufficientStock` rollback rolls the claim back too — a key from a failed attempt needs no separate expiry/cleanup path to be reusable on a legitimate retry (Done-when box 4). This fell out of the existing transaction boundary rather than requiring new code.
+
+**Evidence.** `evidence/phase-1/p1-14-idempotency.txt` — four new integration tests (`StockDecrementTests.vb`), one per Done-when box, including a 10-concurrent-request same-key round with the raw movement-Id distribution captured (all 10 report the same movement, none error). Full suite: 35/35 integration tests green (4 new), 8/8 unit tests, guardrails pass, 0 warnings.
 
 ---
 

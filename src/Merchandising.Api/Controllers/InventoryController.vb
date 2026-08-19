@@ -74,6 +74,19 @@ Namespace Controllers
                 fieldErrors("reason") = {$"Reason must be {MaxReasonLength} characters or fewer."}
             End If
 
+            ' P1-14 / ADR-007: required, and validated to the same canonical
+            ' 36-character GUID shape CorrelationIdMiddleware enforces on the
+            ' header - IdempotencyKeys.KeyValue is CHAR(36) NOT NULL under
+            ' STRICT_TRANS_TABLES, so an over-length value must be rejected
+            ' here rather than surfacing as an ERROR 1406 from the database.
+            If request Is Nothing OrElse String.IsNullOrWhiteSpace(request.IdempotencyKey) Then
+                fieldErrors("idempotencyKey") = {"Idempotency key is required."}
+            ElseIf Not IsWellFormedIdempotencyKey(request.IdempotencyKey) Then
+                fieldErrors("idempotencyKey") = {
+                    "Idempotency key must be a UUID in the canonical 36-character form, for example " &
+                    "3f2504e0-4f89-41d3-9a0c-0305e82c3301."}
+            End If
+
             If fieldErrors.Count > 0 Then
                 Return BadRequest(New ApiErrorResponse With {
                     .ErrorCode = "VALIDATION_FAILED",
@@ -87,7 +100,7 @@ Namespace Controllers
 
             Dim outcome As StockDecrementOutcome =
                 Await _stockService.DecrementAsync(
-                    request.ProductId, request.Quantity, request.Reason, actorUserId, correlationId)
+                    request.ProductId, request.Quantity, request.Reason, actorUserId, correlationId, request.IdempotencyKey)
 
             Select Case outcome.Kind
 
@@ -102,6 +115,19 @@ Namespace Controllers
                     })
 
             End Select
+
+        End Function
+
+        ''' <summary>
+        ''' True only for the canonical 36-character "D" format - the same
+        ''' check CorrelationIdMiddleware applies to X-Correlation-Id, for
+        ''' the same reason: Guid.TryParse alone also accepts "B"/"P"/"N"/"X"
+        ''' formats that would not round-trip to what the caller sent.
+        ''' </summary>
+        Private Shared Function IsWellFormedIdempotencyKey(value As String) As Boolean
+
+            Dim parsed As Guid = Guid.Empty
+            Return Guid.TryParseExact(value, "D", parsed) AndAlso parsed <> Guid.Empty
 
         End Function
 

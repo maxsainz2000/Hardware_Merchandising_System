@@ -9,6 +9,18 @@
 '      via AuditLogWriter's transaction parameter added by this task), then
 '      commit.
 '
+' P1-14 / ADR-007 adds a step 0 and a step 3.5, both through
+' Infrastructure.Data.IdempotencyStore:
+'   0. Claim idempotencyKey first, inside the same transaction. Losing the
+'      claim means another (committed) attempt already owns this key -
+'      replay its stored response verbatim rather than doing any work.
+'   3.5. On the winning path, write the response payload onto the claimed
+'      row before commit, so the claim and its replay-able response are
+'      always committed together.
+' Because the claim lives in the same transaction as everything else, the
+' insufficient-stock rollback above also rolls back the claim - a key from a
+' failed attempt is free to reuse on a retry without any separate cleanup.
+'
 ' Kept independent of ASP.NET Core's HTTP types, the same shape as
 ' Security.AuthService - directly testable against the real database.
 '
@@ -42,16 +54,17 @@
 ' no matter what a caller passes. p1-12-rollback.txt proves this
 ' empirically: the same throwing delegate that rolls the transaction back
 ' under a Debug build is passed under a Release build and is silently
-' ignored - commit succeeds, the delegate never fires. It fires after BOTH
-' the StockMovements and AuditLogs inserts, immediately before CommitAsync -
-' the superset of the card's "after the movement insert but before commit"
-' window, and the strongest point available: proving rollback here proves
-' it for every row this method ever writes, not just the first one. Left
-' un-set (Nothing) by every caller except the P1-12 test itself.
+' ignored - commit succeeds, the delegate never fires. It fires after the
+' StockMovements insert, the AuditLogs insert, AND (since P1-14) the
+' IdempotencyKeys completion write, immediately before CommitAsync - the
+' strongest point available: proving rollback here proves it for every row
+' this method ever writes, not just the first one. Left un-set (Nothing) by
+' every caller except the P1-12 test itself.
 
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Domain
 Imports Merchandising.Infrastructure.Data
+Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports MySqlConnector
@@ -59,6 +72,9 @@ Imports MySqlConnector
 Namespace Inventory
 
     Public NotInheritable Class StockService
+
+        ''' <summary>ADR-007's Scope column value for this command.</summary>
+        Private Const IdempotencyScope As String = "Inventory.StockDecrement"
 
         Private ReadOnly _connectionFactory As ConnectionFactory
 
@@ -84,6 +100,7 @@ Namespace Inventory
             reason As String,
             actorUserId As Integer,
             correlationId As String,
+            idempotencyKey As String,
             Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of StockDecrementOutcome)
 
@@ -99,11 +116,40 @@ Namespace Inventory
                 Dim transaction As MySqlTransaction =
                     Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P1-14 / ADR-007: claim the key before doing any work. See
+                ' IdempotencyStore's class header for why a losing claim
+                ' always has a completed row to replay.
+                Dim claim =
+                    Await IdempotencyStore.TryClaimAsync(
+                        connection, transaction, IdempotencyScope, idempotencyKey, cancellationToken).ConfigureAwait(False)
+
+                If Not claim.Claimed Then
+
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+
+                    Dim storedPayload As String =
+                        Await IdempotencyStore.FindCompletedResponsePayloadAsync(
+                            connection, IdempotencyScope, idempotencyKey, cancellationToken).ConfigureAwait(False)
+
+                    If storedPayload Is Nothing Then
+                        Throw New InvalidOperationException(
+                            $"IdempotencyKeys row for scope '{IdempotencyScope}', key '{idempotencyKey}' exists but has no " &
+                            "completed response. This should be unreachable - see IdempotencyStore's class header.")
+                    End If
+
+                    Return StockDecrementOutcome.Success(
+                        JsonSerializer.Deserialize(Of StockDecrementResponse)(storedPayload))
+
+                End If
+
                 Dim decrementResult =
                     Await StockRepository.TryDecrementAsync(
                         connection, transaction, productId, quantity, cancellationToken).ConfigureAwait(False)
 
                 If Not decrementResult.Succeeded Then
+                    ' Rolling back also undoes the claim above - a key from a
+                    ' failed attempt is free for a legitimate retry to reuse.
                     Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
                     Await transaction.DisposeAsync().ConfigureAwait(False)
                     Return StockDecrementOutcome.InsufficientStock()
@@ -121,23 +167,30 @@ Namespace Inventory
                     cancellationToken:=cancellationToken,
                     transaction:=transaction).ConfigureAwait(False)
 
+                Dim response As New StockDecrementResponse With {
+                    .ProductId = productId,
+                    .MovementId = movementId,
+                    .QuantityBefore = decrementResult.QuantityBefore,
+                    .QuantityAfter = decrementResult.QuantityAfter,
+                    .CorrelationId = correlationId
+                }
+
+                ' P1-14: the response a replay will return, committed on the
+                ' claimed row in this same transaction.
+                Await IdempotencyStore.CompleteAsync(
+                    connection, transaction, claim.Id, JsonSerializer.Serialize(response), cancellationToken).ConfigureAwait(False)
+
 #If DEBUG Then
-                ' P1-12: both inserts above are already sent to the server,
-                ' still uncommitted. Throwing here and letting it propagate
-                ' (see the class header) is the rollback proof.
+                ' P1-12: every insert/update above is already sent to the
+                ' server, still uncommitted. Throwing here and letting it
+                ' propagate (see the class header) is the rollback proof.
                 testOnlyFaultAfterAuditInsert?.Invoke()
 #End If
 
                 Await transaction.CommitAsync(cancellationToken).ConfigureAwait(False)
                 Await transaction.DisposeAsync().ConfigureAwait(False)
 
-                Return StockDecrementOutcome.Success(New StockDecrementResponse With {
-                    .ProductId = productId,
-                    .MovementId = movementId,
-                    .QuantityBefore = decrementResult.QuantityBefore,
-                    .QuantityAfter = decrementResult.QuantityAfter,
-                    .CorrelationId = correlationId
-                })
+                Return StockDecrementOutcome.Success(response)
 
             End Using
 

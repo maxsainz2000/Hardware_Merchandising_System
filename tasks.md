@@ -906,7 +906,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-14 · Idempotency proof
+### ✅ P1-14 · Idempotency proof
 
 **Spec:** §11 · **Closes:** G-13 · **Decides:** ADR-007
 
@@ -914,12 +914,22 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] The same key sent five times produces **one** movement and five identical responses
-- [ ] A different key produces a second movement
-- [ ] Concurrent requests with the same key produce one movement
-- [ ] A key from a *failed* command does not block a legitimate retry
+- [x] The same key sent five times produces **one** movement and five identical responses
+- [x] A different key produces a second movement
+- [x] Concurrent requests with the same key produce one movement
+- [x] A key from a *failed* command does not block a legitimate retry
 
 **Evidence:** `p1-14-idempotency.txt`
+
+> **Result.** Wired into `StockService.DecrementAsync` — the only transactional command that exists in this phase. New `Merchandising.Infrastructure.Data.IdempotencyStore` (`TryClaimAsync`/`CompleteAsync`/`FindCompletedResponsePayloadAsync`) claims the key as the first statement inside the same transaction as the balance/movement/audit writes, and writes the response payload onto that same row immediately before commit. A losing claim relies on the identical row-locking mechanism P1-13 already proved for `StockRepository.TryDecrementAsync` — MariaDB blocks a concurrent duplicate `INSERT` on the unique index until the winner commits or rolls back — so the loser always finds a completed row to replay under `READ COMMITTED` (ADR-006), never a race it has to poll for.
+>
+> Because the claim lives inside the same transaction as the rest of the command, the existing `InsufficientStock` rollback path rolls the claim back too — box 4 needed no new cleanup code, it fell out of the transaction boundary that already existed.
+>
+> `StockDecrementRequest` gained a required `idempotencyKey` field, validated at `InventoryController` as a well-formed GUID (mirrors `CorrelationIdMiddleware`'s own check and its ERROR-1406 reasoning — `IdempotencyKeys.KeyValue` is `CHAR(36) NOT NULL` under `STRICT_TRANS_TABLES`). `DecrementAsync`'s signature grew a required parameter, so every pre-existing call site in `StockDecrementTests.vb` (P1-11/12/13) was updated to pass its own fresh key.
+>
+> Four new integration tests, one per box, including a 10-concurrent-request same-key round: all 10 report `Success` with the identical movement Id (raw distribution captured, not just pass/fail) — the qualitative opposite of P1-13's distribution in the same run, where 9 of 10 *different* commands racing the same stock unit get a controlled `InsufficientStock`. Full suite: 35/35 integration tests green (4 new), 8/8 unit tests, guardrails pass, 0 warnings. See `evidence/phase-1/p1-14-idempotency.txt`.
+>
+> **ADR-007 moves PENDING → ACCEPTED.**
 
 ---
 
