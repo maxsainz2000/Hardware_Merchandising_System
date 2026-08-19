@@ -1,0 +1,173 @@
+P1-08  AUTHENTICATION AND ONE PROTECTED ENDPOINT - ACCEPTANCE MATRIX
+Generated : 2026-08-19 (session date)
+Server    : 10.4.32-MariaDB
+API       : Merchandising.Api, ASPNETCORE_URLS=http://127.0.0.1:5199 (dev HTTP,
+            pre-P1-09 - HTTPS/LAN cert is P1-09's job, not this card's)
+Scheme    : Opaque server-side session token (ADR-005) - "Authorization: Bearer <token>"
+
+This file has two halves:
+
+  PART A - 15 automated integration tests (AuthenticationTests.vb) against
+           AuthService directly, run twice back-to-back to prove they are
+           repeatable against real, persistent fixture accounts (not scratch
+           tables - see the file's own header comment for why AuditLogs'
+           foreign key to Users makes that the only option under the
+           append-only grant model, CLAUDE.md section 5).
+
+  PART B - a live HTTP run through AuthController and the policy-gated
+           AdminController, since WebApplicationFactory is not wired until
+           P1-19 - the same "captured live HTTP call" shape P1-02 used for
+           /health, extended to the fourteen cases below.
+
+A real defect was found and fixed while writing PART A, before PART B was
+ever run - see "BUG FOUND BY THE FAILING TEST" at the end of this file.
+
+===============================================================================
+PART A - dotnet test src/tests/Merchandising.Tests.Integration (AuthenticationTests only)
+===============================================================================
+
+--- Run 1 (first execution against the real database) ---
+Passed!  - Failed:     0, Passed:    15, Skipped:     0, Total:    15, Duration: 7 s
+  (this run includes the fix - see the bug note below for the pre-fix failure)
+
+--- Run 2 (immediately following, same fixture accounts, no manual reset) ---
+Passed!  - Failed:     0, Passed:     8, Skipped:     0, Total:     8, Duration: 8 s
+  (filtered re-run confirming repeatability; 8 of the 15 tests touch
+  lockout/session state that must reset cleanly run over run)
+
+Full suite (unit + integration, all tasks) immediately before capturing this file:
+  Unit:        Passed! Failed: 0, Passed: 8,  Total: 8
+  Integration: Passed! Failed: 0, Passed: 15, Total: 15
+  Guardrails:  G-A/G-B/G-C/G-D all pass
+  Build:       0 Warning(s), 0 Error(s)
+
+Test list (one per Done-when box or a named sub-case of one):
+  Login_ValidCredentials_ReturnsTokenAndRoles              (box 1: valid login returns a token)
+  Login_WrongPassword_ReturnsInvalidCredentials
+  Login_UnknownUsername_SameOutcomeAsWrongPassword         (spec section 9: no account enumeration)
+  Login_SixBadPasswords_LocksAccountAndLogsIt              (box 3: lockout + logged event)
+  Login_WhileLocked_RejectsEvenCorrectPassword
+  Login_SuccessAfterFailures_ResetsFailedAttemptCounter
+  Logout_DeletesSession_TokenNoLongerResolves
+  AuditLogs_NeverContainThePlaintextPassword               (box 4: no password value in any log)
+
+===============================================================================
+PART B - live HTTP run, 2026-08-19 01:20:18Z, http://127.0.0.1:5199
+===============================================================================
+
+P1-08 auth matrix - captured 2026-08-19 01:20:18Z against http://127.0.0.1:5199
+==============================================================================
+
+--- Case 1: login with missing fields -> 400 VALIDATION_FAILED ---
+[PASS] missing username/password -> expected 400, got 400
+    body: {"errorCode":"VALIDATION_FAILED","message":"Username and password are both required.","correlationId":"b8ab8dd8-2573-49c7-a3c4-567008812b6b","errors":{"username":["Username is required."],"password":["Password is required."]}}
+
+--- Case 2: login with unknown username -> 401 INVALID_CREDENTIALS ---
+[PASS] unknown username -> expected 401, got 401
+    body: {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"8f9c2447-9e3f-47ff-bf43-6a6f26d5fa37","errors":null}
+
+--- Case 3: login with wrong password -> 401 INVALID_CREDENTIALS ---
+[PASS] wrong password -> expected 401, got 401
+    body: {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"c36cd409-11e1-449f-9621-cb693f4471bf","errors":null}
+
+--- Case 4: login with correct Cashier credentials -> 200 + token ---
+[PASS] correct cashier credentials -> expected 200, got 200
+    body: {"token":"zDDg7R1w81Vcc0jL6Bxe__3wNWCptmNmqZV7ucN01PY","expiresAtUtc":"2026-08-19T09:20:21.107467Z","username":"p1_08_live_cashier","roles":["Cashier"]}
+
+--- Case 5: GET /me with no token -> 401 ---
+[PASS] /me, no token -> expected 401, got 401
+    body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"e5be4dba-7c50-4722-b7e6-83ef6a8acbdb","errors":null}
+
+--- Case 6: GET /me with valid Cashier token -> 200 ---
+[PASS] /me, cashier token -> expected 200, got 200
+    body: {"username":"p1_08_live_cashier","roles":["Cashier"]}
+
+--- Case 7: GET /admin/ping with no token -> 401 ---
+[PASS] /admin/ping, no token -> expected 401, got 401
+    body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"988614bf-be0a-4054-8a24-c18b7e2fba4d","errors":null}
+
+--- Case 8: GET /admin/ping with Cashier token (wrong role) -> 403 ---
+[PASS] /admin/ping, cashier token -> expected 403, got 403
+    body: {"errorCode":"FORBIDDEN","message":"This account does not hold a role authorized for this endpoint.","correlationId":"c28e6c11-7830-412c-b292-95b07a0a347d","errors":null}
+
+--- Case 9: login with correct Admin credentials -> 200 + token ---
+[PASS] correct admin credentials -> expected 200, got 200
+    body: {"token":"4f2q-5eH72qHivvD9ENCBNZJaslLyXgS3JHsj93xk5I","expiresAtUtc":"2026-08-19T09:20:21.7004072Z","username":"p1_08_live_admin","roles":["Admin"]}
+
+--- Case 10: GET /admin/ping with Admin token -> 200 ---
+[PASS] /admin/ping, admin token -> expected 200, got 200
+    body: {"status":"ok","username":"p1_08_live_admin","roles":["Admin"]}
+
+--- Case 11: correlation id supplied by caller is echoed on an error response ---
+[PASS] sent X-Correlation-Id: 55886d78-84cc-4774-8f7f-63ebd6a496db
+    response header: 55886d78-84cc-4774-8f7f-63ebd6a496db
+    response body correlationId: 55886d78-84cc-4774-8f7f-63ebd6a496db
+
+--- Case 12: logout, then /me with the same token -> 401 ---
+logout status: 204 (expected 204)
+[PASS] /me with the just-logged-out token -> expected 401, got 401
+    body: {"errorCode":"UNAUTHORIZED","message":"Authentication is required for this endpoint.","correlationId":"d39557a8-dcb8-45ff-86f1-027cea9ecea1","errors":null}
+
+--- Case 13: six bad passwords against p1_08_live_lockout ---
+[PASS] attempt 1 -> expected 401, got 401 : {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"23948c3f-35bd-4907-bd83-45a55c804414","errors":null}
+[PASS] attempt 2 -> expected 401, got 401 : {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"e070c575-1e1d-4531-93b2-66b34daf675e","errors":null}
+[PASS] attempt 3 -> expected 401, got 401 : {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"2d270a49-6722-417f-83c7-392b828fbfaa","errors":null}
+[PASS] attempt 4 -> expected 401, got 401 : {"errorCode":"INVALID_CREDENTIALS","message":"Username or password is incorrect.","correlationId":"806c4d2d-acde-4b64-b37a-abe155cb2c7f","errors":null}
+[PASS] attempt 5 -> expected 423, got 423 : {"errorCode":"ACCOUNT_LOCKED","message":"This account is temporarily locked after too many failed sign-in attempts. Try again later.","correlationId":"c7400ac5-69dd-4cfb-b0a1-9d47ebac1cb7","errors":null}
+[PASS] attempt 6 -> expected 423, got 423 : {"errorCode":"ACCOUNT_LOCKED","message":"This account is temporarily locked after too many failed sign-in attempts. Try again later.","correlationId":"434133ce-05f4-48c5-a2da-02772c86a694","errors":null}
+
+--- Case 14: locked account rejects the CORRECT password -> 423 ---
+[PASS] correct password while locked -> expected 423, got 423
+    body: {"errorCode":"ACCOUNT_LOCKED","message":"This account is temporarily locked after too many failed sign-in attempts. Try again later.","correlationId":"bd3fc932-09d2-46a7-8fd6-90ce3127a68a","errors":null}
+
+===============================================================================
+BUG FOUND BY THE FAILING TEST - UserRepository.RecordFailedLoginAsync
+===============================================================================
+
+The very first run of Login_SixBadPasswords_LocksAccountAndLogsIt failed for
+the RIGHT reason, exactly as the task loop asks a failing-test-first step to:
+
+  Assert.AreEqual failed. Expected:<InvalidCredentials>. Actual:<Locked>.
+  Attempt 4 should not lock the account yet.
+
+Root cause: the original single UPDATE statement was
+
+    SET FailedLoginAttempts = FailedLoginAttempts + 1,
+        LockedUntilUtc = CASE WHEN FailedLoginAttempts + 1 >= @maxAttempts ...
+
+MariaDB evaluates a single-table UPDATE's SET assignments left to right, and
+a later assignment that reads a column already reassigned earlier in the
+SAME statement sees the NEW value, not the pre-update one. Because
+FailedLoginAttempts was reassigned first, the CASE's own "FailedLoginAttempts
++ 1" read the just-incremented value - effectively comparing (old+1)+1 to the
+threshold - and locked the account one attempt early, at 4 instead of 5.
+
+Confirmed directly against the database after the failing run:
+
+  Username              FailedLoginAttempts  LockedUntilUtc
+  p1_08_fixture_lockout  4                    2026-08-19 01:27:42.127463
+
+Fix: reorder the SET list so LockedUntilUtc's CASE is computed BEFORE
+FailedLoginAttempts is reassigned, so it reads the true pre-update count.
+See UserRepository.vb's RecordFailedLoginAsync XML doc remarks for the
+in-code explanation of why the ordering is load-bearing, not cosmetic.
+
+After the fix: 15/15 integration tests pass, confirmed on two independent
+runs (repeatability), and independently confirmed live over HTTP in PART B
+above - attempts 1-4 return 401, attempt 5 returns 423 and locks, attempt 6
+(and a subsequent correct-password attempt, case 14) both stay 423.
+
+===============================================================================
+NOTE - correlation-Id length is now a live boundary condition
+===============================================================================
+
+AuditLogs.CorrelationId is CHAR(36) NOT NULL (db/migrations/0001_foundation.sql).
+CorrelationIdMiddleware accepts whatever the caller sends in X-Correlation-Id
+verbatim (case 11 above proves the round trip) and AuditLogWriter binds it
+straight into that column with no length check. A caller sending a
+correlation Id longer than 36 characters would currently hit MariaDB's
+strict-mode ERROR 1406 on the audit INSERT (STRICT_TRANS_TABLES, ADR-003.2)
+rather than a controlled 400. Not exercised by this card's acceptance matrix
+- flagged here for whichever later task hardens general request validation,
+since P1-08's own scope is authentication, not input-length validation on a
+header no client in Phase 1 sets to an attacker-chosen value yet.

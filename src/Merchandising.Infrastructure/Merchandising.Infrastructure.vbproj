@@ -32,4 +32,24 @@
     <PackageReference Include="MySqlConnector" Version="2.6.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      P1-08 / ADR-005. Gives access to Microsoft.AspNetCore.Identity.
+      PasswordHasher(Of TUser) - spec section 9's "framework-provided
+      password-hashing implementation" - without a PackageReference or a
+      version to pin. FrameworkReference resolves against the SDK/runtime
+      already installed (confirmed: Microsoft.Extensions.Identity.Core.dll
+      is present under the installed Microsoft.AspNetCore.App 10.0.9 shared
+      framework), the same way Merchandising.Api already gets ASP.NET Core
+      itself through the Web SDK's implicit framework reference.
+
+      This is also why the opaque session token was chosen over JWT bearer:
+      Microsoft.AspNetCore.Authentication.JwtBearer and
+      System.IdentityModel.Tokens.Jwt are NOT in that shared framework, so
+      that path would have needed new packages with versions not yet
+      recorded in docs/adr.md (CLAUDE.md section 6).
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
 </Project>

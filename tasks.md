@@ -717,7 +717,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track C — Security seam
 
-### ⬜ P1-08 · Authentication and one protected endpoint
+### ✅ P1-08 · Authentication and one protected endpoint
 
 **Spec:** §9 · **Closes:** G-19 (begins) · **Decides:** ADR-005
 
@@ -725,14 +725,24 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Valid login returns a token
-- [ ] Protected endpoint: 401 without token, 403 with wrong role, 200 with correct role
-- [ ] Six bad passwords trigger lockout; the lockout event is logged
-- [ ] **No password value appears in any log** — log scan attached
-- [ ] Token lives in client memory only
-- [ ] ADR-005 records the token scheme
+- [x] Valid login returns a token
+- [x] Protected endpoint: 401 without token, 403 with wrong role, 200 with correct role
+- [x] Six bad passwords trigger lockout; the lockout event is logged
+- [x] **No password value appears in any log** — log scan attached
+- [x] Token lives in client memory only
+- [x] ADR-005 records the token scheme
 
 **Evidence:** `p1-08-auth-matrix.txt` (one row per case), `p1-08-log-scan.txt`
+
+> **Result.** Migration `0002_authentication.sql` (Users lockout columns + `Sessions` table) and `db/grants/0003_authentication-grants.sql` applied to the real schema. Opaque server-side session token chosen over JWT bearer (ADR-005, ACCEPTED) — `SessionTokenGenerator` mints the bearer value, only its SHA-256 hash reaches `Sessions.TokenHash`, and `SessionAuthenticationHandler` resolves `Authorization: Bearer <token>` by hash lookup on every request. `AuthController` (`login`/`me`/`logout`) and the policy-gated `AdminController` (`GET /api/v1/admin/ping`, `Roles:="Admin,SuperAdmin"`) wired into `Program.vb` alongside `CorrelationIdMiddleware`.
+>
+> **Failing test first, for the right reason.** `AuthenticationTests.vb` (15 integration tests against `AuthService` and the real MariaDB instance) caught a genuine bug on its first run: `UserRepository.RecordFailedLoginAsync`'s single-statement `UPDATE` read `FailedLoginAttempts` twice in the same `SET` list, and MariaDB's left-to-right assignment evaluation meant the second read saw the already-incremented value — locking accounts one attempt early, at 4 instead of 5. Fixed by reordering the `SET` list so the lock decision is computed before the counter is reassigned (see the method's XML doc remarks for why the ordering is load-bearing). 15/15 integration tests green afterward, confirmed on two independent runs for repeatability against the real, persistent fixture accounts (test users are real rows, not scratch data — `AuditLogs.ActorUserId` is a foreign key to `Users`, and `AuditLogs` is append-only by grant, so a test cannot delete its own audit trail to reset state).
+>
+> **HTTP-level 401/403/200 matrix captured live**, not through `WebApplicationFactory` — that seam is P1-19's deliverable, not P1-08's (same reasoning P1-02 used for `/health`). Fourteen cases run against a live `dotnet run` instance: validation, unknown-username/wrong-password indistinguishability, login success, `/me` unauthenticated and authenticated, the protected endpoint unauthenticated / wrong-role / correct-role, correlation-ID round-trip, logout revocation, and the six-bad-passwords lockout sequence including a locked account rejecting its own correct password. All 14 pass. See `evidence/phase-1/p1-08-auth-matrix.txt`.
+>
+> **Log scan clean.** Every plaintext password used anywhere in this card's proof was grepped against the API's console log and queried against every `AuditLogs` text column (`Action`, `Target`, `Result`, `Detail`) — zero matches in both. `evidence/phase-1/p1-08-log-scan.txt` also traces why this holds structurally (the password parameter never reaches an `AuditLogWriter` call in `AuthService`), not just on the runs captured.
+>
+> **Flagged, not fixed here — out of this card's scope.** `AuditLogs.CorrelationId` is `CHAR(36) NOT NULL` with no length check before `CorrelationIdMiddleware`'s client-supplied `X-Correlation-Id` reaches the audit `INSERT`; a caller sending one longer than 36 characters would hit `ERROR 1406` under strict mode instead of a controlled 400. Noted in the evidence file for whichever later task hardens general request validation.
 
 ---
 

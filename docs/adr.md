@@ -276,20 +276,31 @@ The failure mode is not a wrong-looking number. It is **drift**: the API compute
 
 ## ADR-005 · Authentication and token scheme
 
-**Status:** PENDING — resolve at task P1-08
+**Status:** ACCEPTED
+**Date:** 2026-08-19
+**Decides:** the token scheme for `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, and the policy-gated `GET /api/v1/admin/ping`. Closes gap G-19 (begins).
 
-**Options.** JWT bearer with a host-held signing key, or an opaque server-side session token stored in the database.
+**Decision: opaque server-side session token, not JWT bearer.** `SessionTokenGenerator` mints 256 bits of randomness (`RandomNumberGenerator`, Base64Url-encoded) as the bearer value handed to the client. Only its SHA-256 hash is ever written to the database (`Sessions.TokenHash`), so a database read alone — a backup file, a compromised `merch_backup` account — cannot be turned back into a usable token. `SessionAuthenticationHandler` resolves `Authorization: Bearer <token>` by hashing it and looking it up in `Sessions` on every request; there is no signature to verify and nothing to parse.
 
-**Decision:** _(record after P1-08)_
+**Reversed from the baseline lean, and here is why.** The baseline in this entry's original text was JWT bearer with a host-held signing key. Two things changed that once P1-08 actually reached for the packages:
 
-**Baseline lean:** JWT bearer, expiry matched to a work shift, signing key stored only in the host's ACL-protected configuration location.
+- `Microsoft.AspNetCore.Authentication.JwtBearer` and `System.IdentityModel.Tokens.Jwt` are **not** present in the installed `Microsoft.AspNetCore.App 10.0.9` shared framework (confirmed by listing it directly). Either package would have needed a `PackageReference` with a version not recorded anywhere in this document — stop condition 2 in CLAUDE.md §7.
+- `Microsoft.Extensions.Identity.Core` — which is where `PasswordHasher(Of TUser)` lives, spec §9's "framework-provided password-hashing implementation" — **is** already in that shared framework. `Merchandising.Infrastructure.vbproj` reaches it with a plain `<FrameworkReference Include="Microsoft.AspNetCore.App" />`, no new package, no version to pin. The opaque-token path needed nothing JWT would have required anyway.
 
-**Fixed regardless of the choice:**
+**A property JWT would not have given for free: real revocation.** `POST /api/v1/auth/logout` deletes the matching `Sessions` row (`SessionRepository.DeleteByTokenHashAsync`) — the token stops working immediately, proven live in `evidence/phase-1/p1-08-auth-matrix.txt` PART B case 12. A JWT is valid until its signature-checked expiry no matter what the server does afterward, unless a denylist is added — which is a database table anyway, at which point the signature is bearing no weight the database lookup wasn't already doing.
 
-- Passwords stored only as salted hashes via a framework-provided hasher. Never plaintext, never reversible.
-- Account lockout after five failed attempts within the configured window.
-- Token held in client memory only; cleared on logout or auth failure.
-- Authorization enforced by policy in the API on every protected endpoint. UI hiding is not a security control.
+**Session lifetime:** 8 hours (`AuthenticationPolicy.SessionLifetime`), matching the "expiry matched to a work shift" reasoning the baseline lean already established — that reasoning survived the JWT-vs-opaque reversal even though it no longer needs an expiry *claim* to carry it; `Sessions.ExpiresAtUtc` is checked directly by `SessionRepository.FindActiveByTokenHashAsync`.
+
+**Confirmed, unchanged from the baseline:**
+
+- Passwords stored only as salted hashes via `PasswordHasher(Of TUser)` (PBKDF2-HMACSHA256, V3 format) — never plaintext, never reversible.
+- Account lockout after five failed attempts (`AuthenticationPolicy.MaxFailedLoginAttempts`) within a 15-minute window (`AuthenticationPolicy.LockoutDuration`); the locking attempt and the lockout event are both audited.
+- Token held in client memory only; the server never has the plaintext token to hold anywhere but the HTTP response that hands it out once.
+- Authorization enforced by ASP.NET Core policy (`<Authorize(Roles:="Admin,SuperAdmin")>` on `AdminController`) in the API on every protected endpoint — proven with a real 401/403/200 matrix, not by hiding a button.
+
+**Friction encountered:** one real defect, not a scheme problem. `UserRepository.RecordFailedLoginAsync`'s original single-statement `UPDATE` read `FailedLoginAttempts` twice in the same `SET` list; MariaDB's left-to-right assignment evaluation meant the second read saw the already-incremented value, locking accounts one attempt early (at 4, not 5). Caught by `Login_SixBadPasswords_LocksAccountAndLogsIt` failing for the right reason on its first run — see `evidence/phase-1/p1-08-auth-matrix.txt` for the failure, the fix, and the confirmation that 15/15 integration tests and the live HTTP matrix both pass afterward.
+
+**Evidence:** `evidence/phase-1/p1-08-auth-matrix.txt`, `evidence/phase-1/p1-08-log-scan.txt`
 
 ---
 

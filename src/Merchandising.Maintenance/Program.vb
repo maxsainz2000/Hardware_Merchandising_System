@@ -1,14 +1,16 @@
 ' Merchandising.Maintenance.Program
 '
-' CLI entry point for the maintenance utility. Today this wires up one
-' command, "migrate" (P1-06). Backup/restore/schema-verification join it in
-' later Phase 1/6 tasks per spec section 7.
+' CLI entry point for the maintenance utility. Wires up "migrate" (P1-06)
+' and "create-user" (P1-08, account bootstrap - see CreateUserCommand.vb).
+' Backup/restore/schema-verification join them in later Phase 1/6 tasks per
+' spec section 7.
 
 Imports System
 Imports System.IO
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Migrations
+Imports Merchandising.Maintenance.Users
 Imports MySqlConnector
 
 Module Program
@@ -30,11 +32,34 @@ Module Program
 
     Private Async Function RunAsync(args As String()) As Task
 
-        If args.Length = 0 OrElse Not String.Equals(args(0), "migrate", StringComparison.OrdinalIgnoreCase) Then
-            Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
+        If args.Length = 0 Then
+            PrintUsage()
             Environment.ExitCode = 1
             Return
         End If
+
+        Select Case args(0).ToLowerInvariant()
+
+            Case "migrate"
+                Await RunMigrateAsync(args)
+
+            Case "create-user"
+                Await RunCreateUserAsync(args)
+
+            Case Else
+                PrintUsage()
+                Environment.ExitCode = 1
+
+        End Select
+
+    End Function
+
+    Private Sub PrintUsage()
+        Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
+    End Sub
+
+    Private Async Function RunMigrateAsync(args As String()) As Task
 
         Dim configPath As String = Nothing
         Dim migrationsDir As String = Path.Combine(Directory.GetCurrentDirectory(), "db", "migrations")
@@ -116,6 +141,75 @@ Module Program
             ' ADR-013) into a clear message and a non-zero exit code rather
             ' than letting the process crash with a raw stack trace.
             Console.Error.WriteLine($"Migration run failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    Private Async Function RunCreateUserAsync(args As String()) As Task
+
+        If args.Length < 4 Then
+            PrintUsage()
+            Environment.ExitCode = 1
+            Return
+        End If
+
+        Dim username As String = args(1)
+        Dim password As String = args(2)
+        Dim roleName As String = args(3)
+        Dim configPath As String = Nothing
+
+        Dim i As Integer = 4
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--config requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    configPath = args(i)
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        ' Same identity as "migrate" - creating an account is a schema-
+        ' owner-level bootstrap operation, not something merch_api does for
+        ' itself (it has no self-registration endpoint, deliberately).
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+            Dim factory As New ConnectionFactory(options)
+
+            Dim userId As Integer = Await CreateUserCommand.RunAsync(factory, username, password, roleName)
+
+            Console.WriteLine($"Created user '{username}' (Id {userId}) with role '{roleName}'.")
+            Environment.ExitCode = 0
+
+        Catch ex As CreateUserCommandException
+
+            Console.Error.WriteLine($"create-user failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        Catch ex As MySqlException
+
+            Console.Error.WriteLine($"create-user failed: {ex.Message}")
             Environment.ExitCode = 1
 
         End Try

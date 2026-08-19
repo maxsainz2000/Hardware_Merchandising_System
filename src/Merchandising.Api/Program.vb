@@ -10,6 +10,10 @@
 ' needs this entry point reachable from the integration test assembly. The
 ' InternalsVisibleTo half of that seam belongs to P1-19, not here.
 
+Imports Merchandising.Api.Middleware
+Imports Merchandising.Api.Security
+Imports Merchandising.Infrastructure.Data
+Imports Microsoft.AspNetCore.Authentication
 Imports Microsoft.AspNetCore.Builder
 Imports Microsoft.Extensions.DependencyInjection
 Imports Microsoft.Extensions.Hosting
@@ -44,7 +48,35 @@ Public Module Program
         ' is the right trade here. CLAUDE.md section 3.
         builder.Services.AddControllers()
 
+        ' Database access, wired into DI for the first time at P1-08 - P1-05
+        ' built ConnectionFactory/DatabaseOptions but nothing yet needed it
+        ' through the API's own container. Loaded once at startup, not per
+        ' request: the config file rarely changes and a missing/malformed
+        ' file should fail the process at boot, not on the first request.
+        Dim databaseOptions As DatabaseOptions = DatabaseOptionsLoader.Load()
+        builder.Services.AddSingleton(databaseOptions)
+        builder.Services.AddSingleton(Of ConnectionFactory)()
+        builder.Services.AddScoped(Of AuthService)()
+
+        ' P1-08 / ADR-005: opaque server-side session token, not JWT bearer -
+        ' see Merchandising.Infrastructure.vbproj's comment for why. The
+        ' scheme name is also what every [Authorize(AuthenticationSchemes:=...)]
+        ' attribute in this project names explicitly.
+        builder.Services.
+            AddAuthentication(SessionAuthenticationHandler.SchemeName).
+            AddScheme(Of AuthenticationSchemeOptions, SessionAuthenticationHandler)(
+                SessionAuthenticationHandler.SchemeName, Nothing)
+
+        builder.Services.AddAuthorization()
+
         Dim app = builder.Build()
+
+        ' Correlation Id first, so every downstream handler - including the
+        ' authentication handler's own 401/403 bodies - can read it.
+        app.UseMiddleware(Of CorrelationIdMiddleware)()
+
+        app.UseAuthentication()
+        app.UseAuthorization()
 
         app.MapControllers()
 
