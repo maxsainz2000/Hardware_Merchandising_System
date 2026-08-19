@@ -80,4 +80,15 @@
     <ProjectReference Include="..\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj" />
   </ItemGroup>
 
+  <!--
+    P1-19: the integration test assembly may see Friend members. Program is
+    already Public (P1-02 made it so deliberately), so nothing today depends
+    on this - it is here because the card asks for the seam to be configured,
+    and because the alternative when a test first needs a Friend member is
+    widening that member to Public, which is the wrong direction.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Merchandising.Tests.Integration" />
+  </ItemGroup>
+
 </Project>

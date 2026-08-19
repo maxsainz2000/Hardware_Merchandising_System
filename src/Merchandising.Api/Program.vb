@@ -47,6 +47,13 @@ Imports Microsoft.Extensions.Logging
 Public Module Program
 
     ''' <summary>
+    ''' The environment name a test host runs under. Named here, in the
+    ''' production entry point, so the one place that behaves differently
+    ''' under test is impossible to miss when reading Main.
+    ''' </summary>
+    Public Const TestingEnvironmentName As String = "Testing"
+
+    ''' <summary>
     ''' Builds and runs the ASP.NET Core host.
     ''' </summary>
     ''' <param name="args">
@@ -69,20 +76,38 @@ Public Module Program
         ' use HTTP only on an isolated developer machine". Binding it to
         ' Loopback rather than trusting IsDevelopment() alone means even a
         ' misconfigured firewall on a hostile network cannot expose it.
-        Dim certificateOptions As CertificateOptions = CertificateOptionsLoader.Load()
+        '
+        ' P1-19: skipped under the "Testing" environment, and only there.
+        ' WebApplicationFactory replaces Kestrel with an in-memory TestServer,
+        ' but it still EXECUTES this method to build the host - so without
+        ' this guard the test host would try to load a .pfx from
+        ' %ProgramData% that exists on the developer's machine and on no
+        ' clean clone. The tests would pass here and fail everywhere else,
+        ' which is worse than failing here.
+        '
+        ' The guard names one environment explicitly rather than inverting
+        ' IsProduction(): a missing certificate in Development, Staging or
+        ' Production still fails the process at boot, loudly, which is the
+        ' behaviour P1-09 deliberately built. Only a test host that has no
+        ' Kestrel to configure is exempt.
+        If Not builder.Environment.IsEnvironment(TestingEnvironmentName) Then
 
-        builder.WebHost.ConfigureKestrel(
-            Sub(kestrelOptions As KestrelServerOptions)
+            Dim certificateOptions As CertificateOptions = CertificateOptionsLoader.Load()
 
-                kestrelOptions.Listen(
-                    IPAddress.Any, 8443,
-                    Sub(listenOptions) listenOptions.UseHttps(certificateOptions.PfxPath, certificateOptions.Password))
+            builder.WebHost.ConfigureKestrel(
+                Sub(kestrelOptions As KestrelServerOptions)
 
-                If builder.Environment.IsDevelopment() Then
-                    kestrelOptions.Listen(IPAddress.Loopback, 8080)
-                End If
+                    kestrelOptions.Listen(
+                        IPAddress.Any, 8443,
+                        Sub(listenOptions) listenOptions.UseHttps(certificateOptions.PfxPath, certificateOptions.Password))
 
-            End Sub)
+                    If builder.Environment.IsDevelopment() Then
+                        kestrelOptions.Listen(IPAddress.Loopback, 8080)
+                    End If
+
+                End Sub)
+
+        End If
 
         ' Controller based endpoints, never minimal APIs. Minimal API lambda
         ' chains need multi line Function() ... End Function in Visual Basic

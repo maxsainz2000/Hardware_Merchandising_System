@@ -94,8 +94,29 @@ if (-not (Test-Path $srcPath)) {
 function Get-SourceFiles {
     param([string] $Path, [string[]] $Include)
     Get-ChildItem -Path $Path -Recurse -File -Include $Include -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '[\\/](bin|obj|\.vs|packages|TestResults)[\\/]' }
+        Where-Object { $_.FullName -notmatch '[\\/](bin|obj|\.vs|packages|TestResults)[\\/]' } |
+        Where-Object { $_.Name -notmatch '_wpftmp\.vbproj$' }
 }
+
+# ON *_wpftmp.vbproj  (added at P1-19)
+#
+# The WPF targets generate a temporary shim project - Foo_x_wpftmp.vbproj - in
+# the PROJECT directory, not under obj/, and delete it moments later. The
+# exclusion above is not cosmetic: this guardrail also runs from
+# Directory.Build.targets DURING the build, so one WPF project can be creating
+# and deleting that file while the scan is enumerating. Without the filter the
+# build fails with
+#
+#     Get-Content : ... Foo_x_wpftmp.vbproj ... PathNotFound
+#
+# which is a race, not a violation - and an intermittent guardrail failure
+# that means nothing is the fastest way to teach someone to ignore guardrails.
+#
+# Observed at P1-19, after Merchandising.Tests.Unit gained UseWPF at P1-15 and
+# made a fourth WPF project available to overlap with the API's build step.
+#
+# Skipping them is safe: the shim is generated FROM the real project file, and
+# the real one is scanned. A violation cannot exist only in the shim.
 
 # ---------------------------------------------------------------------------
 # XML comment handling  (added at P1-01a)

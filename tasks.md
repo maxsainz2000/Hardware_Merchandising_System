@@ -1039,7 +1039,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track G — Test harness and closure
 
-### ⬜ P1-19 · Wire both VB test projects
+### ✅ P1-19 · Wire both VB test projects
 
 **Spec:** §7, §19 · **Consumes:** ADR-009 (ACCEPTED at P1-01 — **this card no longer decides it**)
 
@@ -1051,14 +1051,30 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Do:** Both test projects in Visual Basic. `InternalsVisibleTo` configured. Integration tests run against the **real** pinned MariaDB — never an in-memory substitute.
 
+> **Result — four boxes were already true; the seam was the real work.** Verified rather than assumed: `run-tests.ps1` was already green both suites, `StockDecrementTests` already carried P1-12/13/14 as automated tests (fault-injected rollback, the 2-then-10 concurrency round, the five-identical-key idempotency round), all test source was already VB, and `<Assembly: DoNotParallelize>` was already in place with its reasoning intact.
+>
+> **What was genuinely missing.** Every integration test called `AuthService`/`StockService` **in-process**, which is the right way to prove a transaction and is structurally blind to routing, model binding, the authentication handler, middleware order and the error envelope. P1-10 had already shown the cost of that blindness: a 500 leaking a `MySqlException`, a 25-frame stack trace and absolute source paths, reachable **unauthenticated**, in middleware no service-level test ever runs. Nine HTTP-level tests now stand on that layer. Integration suite 35 → 44.
+>
+> **The VB obstacle, confirmed by trying it.** `WebApplicationFactory(Of Program)` does not compile: **`BC30371: Module 'Program' cannot be used as a type`**. VB's entry point is a *Module* (CLAUDE.md §3 — top-level statements are C#-only), which compiles to a `[StandardModule]` class the compiler refuses as a type argument. `Program` was already `Public`, so visibility was never the issue. `Merchandising.Api.ApiEntryPoint` — public, non-constructible, memberless — now names the assembly instead. **Rejected:** naming an existing controller as `TEntryPoint`, the other common workaround, which makes the test seam depend on a controller someone may rename for unrelated reasons and explains nothing to the next reader.
+>
+> **A deliberate change to production startup, flagged before it was made.** `Main` called `CertificateOptionsLoader.Load()` unconditionally, and `WebApplicationFactory` still *executes* `Main` to build the host — so a test host would have tried to load a `.pfx` that exists on this machine and on no clean clone. The tests would have passed here and failed everywhere else. `Program.vb` now skips the certificate and `ConfigureKestrel` block when the environment is `"Testing"`, written as an explicit named check rather than "not Production": a missing certificate in Development, Staging or Production still fails at boot, loudly, which is what P1-09 built. `DatabaseOptionsLoader` is **not** guarded — integration tests are supposed to reach the real database (ADR-000).
+>
+> **Package pinned:** `Microsoft.AspNetCore.Mvc.Testing` **10.0.9**, matching the measured `Microsoft.AspNetCore.App` 10.0.9 runtime. `10.0.11` was on NuGet and deliberately not taken (CLAUDE.md §6). Recorded in the ADR pins table. `InternalsVisibleTo("Merchandising.Tests.Integration")` added to the API project and confirmed emitted into the generated `AssemblyInfo`; nothing needs it today, but the alternative when a test first wants a `Friend` member is widening that member to `Public`, which is the wrong direction.
+>
+> **A test that was wrong, and what replaced it.** The first draft asserted the `X-Non-Production-Http` marker would be *absent* on the test host because the host is not Development. It failed, and the assertion was wrong rather than the code: `NonProductionWarningMiddleware` never reads the environment — it tags any request where `Request.IsHttps` is false, and TestServer carries no TLS. Keying on transport is the stronger design, since it tags the actual risk rather than a setting someone can get wrong. Replaced with a discriminating **pair** — plain HTTP tagged, HTTPS not — which proves more than the original intended: without the second half, the first would also pass for middleware that tagged everything unconditionally.
+>
+> **A guardrail race this card found.** The first full run failed the *build*: `check-no-csharp.ps1` tried to read `Merchandising.Inventory_x_wpftmp.vbproj` and got `PathNotFound`. Not a violation — the WPF targets generate that shim in the project directory (not `obj/`) and delete it moments later, and the guardrail also runs from `Directory.Build.targets` **during** the build. Latent until P1-15 gave `Tests.Unit` `UseWPF`, adding a fourth WPF project to overlap with the API's build step. `Get-SourceFiles` now excludes `*_wpftmp.vbproj`; safe, because the shim is generated *from* the real project file, which is still scanned. An intermittent guardrail failure that means nothing is the fastest way to teach someone to ignore guardrails.
+>
+> **Scope not taken.** The new tests prove the **pipeline**, not the business rules — re-running stock arithmetic, concurrency, rollback and idempotency over HTTP would add running time and no information. Spec §19's "API tests" row lists a far wider surface (pagination, product, procurement, receiving, POS, reports); none of those endpoints exist yet, and each arrives with its feature and its own tests.
+
 **Done when:**
 
-- [ ] `run-tests.ps1` executes both suites green
-- [ ] P1-12, P1-13, P1-14 run as **automated tests**, not manual steps
-- [ ] All test source is VB (G-A passes)
-- [ ] `WebApplicationFactory` can reach `Program`
+- [x] `run-tests.ps1` executes both suites green — 17 unit, 44 integration, guardrails pass, 0 warnings
+- [x] P1-12, P1-13, P1-14 run as **automated tests**, not manual steps — `StockDecrementTests`, verified by name in the run transcript
+- [x] All test source is VB (G-A passes)
+- [x] `WebApplicationFactory` can reach `Program` — via `ApiEntryPoint`, because a VB `Module` cannot be a type argument (`BC30371`); `Health_IsServedOverTheRealPipeline` is the proof the host builds and serves
 - [x] ADR-009 records the framework — **already ACCEPTED at P1-01.** This card consumes it.
-- [ ] Integration project still carries `<Assembly: DoNotParallelize>` (ADR-009.2) — MSTest's template default is method-level parallelism, which would run these tests concurrently against the one shared MariaDB instance
+- [x] Integration project still carries `<Assembly: DoNotParallelize>` (ADR-009.2) — unchanged, and now more load-bearing: the HTTP tests share one TestServer and one MariaDB instance
 
 **Evidence:** `p1-19-test-run.log`
 

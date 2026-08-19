@@ -1,0 +1,249 @@
+P1-19: Wire both VB test projects — evidence
+Spec §7, §19 · Consumes ADR-009 (ACCEPTED at P1-01)
+
+Captured 2026-08-19 on LAPTOP-3HH6OHHE, against the real pinned MariaDB
+10.4.32 supplied by XAMPP (ADR-000: no in-memory substitute).
+
+=============================================================================
+WHAT THIS CARD ACTUALLY HAD LEFT TO DO
+=============================================================================
+
+Four of the six boxes were already true when the card was opened, from work
+done under earlier cards. Each was verified rather than assumed:
+
+  run-tests.ps1 green, both suites   already true
+  P1-12/13/14 as automated tests     already true - StockDecrementTests
+                                     carries the fault-injected rollback,
+                                     the 2-then-10 concurrency round and the
+                                     five-identical-key idempotency round
+  All test source is VB (G-A)        already true
+  <Assembly: DoNotParallelize>       already true, with its reasoning comment
+  ADR-009 records the framework      ticked at P1-01
+
+The genuinely open box was the WebApplicationFactory seam. Until now every
+integration test called AuthService or StockService IN-PROCESS. That is the
+right way to prove a transaction and it is structurally blind to routing,
+model binding, the authentication handler, middleware order, and the error
+envelope.
+
+P1-10 already demonstrated that blindness has a cost. Before its fix, an
+unauthenticated POST /api/v1/auth/login with an over-long X-Correlation-Id
+returned HTTP 500 as text/plain carrying a MySqlException, a 25-frame stack
+trace, the internal call chain, and absolute source paths from this disk.
+Program.vb had registered no exception handler at all. No service-level test
+could have seen it.
+
+=============================================================================
+THE VB OBSTACLE, AND WHY IT NEEDED A NEW TYPE
+=============================================================================
+
+Every C# example writes WebApplicationFactory<Program>. That does not
+compile here, and the reason is a language rule rather than a missing
+reference:
+
+    error BC30371: Module 'Program' cannot be used as a type
+
+Visual Basic's entry point is a MODULE (CLAUDE.md §3 — top-level statements
+are C#-only, so Module Program / Sub Main is the only available shape). A VB
+Module compiles to a sealed class carrying [StandardModule], and the
+compiler refuses to let it be named as a type argument. Program is already
+Public, so visibility was not the problem; this was confirmed by trying it,
+not inferred.
+
+WebApplicationFactory uses TEntryPoint only to locate the assembly whose
+entry point builds the host, and to resolve the content root. It calls
+nothing on the type. So Merchandising.Api.ApiEntryPoint was added: a public,
+non-constructible, memberless marker.
+
+The other common workaround is to name an existing controller as
+TEntryPoint. Rejected: it makes the test seam depend on a controller that
+someone may later rename or delete for unrelated reasons, and it explains
+nothing to the next reader.
+
+=============================================================================
+THE STARTUP GUARD — A DELIBERATE CHANGE TO PRODUCTION CODE
+=============================================================================
+
+WebApplicationFactory replaces Kestrel with an in-memory TestServer, but it
+still EXECUTES Main to build the host. Main called
+CertificateOptionsLoader.Load() unconditionally, so a test host would have
+tried to load a .pfx from %ProgramData%\MerchandisingSystem\config.
+
+That file exists on this machine. The tests would therefore have passed
+here and failed on any clean clone — the precise failure mode this project
+keeps catching late and paying for.
+
+Program.vb now skips the certificate load and the ConfigureKestrel block
+when, and only when, the environment is "Testing":
+
+    Public Const TestingEnvironmentName As String = "Testing"
+
+    If Not builder.Environment.IsEnvironment(TestingEnvironmentName) Then
+        ... CertificateOptionsLoader.Load() + ConfigureKestrel ...
+    End If
+
+Written as an explicit named-environment check rather than "not Production".
+A missing certificate in Development, Staging or Production still fails the
+process at boot, loudly, which is the behaviour P1-09 deliberately built.
+Only a host with no Kestrel to configure is exempt.
+
+DatabaseOptionsLoader is deliberately NOT guarded. Integration tests are
+supposed to reach the real database (ADR-000), so the test host loads the
+same database configuration a real host does.
+
+=============================================================================
+PACKAGE PINNED
+=============================================================================
+
+    Microsoft.AspNetCore.Mvc.Testing  10.0.9
+
+Chosen to match Microsoft.AspNetCore.App 10.0.9, the runtime measured on
+this machine (ADR-002/003). NuGet offered 10.0.0 through 10.0.11 at the time
+of writing; 10.0.11 was available and deliberately not taken. CLAUDE.md §6:
+never "latest". Recorded in the ADR pins table.
+
+InternalsVisibleTo("Merchandising.Tests.Integration") was added to
+Merchandising.Api and confirmed emitted into the generated AssemblyInfo.
+Nothing depends on it today — Program is already Public — but the
+alternative, when a test first needs a Friend member, is widening that
+member to Public, which is the wrong direction.
+
+=============================================================================
+A TEST THAT WAS WRONG, AND WHAT IT TAUGHT
+=============================================================================
+
+The first draft asserted that the X-Non-Production-Http marker would be
+ABSENT on the test host, reasoning that the host is not Development. It
+failed. The assertion was wrong, not the code:
+NonProductionWarningMiddleware never reads the environment — it tags any
+request where Request.IsHttps is false. TestServer carries no TLS, so a
+default client is a plain-HTTP request and MUST be tagged.
+
+Keying on transport rather than environment is the stronger design: it tags
+the actual risk instead of a configuration value someone can set wrongly.
+
+Replaced with a discriminating pair, which proves more than the original
+intended:
+
+    PlainHttpRequest_IsTaggedNonProduction     http  -> tagged
+    HttpsRequest_IsNotTaggedNonProduction      https -> not tagged
+
+Without the second, the first would also pass for middleware that tagged
+every response unconditionally — the bug that would make the marker
+worthless. P1-09 proved this against live Kestrel listeners; this proves the
+pipeline itself produces it, on a host with no certificate at all.
+
+=============================================================================
+A GUARDRAIL RACE, FOUND BY THIS CARD
+=============================================================================
+
+The first full run failed the BUILD, not a test:
+
+    G-D  Checking Option Strict inheritance...
+    Get-Content : ...\Merchandising.Inventory_x_wpftmp.vbproj ... PathNotFound
+    error MSB3073: check-no-csharp.ps1 exited with code 1
+
+Not a violation — a race. The WPF targets generate a temporary shim project
+(Foo_x_wpftmp.vbproj) in the PROJECT directory, not under obj/, and delete it
+moments later. check-no-csharp.ps1 also runs from Directory.Build.targets
+DURING the build, so one WPF project can create and delete that file while
+the scan is enumerating.
+
+Latent before now; P1-15 gave Merchandising.Tests.Unit UseWPF, making a
+fourth WPF project available to overlap with the API's build step.
+
+Fixed by excluding *_wpftmp.vbproj from Get-SourceFiles. Safe: the shim is
+generated FROM the real project file, which is still scanned, so a violation
+cannot exist only in the shim. An intermittent guardrail failure that means
+nothing is the fastest way to teach someone to ignore guardrails.
+
+=============================================================================
+FULL RUN
+=============================================================================
+
+$ pwsh ./scripts/run-tests.ps1
+
+  === Guardrails ===
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+  === Build ===
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed! - Failed: 0, Passed: 17, Skipped: 0, Total: 17, Duration: 475 ms
+
+  === Integration tests (real MariaDB) ===
+  Passed! - Failed: 0, Passed: 44, Skipped: 0, Total: 44, Duration: 6 s
+
+  All checks passed.
+
+Integration suite, 35 -> 44. Full list:
+
+  Passed Health_IsServedOverTheRealPipeline [747 ms]                          <- new
+  Passed PlainHttpRequest_IsTaggedNonProduction [12 ms]                       <- new
+  Passed HttpsRequest_IsNotTaggedNonProduction [4 ms]                         <- new
+  Passed ProtectedEndpoint_WithoutToken_Is401 [25 ms]                         <- new
+  Passed ProtectedEndpoint_WithGarbageToken_Is401 [291 ms]                    <- new
+  Passed Response_CarriesACorrelationIdWhenNoneWasSupplied [2 ms]             <- new
+  Passed SuppliedCorrelationId_IsEchoedBack [3 ms]                            <- new
+  Passed MalformedCorrelationId_Is400_WithAConformingEnvelope [41 ms]         <- new
+  Passed Login_WithWrongCredentials_ReturnsEnvelopeAndLeaksNothing [121 ms]   <- new
+  Passed Login_ValidCredentials_ReturnsTokenAndRoles [357 ms]
+  Passed Login_WrongPassword_ReturnsInvalidCredentials [180 ms]
+  Passed Login_UnknownUsername_SameOutcomeAsWrongPassword [82 ms]
+  Passed Login_SixBadPasswords_LocksAccountAndLogsIt [870 ms]
+  Passed Login_WhileLocked_RejectsEvenCorrectPassword [807 ms]
+  Passed Login_SuccessAfterFailures_ResetsFailedAttemptCounter [581 ms]
+  Passed Logout_DeletesSession_TokenNoLongerResolves [176 ms]
+  Passed AuditLogs_NeverContainThePlaintextPassword [291 ms]
+  Passed OpenedConnection_HasStrictModeAndReadCommittedIsolation [6 ms]
+  Passed OverLengthCorrelationId_IsRejectedWithControlled400 [6 ms]
+  Passed CorrelationIdContainingCrLf_IsRejectedWithControlled400 [1 ms]
+  Passed CorrelationIdOfCorrectLengthButNotAGuid_IsRejected [1 ms]
+  Passed EmptyCorrelationIdHeader_IsTreatedAsAbsentAndMinted [4 ms]
+  Passed ValidGuidCorrelationId_IsPreservedAndEchoed [1 ms]
+  Passed UnhandledException_ReturnsCompleteErrorEnvelope [5 ms]
+  Passed UnhandledException_BodyLeaksNoInternalDetail [1 ms]
+  Passed SuccessfulRequest_PassesThroughUntouched [1 ms]
+  Passed ExceptionAfterResponseStarted_RethrowsRatherThanCorrupting [8 ms]
+  Passed UnhandledException_WithNoCorrelationIdStamped_StillCarriesOne [1 ms]
+  Passed FirstRun_AppliesMigrationsAndRecordsThem [181 ms]
+  Passed SecondRun_AppliesNothing [144 ms]
+  Passed TamperedAppliedFile_CausesRefusal [137 ms]
+  Passed FailingMigration_RollsBackAndRecordsFailure [115 ms]
+  Passed RunningAsApiAccount_FailsLoudlyRatherThanHalfApplying [45 ms]
+  Passed ReferencedProjectAssembliesLoad [< 1 ms]
+  Passed Decrement_Success_CreatesOneMovementOneAuditRowAndCorrectBalance [82 ms]
+  Passed Decrement_Success_RecordsCorrelationIdOnMovementAndAudit [28 ms]
+  Passed Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows [22 ms]
+  Passed Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten [10 ms]
+  Passed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [42 ms]
+  Passed Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound [83 ms]
+  Passed Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses [53 ms]
+  Passed Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements [23 ms]
+  Passed Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement [31 ms]
+  Passed Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry [21 ms]
+
+  Total tests: 44
+  Total time: 6.8839 Seconds
+
+=============================================================================
+SCOPE NOT TAKEN
+=============================================================================
+
+The new HTTP tests prove the PIPELINE, not the business rules. Stock
+arithmetic, concurrency, rollback and idempotency are already proven against
+the real database at the service layer; re-running them over HTTP would add
+running time and no information.
+
+Spec §19's "API tests" row lists a much wider surface — pagination, product,
+procurement, receiving, POS, reports. None of those endpoints exist yet.
+They arrive with their features in Phase 2 onward, and each brings its own
+tests. This card wires the seam; it does not pre-build tests for endpoints
+nobody has written.

@@ -112,6 +112,7 @@ What the probe established:
 | Character set / collation / engine | `utf8mb4` / `utf8mb4_unicode_ci` / InnoDB — **see ADR-003, which is ACCEPTED and carries the measured 10.4 constraints** | P0-07 |
 | `sql_mode` as shipped | `NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION` — **not strict**, must be corrected. See ADR-003.2 | P0-07 |
 | .NET connector package | `MySqlConnector` `2.6.2` — latest stable on NuGet 2026-08-16, chosen with Max, no preview/RC | P1-05 |
+| API test host package | `Microsoft.AspNetCore.Mvc.Testing` `10.0.9` — matches the `Microsoft.AspNetCore.App` **10.0.9** runtime measured on this machine, deliberately **not** `10.0.11`, which was the newest on NuGet when this was added. Wires `WebApplicationFactory` (P1-19); see `evidence/phase-1/p1-19-test-run.log` for the VB `BC30371` obstacle it ran into | P1-19 |
 | Test framework package | `MSTest` `4.0.2` — **pinned in ADR-009, which is ACCEPTED.** Recorded here so `CLAUDE.md` §6 ("if a version is not in `docs/adr.md`, it must not appear in a `.vbproj`") is satisfied without a hunt | P1-01 |
 | .NET SDK version (`dotnet --info`) | `10.0.301` (commit `96856fd726`) | P0-01 |
 | .NET runtimes installed | `Microsoft.AspNetCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.NETCore.App` 8.0.28 / 9.0.17 / **10.0.9** · `Microsoft.WindowsDesktop.App` 8.0.28 / 9.0.17 / **10.0.9** | P0-01 |
