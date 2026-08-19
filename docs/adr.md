@@ -463,6 +463,8 @@ P1-16 raises the stakes: the API runs as a **Windows Service** with automatic re
 
 - **No machine without the .NET runtime has been tested.** The self-contained choice above is reasoned from the spec's condition, not proven by a runtime-free host.
 - **The WPF Desktop Runtime prerequisite *check* is unvalidated** and cannot be validated here — this machine has the Desktop Runtime, so a framework-dependent client runs whether or not the check works. Carried to **P1-15**.
+
+  **P1-15 update (2026-08-19): still carried, and now with the client actually built.** `Merchandising.Inventory` is a working framework-dependent WPF client as of P1-15, so there is finally something to run on a runtime-free machine — but this one is not that machine, and the reason is sharper than "it is the dev laptop". This host has SDK `10.0.301`, which brings `Microsoft.WindowsDesktop.App 10.0.9` with it, so the launch failure this item exists to observe **cannot occur here by definition**. Running the client locally would not weakly support the check; it would be silent about it. The item closes on a machine with the Desktop Runtime and **no** SDK, in the same sitting as P1-15's box 1.
 - **The full release manifest** (version, commit identifier, migration list, release notes, rollback instructions, package hashes) is Phase 6/7. `publish-release.ps1` produces a package hash only, and says so in its own header.
 
 **Rejected: framework-dependent API.** It works today and is 525× smaller, but it is only safe on a host whose runtime someone has deliberately installed and verified — and it fails in the worst available way, as a service that does not start, on a host where nobody did.

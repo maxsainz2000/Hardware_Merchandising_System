@@ -4,9 +4,265 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Merchandising.Inventory"
+        xmlns:api="clr-namespace:Merchandising.ClientCommon.Api;assembly=Merchandising.ClientCommon"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Merchandising - Inventory (Phase 1 spike)"
+        Height="640" Width="900"
+        MinHeight="560" MinWidth="720"
+        Background="#F7F8FA"
+        FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True">
+
+    <!--
+        P1-15 client spike. One window: sign in, call one protected endpoint,
+        run one decrement, and show the connection state truthfully.
+
+        Deliberately not a feature screen. No product grid, no search, no
+        navigation - Phase 2 owns those.
+
+        Spec section 16 obligations that ARE met here, because they are the
+        ones the card is about: a visible connection-unavailable state, a
+        loading indicator, clear validation messages, keyboard navigation with
+        a visible focus ring, and predictable tab order.
+    -->
+
+    <Window.Resources>
+
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <!-- Visible focus, as spec section 16 requires. The default WPF focus
+             rectangle is nearly invisible on a light surface. -->
+        <Style x:Key="FocusRing" TargetType="{x:Type Control}">
+            <Setter Property="FocusVisualStyle">
+                <Setter.Value>
+                    <Style>
+                        <Setter Property="Control.Template">
+                            <Setter.Value>
+                                <ControlTemplate>
+                                    <Rectangle Margin="-3" StrokeThickness="2" Stroke="#2563EB"
+                                               RadiusX="6" RadiusY="6" SnapsToDevicePixels="True" />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBox" BasedOn="{StaticResource FocusRing}">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="BorderBrush" Value="#D3D8E0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="PasswordBox" BasedOn="{StaticResource FocusRing}">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="BorderBrush" Value="#D3D8E0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="Button" BasedOn="{StaticResource FocusRing}">
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="MinWidth" Value="132" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#C7CEDA" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+
+        <Style x:Key="SectionCard" TargetType="Border">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#E4E8EF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="18" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+        </Style>
+
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#5B6472" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+    </Window.Resources>
+
+    <Grid Margin="22">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header: what this is, and where it is pointed. -->
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Inventory" FontSize="24" FontWeight="SemiBold" Foreground="#1B2430" />
+                <TextBlock Text="{Binding ApiAddress, StringFormat='Phase 1 client spike against {0}'}"
+                           Foreground="#6B7480" Margin="0,2,0,0" />
+            </StackPanel>
+
+            <!-- Connection status. Grey until the API has actually been
+                 contacted - "Not contacted yet" is not "online", and showing
+                 green before any call would be a lie the operator would act on. -->
+            <Border Grid.Column="1" CornerRadius="14" Padding="14,7" VerticalAlignment="Center"
+                    x:Name="ConnectionPill">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="#EDEFF3" />
+                        <Setter Property="BorderBrush" Value="#D7DBE2" />
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Online}">
+                                <Setter Property="Background" Value="#E7F6EC" />
+                                <Setter Property="BorderBrush" Value="#9BD3AE" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Unavailable}">
+                                <Setter Property="Background" Value="#FDEAEA" />
+                                <Setter Property="BorderBrush" Value="#F0A9A9" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <TextBlock Text="{Binding ConnectionText}" FontWeight="SemiBold">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#5B6472" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Online}">
+                                    <Setter Property="Foreground" Value="#1D6F3B" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Unavailable}">
+                                    <Setter Property="Foreground" Value="#A32020" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Border>
+
+        </Grid>
+
+        <!-- Sign in -->
+        <Border Grid.Row="1" Style="{StaticResource SectionCard}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                    <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="UsernameBox" TabIndex="0"
+                             Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                    <TextBlock Text="Password" Style="{StaticResource FieldLabel}" />
+                    <!-- PasswordBox deliberately not bound: WPF does not expose
+                         Password as a dependency property, and the usual
+                         work-arounds put the plaintext into a bindable place.
+                         It is read straight into the API call instead. -->
+                    <PasswordBox x:Name="PasswordBox" TabIndex="1" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
+                    <Button x:Name="SignInButton" Content="Sign in" TabIndex="2" Click="SignInButton_Click"
+                            IsDefault="True" IsEnabled="{Binding CanSignIn}" />
+                    <Button x:Name="SignOutButton" Content="Sign out" TabIndex="3" Click="SignOutButton_Click"
+                            Margin="0" IsEnabled="{Binding CanCallProtected}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Actions -->
+        <Border Grid.Row="2" Style="{StaticResource SectionCard}">
+            <StackPanel>
+
+                <TextBlock Text="Round trip" FontWeight="SemiBold" Foreground="#1B2430" Margin="0,0,0,12" />
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0" Width="110">
+                        <TextBlock Text="Product ID" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="ProductIdBox" TabIndex="4"
+                                 Text="{Binding ProductId, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="0,0,18,0" Width="110">
+                        <TextBlock Text="Quantity" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="QuantityBox" TabIndex="5"
+                                 Text="{Binding Quantity, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
+                        <Button x:Name="CallProtectedButton" Content="Call /auth/me" TabIndex="6" Click="CallProtectedButton_Click"
+                                IsEnabled="{Binding CanCallProtected}" />
+                        <Button x:Name="DecrementButton" Content="Decrement stock" TabIndex="7" Click="DecrementButton_Click"
+                                IsEnabled="{Binding CanCallProtected}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Loading indicator (spec section 16). -->
+                <ProgressBar Height="3" Margin="0,14,0,0" IsIndeterminate="True" Foreground="#2563EB"
+                             Background="Transparent" BorderThickness="0"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+
+            </StackPanel>
+        </Border>
+
+        <!-- Result -->
+        <Border Grid.Row="3" Style="{StaticResource SectionCard}" Margin="0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="{Binding StatusMessage}" FontWeight="SemiBold" TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#1D6F3B" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding LastCallFailed}" Value="True">
+                                    <Setter Property="Foreground" Value="#A32020" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                    <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap" Foreground="#3C4553"
+                               FontFamily="Consolas, Segoe UI" />
+                </ScrollViewer>
+
+                <TextBlock Grid.Row="2" Margin="0,10,0,0" Foreground="#8A929E"
+                           Text="{Binding CorrelationId, StringFormat='Correlation ID: {0}'}"
+                           Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVisibility}}" />
+
+            </Grid>
+        </Border>
 
     </Grid>
+
 </Window>

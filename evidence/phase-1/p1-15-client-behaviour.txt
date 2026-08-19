@@ -1,0 +1,256 @@
+P1-15: WPF client spike over HTTPS — client-behaviour evidence
+Spec §6.1, §16 · Closes G-26 (partially — see WHAT IS NOT PROVEN HERE)
+
+Captured 2026-08-19 on LAPTOP-3HH6OHHE.
+
+=============================================================================
+WHAT THIS FILE PROVES, AND WHAT IT DELIBERATELY DOES NOT
+=============================================================================
+
+The card has five Done-when boxes. Three of them are properties of the
+CLIENT and are proven here, by automated test. Two are not:
+
+  Box 1  Full round trip over HTTPS FROM A SECOND MACHINE     NOT PROVEN
+  Box 2  Stopping the API produces a connection-unavailable   PROVEN (test)
+  Box 3  The client refuses to queue or fake the write        PROVEN (test)
+  Box 4  Token never written to disk                          PROVEN (test)
+  Box 5  ClientCommon still references only Contracts (G-B)   PROVEN (guardrail)
+
+Box 1 cannot be proven on this machine, and not merely because it is one
+machine. The card asks for a host with the .NET 10 Desktop Runtime 10.0.9
+x64 and NOT the SDK, because the failure it exists to catch is a
+framework-dependent WPF client (ADR-010) that will not launch where no
+Desktop Runtime is installed. This machine has SDK 10.0.301. That failure
+mode is invisible here by definition, so running the client locally would
+not weakly support box 1 — it would say nothing about it at all.
+
+ADR-010 parked the same item here ("the WPF Desktop Runtime prerequisite
+check is unvalidated and cannot be validated here"). It stays parked.
+
+The two screenshots the card names are also not captured, for a reason
+worth recording rather than glossing:
+
+    hosts:25   192.168.100.165   MERCH-HOST     (stale)
+    this host  192.168.100.123
+
+MERCH-HOST resolves to an address this machine no longer holds — the DHCP
+lease moved, as first noted at P1-10. The certificate has a name-only SAN
+(ADR-011), so the client must connect by name, and by name it currently
+reaches nothing. A "connection unavailable" screenshot taken in that state
+would show the indicator lighting up because the ADDRESS is dead, not
+because the API was stopped, which is not the claim the card makes. The
+screenshots follow the hosts correction; the fix and the unapplied P1-09
+firewall rule both need one elevated session.
+
+=============================================================================
+DELIVERED
+=============================================================================
+
+src/Merchandising.ClientCommon/Api/
+    ConnectionState.vb          Unknown / Online / Unavailable
+    ApiOutcome.vb               Success / Rejected / Unavailable
+    ApiResult.vb                Result object returned by every call
+    InMemoryTokenStore.vb       Token storage with no persistence path in it
+    MerchandisingApiClient.vb   The typed client
+
+src/Merchandising.ClientCommon/Mvvm/
+    ObservableObject.vb         Hand-rolled INotifyPropertyChanged base
+
+src/Merchandising.Inventory/
+    MainWindow.xaml(.vb)        The one spike window
+    ViewModels/SpikeViewModel.vb
+
+src/Merchandising.Maintenance/Demo/
+    SeedDemoCommand.vb          "seed-demo" verb: the product to decrement
+    SeedDemoResult.vb
+    SeedDemoCommandException.vb
+
+Endpoints used, all of which already existed (P1-08, P1-11):
+    POST /api/v1/auth/login
+    GET  /api/v1/auth/me                 (protected)
+    POST /api/v1/auth/logout             (protected)
+    POST /api/v1/inventory/stock/decrement  (protected, InventoryClerk+)
+
+=============================================================================
+THE DESIGN DECISION G-26 ACTUALLY TURNS ON
+=============================================================================
+
+G-26 reads: "Offline behavior was not sufficiently explicit → make
+online-only status visible; reject writes when API unavailable; do not
+queue unverified transactions."
+
+The mistake that gap describes is not "no offline indicator". It is
+treating every failure as the same failure. So the client distinguishes:
+
+    The API answered with an error       -> Rejected, state stays Online
+    The API was never reached            -> Unavailable, state Unavailable
+
+Collapsing those would mean a 409 InsufficientStock renders as "you are
+offline", sending an operator to check the network cable over a business
+rule. It would also mean the reverse: a genuine outage rendered as a server
+error, inviting a retry of a write whose fate is unknown.
+
+Every unavailable-state test below is therefore PAIRED with a control that
+reaches a server and is refused by it. Without the pair, a client that
+reported "offline" for everything would pass the suite.
+
+No retry policy. No outbox. No local queue. Their ABSENCE is the feature —
+there is no code to disable, so there is nothing to regress.
+
+=============================================================================
+TEST RUN — 2026-08-19
+=============================================================================
+
+$ pwsh ./scripts/run-tests.ps1
+
+  === Guardrails ===
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+  === Build ===
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed! - Failed: 0, Passed: 17, Skipped: 0, Total: 17, Duration: 436 ms
+
+  === Integration tests (real MariaDB) ===
+  Passed! - Failed: 0, Passed: 35, Skipped: 0, Total: 35, Duration: 4 s
+
+  All checks passed.
+
+Unit count moved 8 -> 17. The nine new tests, individually:
+
+  Passed ConnectionState_BeforeAnyCall_IsUnknownRatherThanOnline    [29 ms]
+  Passed ProtectedCallWithoutToken_IsRefusedLocallyAndNeverSent     [31 ms]
+  Passed Dispose_DiscardsTheHeldToken                               [76 ms]
+  Passed AfterSignIn_ProtectedCallsCarryTheBearerToken             [135 ms]
+  Passed EveryRequest_CarriesItsOwnCanonicalCorrelationId          [137 ms]
+  Passed ServerRefusal_IsReportedAsRejectedAndStaysOnline          [152 ms]
+  Passed ApiUnreachable_ProducesUnavailableStateAndAPlainMessage    [152 ms]
+  Passed UnreachableWrite_IsNeverQueuedOrReplayedAfterRecovery     [152 ms]
+  Passed SignIn_WritesTheTokenNowhereOnDisk                        [184 ms]
+
+-----------------------------------------------------------------------------
+BOX 2 — connection-unavailable state
+-----------------------------------------------------------------------------
+
+ApiUnreachable_ProducesUnavailableStateAndAPlainMessage
+    Signs in successfully (state -> Online), then the transport starts
+    throwing the exception Windows raises when nothing is listening
+    (HttpRequestException wrapping SocketError.ConnectionRefused).
+    Asserts: Outcome = Unavailable, State = Unavailable, Value is Nothing,
+    and the message names the cause ("...The API is not running.") rather
+    than being generic.
+
+ServerRefusal_IsReportedAsRejectedAndStaysOnline           [the control]
+    Same client, but the server answers HTTP 409 with the ADR-014 error
+    envelope. Asserts: Outcome = Rejected, State stays ONLINE, error code
+    INSUFFICIENT_STOCK preserved, correlation ID present.
+
+    This pair is the actual proof. The first test alone would pass for a
+    client that called everything an outage.
+
+ConnectionState_BeforeAnyCall_IsUnknownRatherThanOnline
+    A fresh client reports Unknown, not Online. "No evidence either way"
+    must not render as a green light.
+
+-----------------------------------------------------------------------------
+BOX 3 — refuses to queue or fake the write  (the heart of G-26)
+-----------------------------------------------------------------------------
+
+UnreachableWrite_IsNeverQueuedOrReplayedAfterRecovery
+    1. Sign in while the API is up.
+    2. API goes down. Decrement -> Unavailable.
+    3. API comes back. A DIFFERENT call (/auth/me) succeeds, so the client
+       has demonstrably noticed the recovery and had every opportunity to
+       flush a queue.
+    4. Assert: exactly ONE request to /stock/decrement was ever put on the
+       wire, across the whole sequence.
+
+    Step 3 is what makes this a real test. Asserting "no retry" while the
+    client still believes it is offline would prove nothing.
+
+ProtectedCallWithoutToken_IsRefusedLocallyAndNeverSent
+    A protected call with no token is refused before the wire: zero
+    requests recorded by the transport, and the connection state stays
+    Unknown — nothing was learned about the server, so nothing is claimed
+    about it.
+
+-----------------------------------------------------------------------------
+BOX 4 — token never written to disk
+-----------------------------------------------------------------------------
+
+SignIn_WritesTheTokenNowhereOnDisk
+    Empirical, not by inspection. The login returns a distinctive fixture
+    token; every file created or modified during the sign-in is then read
+    back and searched for that exact string.
+
+    Searched in full:      the application directory
+                           %LOCALAPPDATA%\MerchandisingSystem
+                           %APPDATA%\MerchandisingSystem
+                           %ProgramData%\MerchandisingSystem
+                           %LOCALAPPDATA%\IsolatedStorage
+    Searched one level:    %LOCALAPPDATA%, %APPDATA%, %TEMP%
+
+    Result: 0 files contained the token.
+
+    HONEST LIMIT: this is a targeted sweep, not a whole-disk proof. An
+    earlier version recursed all of AppData and turned a millisecond test
+    into a multi-minute one; a test slow enough to be skipped proves less
+    than a fast one that actually runs. It covers every location this
+    application could plausibly persist to, and it fails loudly if someone
+    later adds a settings file, a session cache, or a log line that
+    helpfully includes the token.
+
+Dispose_DiscardsTheHeldToken
+    A disposed client no longer holds a credential.
+
+-----------------------------------------------------------------------------
+CORRELATION-ID PROPAGATION (a named deliverable, not its own box)
+-----------------------------------------------------------------------------
+
+EveryRequest_CarriesItsOwnCanonicalCorrelationId
+    Every request carries X-Correlation-Id in canonical "D" form, and two
+    calls never share one. ADR-014 has the API reject any other shape with
+    a controlled 400, so this format is a contract rather than a style
+    choice — P1-10 found that path the hard way.
+
+AfterSignIn_ProtectedCallsCarryTheBearerToken
+    Protected calls carry "Bearer <token>" (the Session scheme, ADR-005);
+    the login call itself carries no Authorization header.
+
+=============================================================================
+NOTES FOR WHOEVER RUNS THE CROSS-MACHINE PASS
+=============================================================================
+
+1. Correct the hosts entry on the host first. MERCH-HOST is stale.
+2. Apply the P1-09 firewall rule — scripts/configure-firewall-dev.ps1 has
+   never been run, so TCP 8443 is not open. Note that two Windows
+   auto-prompt rules DO exist for the debug binary:
+
+       TCP/UDP "Query User{...}merchandising.api.exe"
+       Action Allow, Profile Private, Port Any, Remote Any
+
+   Those are far wider than the intended rule and were created by clicking
+   Allow on a Windows prompt, not by the script. A second machine could
+   connect through them and prove nothing about the intended scoping.
+   Decide whether to remove them before treating a cross-machine pass as
+   evidence of the firewall design.
+3. Trust the certificate on the client per docs/installation-guide.md §4 /
+   evidence/phase-1/p1-09-client-trust-steps.md.
+4. Seed something to decrement:
+
+       Merchandising.Maintenance.exe create-user clerk <password> InventoryClerk
+       Merchandising.Maintenance.exe seed-demo clerk
+
+   seed-demo posts the opening balance as a MOVEMENT (conditional update +
+   StockMovements + AuditLogs, one transaction, affected rows verified),
+   not as a direct write to StockBalances. A seed that bypassed the ledger
+   would leave a balance no movement explains.
+5. The client machine needs the .NET 10 Desktop Runtime 10.0.9 x64 and
+   must NOT have the SDK. A machine with the SDK cannot prove box 1.

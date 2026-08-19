@@ -935,23 +935,43 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track E — Client seam
 
-### ⬜ P1-15 · WPF client spike over HTTPS
+### 🟡 P1-15 · WPF client spike over HTTPS — client behaviour proven, cross-machine round trip still open
 
-**Spec:** §6.1, §16 · **Closes:** G-26
+**Spec:** §6.1, §16 · **Closes:** G-26 (partially)
 
 **Files:** `src/Merchandising.ClientCommon/Api/*.vb`, `src/Merchandising.Inventory/Views/*.xaml`
 
 **Do:** Typed API client with in-memory token storage, connection-state detection, correlation-ID propagation. One WPF window: login, call protected endpoint, display result, trigger the decrement, show connection status.
 
+> **Result.** `ClientCommon.Api` now holds the whole client seam — `MerchandisingApiClient` (typed calls, in-memory `InMemoryTokenStore`, `X-Correlation-Id` per request in canonical `D` form per ADR-014, platform-default certificate validation with no bypass callback), plus `ApiResult`/`ApiOutcome`/`ConnectionState`. `Merchandising.Inventory` gets one window: sign in, call `/auth/me`, decrement, sign out, with a connection pill, a loading bar, a visible focus ring and a validation path — spec §16's list, restricted to what this card is about.
+>
+> **The design decision the card is really about.** G-26 is not "add an offline indicator", it is "stop treating every failure as the same failure". So `Rejected` (the API answered and refused) and `Unavailable` (the API was never reached) are separate outcomes, and the connection state only moves on the second. Collapsing them would render a 409 `InsufficientStock` as "you are offline" — sending an operator to check a network cable over a business rule — and render a real outage as a server error, inviting a retry of a write whose fate is unknown. **Every unavailable-state test is paired with a control that reaches a server and is refused by it**; without the pair, a client that called everything an outage would pass.
+>
+> **No retry policy, no outbox, no queue. Their absence is the feature** — there is no code to disable, so there is nothing to regress. `UnreachableWrite_IsNeverQueuedOrReplayedAfterRecovery` proves it the only way that means anything: the API goes down, the write fails, the API comes back, a *different* call succeeds so the client has demonstrably noticed the recovery — and exactly one decrement request ever reached the wire.
+>
+> **Test project retargeted, on the record.** `Merchandising.Tests.Unit` moved `net10.0` → `net10.0-windows`, because `ClientCommon` is `net10.0-windows` with `UseWPF` (deliberately — spec §7 puts converters and shared XAML resources there) and a `net10.0` test project cannot reference it. The alternative was a twelfth project. Nothing is given up: every component here is Windows-only already, and P1-19's "both test projects" stays literally true. Unit tests 8 → 17.
+>
+> **`CommunityToolkit.Mvvm` deliberately not adopted.** Spec §6.1 names it, but it is not pinned in `docs/adr.md`, and CLAUDE.md §6 forbids introducing an unpinned version. Thirty lines of hand-written `ObservableObject` cost nothing and block nothing. Pinning the toolkit is a real decision with a source-generator question attached — its `ObservableProperty`/`RelayCommand` generators are C#-only, so the VB story needs *measuring* before it is promised — and it belongs to Phase 2, where the first real screen exists to justify it.
+>
+> **`seed-demo` added to the maintenance utility.** No migration seeds data and the integration tests tear their fixtures down, so there was nothing on the database for a human to point a window at. The verb posts opening stock as a **movement** — conditional update, `StockMovements`, `AuditLogs`, one transaction, affected rows verified — not as a direct write to `StockBalances`. A seed that bypassed the ledger would leave a balance no movement explains, which is the exact inconsistency append-only exists to prevent. Runs as `merch_migrator`, like `migrate` and `create-user`.
+>
+> **VB trap, again:** `Await` inside `Catch`/`Finally` is `BC36943`. The seed's rollback runs after the `Try` closes, driven by a flag, with the original exception rethrown through `ExceptionDispatchInfo` so the stack survives. Same family as the one P1-10 hit.
+>
+> **Why box 1 is not ticked, and why running it here would not weakly support it.** The card wants a machine with the Desktop Runtime 10.0.9 x64 and **not** the SDK, because the failure it exists to catch is a framework-dependent WPF client (ADR-010) that will not launch where no Desktop Runtime is installed. This machine has SDK 10.0.301, so that failure mode is invisible here *by definition* — a local run says nothing about the box rather than something weak. ADR-010's parked item ("the prerequisite check is unvalidated and cannot be validated here") stays parked and is now cross-referenced from the ADR.
+>
+> **Why the two screenshots are missing.** `MERCH-HOST` still resolves to `192.168.100.165`; this host holds `192.168.100.123` (the P1-10 finding, still true — the elevated fix was prepared this session but not run). The certificate is name-only (ADR-011), so the client must connect by name, and by name it currently reaches nothing. A connection-unavailable screenshot taken in that state would show the indicator firing because the *address* is dead, not because the API was stopped — which is not the claim this card makes. Pair the hosts correction with P1-09's unapplied firewall rule in one elevated sitting.
+>
+> **Found while checking the firewall:** two Windows auto-prompt rules already allow `merchandising.api.exe` on **any port from any remote address** on the Private profile, created by clicking Allow on a Windows prompt rather than by `configure-firewall-dev.ps1` (which has still never been run). A second machine could connect through those and prove nothing about the intended `LocalSubnet`/8443 scoping. Decide whether to remove them before treating a cross-machine pass as firewall evidence.
+
 **Done when:**
 
-- [ ] Full round trip over HTTPS **from a second machine**, not the dev machine — the lab test workstation satisfies this (ADR-012). It must have the .NET 10 Desktop Runtime 10.0.9 x64 and **not** the SDK: a framework-dependent WPF client (ADR-010) that fails at launch on a runtime-free machine is exactly the failure this card exists to catch
-- [ ] Stopping the API produces a clear connection-unavailable state
-- [ ] The client **refuses** to queue or fake the write when offline
-- [ ] Token never written to disk
-- [ ] `ClientCommon` still references only `Contracts` (G-B passes)
+- [ ] Full round trip over HTTPS **from a second machine**, not the dev machine — the lab test workstation satisfies this (ADR-012). It must have the .NET 10 Desktop Runtime 10.0.9 x64 and **not** the SDK: a framework-dependent WPF client (ADR-010) that fails at launch on a runtime-free machine is exactly the failure this card exists to catch — **not attempted; impossible on this machine, see the result note**
+- [x] Stopping the API produces a clear connection-unavailable state — `ApiUnreachable_ProducesUnavailableStateAndAPlainMessage`, with `ServerRefusal_IsReportedAsRejectedAndStaysOnline` as the discriminating control. **Screenshot still owed** (see above); the behaviour itself is proven by test
+- [x] The client **refuses** to queue or fake the write when offline — `UnreachableWrite_IsNeverQueuedOrReplayedAfterRecovery`: exactly one decrement reaches the wire across a down/up cycle in which a later call demonstrably succeeded
+- [x] Token never written to disk — `SignIn_WritesTheTokenNowhereOnDisk` searches every file created or modified during sign-in across the app directory and the four per-application data locations for the token string; 0 hits. A targeted sweep, not a whole-disk proof — the limit is stated in the evidence
+- [x] `ClientCommon` still references only `Contracts` (G-B passes) — guardrails green in the same run
 
-**Evidence:** `p1-15-client-roundtrip.png`, `p1-15-api-down-state.png`
+**Evidence:** `p1-15-client-behaviour.txt` · **still owed:** `p1-15-client-roundtrip.png`, `p1-15-api-down-state.png` (both blocked on the hosts correction, then capturable same-host; box 1's own screenshot needs the second machine)
 
 ---
 

@@ -23,9 +23,32 @@
     resource. The integration project deliberately does the opposite.
   -->
 
+
+  <!--
+    P1-15 retargeted this project from $(MerchNetTfm) to $(MerchWindowsTfm),
+    and that needs a reason on the record.
+
+    Merchandising.ClientCommon is net10.0-windows with UseWPF - deliberately,
+    because spec section 7 puts converters, styles and shared XAML resources in
+    it, and a plain net10.0 library cannot hold a ResourceDictionary. A net10.0
+    test project cannot reference a net10.0-windows one, so P1-15's client
+    behaviour (token never persisted, writes refused when the API is
+    unreachable, correlation IDs propagated) had no place to be tested from.
+
+    The alternative was a twelfth project purely for client tests. Retargeting
+    costs nothing real: every component of this system is Windows-only already
+    - WPF clients, a Windows Service, win-x64 packaging, XAMPP on Windows - so
+    no portability is being given up, and P1-19's "both test projects" stays
+    literally true.
+
+    UseWPF is set because ClientCommon carries a WPF framework reference.
+    Nothing in this project draws anything.
+  -->
+
   <PropertyGroup>
     <RootNamespace>Merchandising.Tests.Unit</RootNamespace>
-    <TargetFramework>$(MerchNetTfm)</TargetFramework>
+    <TargetFramework>$(MerchWindowsTfm)</TargetFramework>
+    <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
@@ -36,6 +59,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Merchandising.Domain\Merchandising.Domain.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Contracts\Merchandising.Contracts.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj" />
   </ItemGroup>
 
 </Project>

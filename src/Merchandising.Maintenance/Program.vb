@@ -1,14 +1,17 @@
 ' Merchandising.Maintenance.Program
 '
-' CLI entry point for the maintenance utility. Wires up "migrate" (P1-06)
-' and "create-user" (P1-08, account bootstrap - see CreateUserCommand.vb).
+' CLI entry point for the maintenance utility. Wires up "migrate" (P1-06),
+' "create-user" (P1-08, account bootstrap - see CreateUserCommand.vb) and
+' "seed-demo" (P1-15, the one product the client spike decrements).
 ' Backup/restore/schema-verification join them in later Phase 1/6 tasks per
 ' spec section 7.
 
 Imports System
+Imports System.Globalization
 Imports System.IO
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
+Imports Merchandising.Maintenance.Demo
 Imports Merchandising.Maintenance.Migrations
 Imports Merchandising.Maintenance.Users
 Imports MySqlConnector
@@ -46,6 +49,9 @@ Module Program
             Case "create-user"
                 Await RunCreateUserAsync(args)
 
+            Case "seed-demo"
+                Await RunSeedDemoAsync(args)
+
             Case Else
                 PrintUsage()
                 Environment.ExitCode = 1
@@ -57,6 +63,7 @@ Module Program
     Private Sub PrintUsage()
         Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe seed-demo <actor-username> [--sku <sku>] [--quantity <n>] [--config <path>]")
     End Sub
 
     Private Async Function RunMigrateAsync(args As String()) As Task
@@ -141,6 +148,114 @@ Module Program
             ' ADR-013) into a clear message and a non-zero exit code rather
             ' than letting the process crash with a raw stack trace.
             Console.Error.WriteLine($"Migration run failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    ''' <summary>
+    ''' P1-15: creates the demo product the client spike points at, with an
+    ''' opening balance posted as a movement rather than written straight into
+    ''' the balance. Re-runnable - a second run reports that it changed nothing.
+    ''' </summary>
+    Private Async Function RunSeedDemoAsync(args As String()) As Task
+
+        If args.Length < 2 Then
+            PrintUsage()
+            Environment.ExitCode = 1
+            Return
+        End If
+
+        Dim actorUsername As String = args(1)
+        Dim sku As String = "DEMO-001"
+        Dim quantity As Decimal = 100D
+        Dim configPath As String = Nothing
+
+        Dim i As Integer = 2
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--config requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    configPath = args(i)
+
+                Case "--sku"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--sku requires a value.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    sku = args(i)
+
+                Case "--quantity"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--quantity requires a value.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    If Not Decimal.TryParse(args(i), NumberStyles.Number, CultureInfo.InvariantCulture, quantity) Then
+                        Console.Error.WriteLine($"'{args(i)}' is not a number.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        ' merch_migrator, the same identity as migrate and create-user: seeding
+        ' is a host-side bootstrap operation, not something the API does.
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+            Dim factory As New ConnectionFactory(options)
+
+            Dim result As SeedDemoResult = Await SeedDemoCommand.RunAsync(
+                factory, actorUsername, sku, "Demo product (P1-15 client spike)", 199.5D, 120D, quantity)
+
+            If result.ProductCreated Then
+                Console.WriteLine($"Created product '{sku}' (Id {result.ProductId}).")
+            Else
+                Console.WriteLine($"Product '{sku}' already existed (Id {result.ProductId}).")
+            End If
+
+            If result.OpeningApplied Then
+                Console.WriteLine($"Opening balance posted as a movement: {result.QuantityOnHand} on hand.")
+            Else
+                Console.WriteLine($"Opening balance left alone: {result.QuantityOnHand} already on hand.")
+            End If
+
+            Console.WriteLine($"Point the client window at Product ID {result.ProductId}.")
+            Environment.ExitCode = 0
+
+        Catch ex As SeedDemoCommandException
+
+            Console.Error.WriteLine($"seed-demo failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        Catch ex As MySqlException
+
+            Console.Error.WriteLine($"seed-demo failed: {ex.Message}")
             Environment.ExitCode = 1
 
         End Try
