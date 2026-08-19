@@ -858,7 +858,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-12 · Forced-failure rollback proof
+### ✅ P1-12 · Forced-failure rollback proof
 
 **Spec:** §11 · **Closes:** G-12
 
@@ -866,13 +866,21 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Balance, movement, **and** audit rows are all absent afterwards
-- [ ] Before/after row counts recorded
-- [ ] Fault injection cannot be enabled in a release build
+- [x] Balance, movement, **and** audit rows are all absent afterwards
+- [x] Before/after row counts recorded
+- [x] Fault injection cannot be enabled in a release build
 
 > A partial commit here is a **phase failure**, not a bug to note and move past.
 
 **Evidence:** `p1-12-rollback.txt`
+
+> `StockService.DecrementAsync` (`src/Merchandising.Api/Inventory/StockService.vb`) gained an `Optional testOnlyFaultAfterAuditInsert As Action` parameter, invoked right after the `AuditLogs` insert and immediately before `CommitAsync` — after both non-balance writes are sent, still uncommitted. The thrown exception is deliberately uncaught; it propagates out through the enclosing `Using connection`, whose `Dispose()` severs the connection and lets MariaDB roll back whatever was still open, exactly as the class header already documented before this card existed.
+>
+> **VB constraint found while implementing:** a `#If DEBUG` directive cannot interrupt a comma-continued parameter list (`BC30203`/`BC30013`, confirmed by trying it), so the parameter itself exists in every configuration — only its single call site is wrapped in `#If DEBUG`. Box 3 is therefore proven empirically rather than by parameter absence: the identical call was run once under Debug (rolls back completely — 0/0/0 before and after) and once under Release (the fault never fires — commits a real movement/audit row instead), with the database cross-checked directly both times. `run-tests.ps1` still only builds/runs Debug, so this Release-only behaviour never affects the normal green signal.
+>
+> New integration test `Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows` in `StockDecrementTests.vb`. Full suite: 30\30 integration tests green (1 new), 8\8 unit tests, guardrails pass, 0 warnings. See `evidence/phase-1/p1-12-rollback.txt`.
+>
+> **ADR-006 stays PENDING** — this card proves the rollback half; the concurrency claim is still P1-13's evidence, not this card's.
 
 ---
 

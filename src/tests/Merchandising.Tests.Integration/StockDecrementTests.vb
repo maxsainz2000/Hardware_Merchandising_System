@@ -172,6 +172,67 @@ Public Class StockDecrementTests
 
     End Function
 
+    ''' <summary>
+    ''' P1-12: fault injected after both the StockMovements and AuditLogs
+    ''' inserts, still inside the open transaction, immediately before
+    ''' commit. The class header's own comment already documents why the
+    ''' unhandled exception is enough - the connection Dispose()s on the way
+    ''' out and MariaDB rolls back whatever was still uncommitted. This test
+    ''' proves that in practice: before/after counts for balance, movement,
+    ''' and audit are recorded and asserted identical.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows() As Task
+
+        Dim correlationId As String = Guid.NewGuid().ToString()
+        Dim decrementQuantity As Decimal = 7.000D
+
+        Dim balanceBefore As Decimal
+        Dim movementCountBefore As Long
+        Dim auditCountBefore As Long
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+            balanceBefore = Await ReadBalanceAsync(connection, _productId)
+            movementCountBefore = Await CountMovementRowsAsync(connection, correlationId)
+            auditCountBefore = Await CountAuditRowsAsync(connection, correlationId, "StockDecremented")
+        End Using
+
+        Assert.AreEqual(BaselineQuantity, balanceBefore, "Fixture balance must start at the known baseline.")
+        Assert.AreEqual(0L, movementCountBefore, "A fresh correlation Id must start with no movement rows.")
+        Assert.AreEqual(0L, auditCountBefore, "A fresh correlation Id must start with no audit rows.")
+
+        Dim faultInjected As Boolean = False
+
+        Await Assert.ThrowsExactlyAsync(Of InvalidOperationException)(
+            Function() _stockService.DecrementAsync(
+                _productId, decrementQuantity, "P1-12 forced-failure rollback proof", _actorUserId, correlationId,
+                testOnlyFaultAfterAuditInsert:=Sub()
+                                                   faultInjected = True
+                                                   Throw New InvalidOperationException("P1-12 forced failure: after audit insert, before commit.")
+                                               End Sub))
+
+        Assert.IsTrue(faultInjected, "The fault-injection delegate must actually have fired for this proof to mean anything.")
+
+        Dim balanceAfter As Decimal
+        Dim movementCountAfter As Long
+        Dim auditCountAfter As Long
+
+        Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()
+            balanceAfter = Await ReadBalanceAsync(connection, _productId)
+            movementCountAfter = Await CountMovementRowsAsync(connection, correlationId)
+            auditCountAfter = Await CountAuditRowsAsync(connection, correlationId, "StockDecremented")
+        End Using
+
+        Console.WriteLine($"P1-12 before/after - balance: {balanceBefore:0.000} -> {balanceAfter:0.000}; " &
+                           $"movement rows: {movementCountBefore} -> {movementCountAfter}; " &
+                           $"audit rows: {auditCountBefore} -> {auditCountAfter}")
+
+        Assert.AreEqual(balanceBefore, balanceAfter, "A rolled-back decrement must leave the balance untouched.")
+        Assert.AreEqual(0L, movementCountAfter, "A rolled-back decrement must leave zero StockMovements rows.")
+        Assert.AreEqual(0L, auditCountAfter, "A rolled-back decrement must leave zero AuditLogs rows.")
+
+    End Function
+
     Private Async Function EnsureFixtureProductAsync() As Task(Of Integer)
 
         Using connection As MySqlConnection = Await _apiFactory.CreateOpenConnectionAsync()

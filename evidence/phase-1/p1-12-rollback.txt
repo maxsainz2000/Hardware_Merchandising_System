@@ -1,0 +1,137 @@
+P1-12  FORCED-FAILURE ROLLBACK PROOF
+Done-when boxes: 1 (balance, movement, and audit rows all absent afterwards),
+2 (before/after row counts recorded), 3 (fault injection cannot be enabled
+in a release build).
+
+Server    : 10.4.32-MariaDB
+Fixture   : Sku=p1_11_fixture_sku, Id=2 (same permanent fixture P1-11 uses -
+            Products/StockBalances have no DELETE grant for merch_api).
+Mechanism : Merchandising.Api.Inventory.StockService.DecrementAsync now takes
+            an Optional Action parameter, testOnlyFaultAfterAuditInsert,
+            invoked immediately after the AuditLogs insert and immediately
+            before transaction.CommitAsync - i.e. after BOTH the
+            StockMovements and AuditLogs rows are sent to the server, still
+            uncommitted. This is the superset of the card's "after the
+            movement insert but before commit" window, and the strongest
+            point available: proving rollback here proves it for every row
+            this method ever writes. The exception is deliberately NOT
+            caught (see StockService.vb's own header comment) - it
+            propagates out through the enclosing `Using connection` block,
+            whose Dispose() severs the connection, and MariaDB rolls back
+            whatever was still open on that connection.
+
+===============================================================================
+PART A - the rollback test alone, Debug configuration, detailed output
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~Decrement_FaultInjectedBeforeCommit" --logger "console;verbosity=detailed"
+
+Test run for ...Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+  Passed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [436 ms]
+  Standard Output Messages:
+ P1-12 before/after - balance: 100.000 -> 100.000; movement rows: 0 -> 0; audit rows: 0 -> 0
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+
+  [PASS] box 2 - before/after counts recorded explicitly: balance 100.000 -> 100.000,
+  movement rows 0 -> 0, audit rows 0 -> 0, for one fresh correlation Id.
+  [PASS] box 1 - all three counts are identical before and after the forced
+  failure: the fault-injected exception (asserted to have actually fired via
+  the `faultInjected` flag, and to be exactly InvalidOperationException) left
+  no trace in StockBalances, StockMovements, or AuditLogs.
+
+===============================================================================
+PART B - full suite, Debug configuration (nothing else broken by the change)
+===============================================================================
+
+$ pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+G-A/G-B/G-C/G-D all pass
+
+=== Build ===
+Build succeeded. 0 Warning(s), 0 Error(s).
+
+=== Unit tests ===
+Passed! - Failed: 0, Passed: 8, Total: 8
+
+=== Integration tests (real MariaDB) ===
+Passed! - Failed: 0, Passed: 30, Total: 30   (29 from before P1-12 + 1 new)
+
+All checks passed.
+
+===============================================================================
+PART C - box 3: the same fault cannot be enabled in a Release build
+===============================================================================
+
+VB's preprocessor cannot interrupt a comma-continued parameter list (tried
+first; confirmed as a hard compile error - BC30203/BC30013), so
+testOnlyFaultAfterAuditInsert is present in the method signature in every
+configuration. What makes it inert in Release is that its ONLY call site is
+wrapped in `#If DEBUG ... #End If` (StockService.vb, immediately before
+CommitAsync) - a Release build's compiled DecrementAsync never invokes the
+delegate, regardless of what a caller passes. Proven empirically, not just
+by reading the source:
+
+$ dotnet build src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Release --nologo
+Build succeeded. 0 Warning(s), 0 Error(s). (Api, Infrastructure, Domain, Contracts, Maintenance all rebuilt Release too.)
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Release --no-build --nologo --filter "FullyQualifiedName~Decrement_FaultInjectedBeforeCommit" --logger "console;verbosity=detailed"
+
+  Failed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [1 s]
+  Error Message:
+   Assert.ThrowsExactlyAsync failed. Expected exception type:<System.InvalidOperationException>
+   but no exception was thrown. 'action' expression: 'Function() _stockService.DecrementAsync(
+                _productId, decrementQuantity, "P1-12 forced-failure rollback proof", _actorUserId, correlationId,
+                testOnlyFaultAfterAuditInsert:=Sub()
+                                                   faultInjected = True
+                                                   Throw New InvalidOperationException("P1-12 forced failure: after audit insert, before commit.")
+                                               End Sub)'.
+
+Test Run Failed.
+Total tests: 1
+     Failed: 1
+
+This failure IS the proof, not a defect: under Release, the same throwing
+delegate that rolls the transaction back under Debug is never invoked at
+all, so DecrementAsync runs to completion and commits normally - which is
+exactly why the test's own "an exception must have been thrown" assertion
+fails. `run-tests.ps1` never builds or runs this project in Release
+configuration (its $Configuration parameter defaults to 'Debug'), so this
+Release-only behaviour never gates the normal test pass/fail signal.
+
+Direct database cross-check of what actually got committed by that Release
+run (root, read-only):
+
+$ mysql -u root -e "SELECT Id, Delta, QuantityBefore, QuantityAfter, Reason, CorrelationId FROM merchandising.stockmovements WHERE Reason LIKE 'P1-12%';"
+Id  Delta    QuantityBefore  QuantityAfter  Reason                            CorrelationId
+14  -7.000   100.000         93.000         P1-12 forced-failure rollback proof  767efca0-68aa-4cf9-9c81-f249ef009c92
+
+$ mysql -u root -e "SELECT Id, ActorUserId, Action, Target, Result, CorrelationId, Detail FROM merchandising.auditlogs WHERE CorrelationId='767efca0-68aa-4cf9-9c81-f249ef009c92';"
+Id   ActorUserId  Action            Target      Result   CorrelationId                          Detail
+295  8            StockDecremented  Product:2   Success  767efca0-68aa-4cf9-9c81-f249ef009c92   Quantity 100.000 -> 93.000 (movement 14)
+
+  [PASS] box 3 - under Release, the fault-injection delegate never fires: the
+  decrement committed exactly one movement row and one audit row, the same
+  "happy path" shape P1-11 proves, with no rollback at all. Under Debug
+  (Part A), the identical call rolls back completely. The only difference
+  between the two runs is the build configuration.
+
+Fixture balance was restored to the 100.000 baseline by the next test run's
+TestInitialize (every test resets StockBalances.Quantity before asserting -
+see StockDecrementTests.SetUpAsync / ResetStockBalanceAsync); movement row
+14 and audit row 295 above are permanent, append-only evidence of the
+Release-configuration run and are left in place deliberately, the same
+"fixture rows are real, not scratch data" shape P1-11's evidence uses.
+
+===============================================================================
+SUMMARY
+===============================================================================
+Box 1 (balance, movement, and audit rows all absent afterwards): PASS - Part A.
+Box 2 (before/after row counts recorded): PASS - Part A's Standard Output line.
+Box 3 (fault injection cannot be enabled in a release build): PASS - Part C,
+  proven empirically by running the identical call under both configurations
+  and cross-checking the database, not merely by inspection of the source.

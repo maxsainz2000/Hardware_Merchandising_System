@@ -32,6 +32,22 @@
 ' any error other than its one explicitly-handled case, and it is what lets
 ' P1-12's fault injection prove the rollback guarantee without this method
 ' needing to know about it in advance.
+'
+' P1-12: testOnlyFaultAfterAuditInsert is the fault-injection seam itself.
+' VB's preprocessor cannot interrupt a comma-continued parameter list (a
+' `#If` there is a compile error, BC30203/BC30013 - confirmed by trying it),
+' so the parameter itself is present in every configuration. What makes it
+' inert in Release is that its ONLY call site, below, is wrapped in
+' `#If DEBUG` - a Release build's compiled DecrementAsync never invokes it,
+' no matter what a caller passes. p1-12-rollback.txt proves this
+' empirically: the same throwing delegate that rolls the transaction back
+' under a Debug build is passed under a Release build and is silently
+' ignored - commit succeeds, the delegate never fires. It fires after BOTH
+' the StockMovements and AuditLogs inserts, immediately before CommitAsync -
+' the superset of the card's "after the movement insert but before commit"
+' window, and the strongest point available: proving rollback here proves
+' it for every row this method ever writes, not just the first one. Left
+' un-set (Nothing) by every caller except the P1-12 test itself.
 
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Domain
@@ -68,6 +84,7 @@ Namespace Inventory
             reason As String,
             actorUserId As Integer,
             correlationId As String,
+            Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of StockDecrementOutcome)
 
             ' ADR-004.1: never trust a caller-supplied quantity is already at
@@ -103,6 +120,13 @@ Namespace Inventory
                     detail:=$"Quantity {decrementResult.QuantityBefore:0.000} -> {decrementResult.QuantityAfter:0.000} (movement {movementId})",
                     cancellationToken:=cancellationToken,
                     transaction:=transaction).ConfigureAwait(False)
+
+#If DEBUG Then
+                ' P1-12: both inserts above are already sent to the server,
+                ' still uncommitted. Throwing here and letting it propagate
+                ' (see the class header) is the rollback proof.
+                testOnlyFaultAfterAuditInsert?.Invoke()
+#End If
 
                 Await transaction.CommitAsync(cancellationToken).ConfigureAwait(False)
                 Await transaction.DisposeAsync().ConfigureAwait(False)
