@@ -43,6 +43,12 @@ Imports Microsoft.Extensions.Logging
 ''' another machine regardless of which Wi-Fi this laptop is currently on.
 ''' NonProductionWarningMiddleware tags every plain-HTTP response so that
 ''' listener can never be mistaken for the demo one.
+'''
+''' P1-21 / ADR-011.1: that HTTPS listener pins its own protocol floor to
+''' TLS 1.2 and 1.3 through TlsPolicy, rather than inheriting whatever the
+''' host's Schannel configuration permits. Under ADR-012 the host is a
+''' machine nobody in this project inspects, so the floor has to travel with
+''' the binary.
 ''' </remarks>
 Public Module Program
 
@@ -97,9 +103,17 @@ Public Module Program
             builder.WebHost.ConfigureKestrel(
                 Sub(kestrelOptions As KestrelServerOptions)
 
+                    ' P1-21 / ADR-011.1: the third argument is the whole point.
+                    ' Without AddressOf TlsPolicy.Apply, Kestrel defers its
+                    ' protocol floor to the host's Schannel configuration - a
+                    ' registry on a machine ADR-012 says nobody here inspects.
+                    ' Never call UseHttps in this project without it.
                     kestrelOptions.Listen(
                         IPAddress.Any, 8443,
-                        Sub(listenOptions) listenOptions.UseHttps(certificateOptions.PfxPath, certificateOptions.Password))
+                        Sub(listenOptions) listenOptions.UseHttps(
+                            certificateOptions.PfxPath,
+                            certificateOptions.Password,
+                            AddressOf TlsPolicy.Apply))
 
                     If builder.Environment.IsDevelopment() Then
                         kestrelOptions.Listen(IPAddress.Loopback, 8080)

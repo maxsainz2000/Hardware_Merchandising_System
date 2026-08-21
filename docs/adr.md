@@ -500,6 +500,30 @@ Resolution is configured on the lab host and on **no** demo workstation, which i
 
 **Evidence:** `evidence/phase-1/p1-09-cert-details.txt`, `evidence/phase-1/p1-09-client-trust-steps.md`, `evidence/phase-1/p1-09-invalid-cert-behaviour.txt`
 
+### ADR-011.1 · The TLS protocol floor is pinned in code, not inherited from the host
+
+**Status:** ACCEPTED
+**Date:** 2026-08-21
+**Decides:** which TLS versions Kestrel's HTTPS listener will negotiate, and where that decision lives. Resolved at P1-21. Hardens G-07.
+
+**Decision: `SslProtocols.Tls12 Or SslProtocols.Tls13`, set in Visual Basic source, with no configuration key that can override it.** Implemented as `Merchandising.Api.Security.TlsPolicy` and applied from `Program.vb` through the three-argument `UseHttps(path, password, configureOptions)` overload.
+
+**The hole.** P1-09 shipped `listenOptions.UseHttps(pfxPath, password)` — the two-argument overload, no `SslProtocols`. Kestrel then defers to Schannel, so the effective protocol floor was whatever the host operating system permitted. On the development machine that is harmless: its `SCHANNEL\Protocols` key exists but is completely empty — 0 subkeys, 0 values, measured at P1-21 rather than assumed — so every protocol sits at the Windows 11 default.
+
+**Why that is not good enough under ADR-012.** The API does not stay on that machine. It is handed to three classmates and run on a Windows 10 host that nobody in this project configures or inspects, where TLS 1.0 and 1.1 can still be enabled at the Schannel level. "This API speaks modern TLS" would then be a property of someone else's registry rather than of the delivered software — and the failure mode is silent, because a downgraded connection is indistinguishable from a good one at the client.
+
+This is the same argument that put `STRICT_TRANS_TABLES` in `ConnectionFactory` as well as in `my.ini` (ADR-003.2 / P1-05): **a guarantee an unfamiliar host can quietly revoke is not a guarantee.** Both cases resolve the same way — assert it in code, where it ships with the product.
+
+**Why not TLS 1.3 alone.** Considered and rejected. Every client in this system is .NET 10 and would negotiate 1.3 happily, but TLS 1.3 requires Windows 11 or Server 2022 on the Schannel side, and ADR-012 makes the host's Windows version a fact about a classmate's laptop rather than a decision this project gets to make. A 1.3-only listener would refuse every connection on a Windows 10 host. TLS 1.2 is the floor that is still sound and still universally available.
+
+**Why it is not configurable.** No appsettings key, no environment variable, no constructor parameter. The value a host could override is precisely the value this decision exists to take away from the host.
+
+**How the wiring was proven, since no in-process test can prove it.** The `ConfigureKestrel` block is skipped under the `Testing` environment (the P1-19 certificate guard), so `TlsPolicyTests` can prove the policy but not that `Program.vb` calls it. The proof is a controlled A/B against the real published binary: with the pin at `Tls12 Or Tls13` a client offering everything negotiated **TLS 1.3**; with `AllowedProtocols` temporarily narrowed to `Tls12` and nothing else changed, the same client on the same machine was forced down to **TLS 1.2**, and a TLS-1.3-only client was refused with a `HandshakeFailure` alert *sent by Kestrel*. The listener's protocol set demonstrably follows this decision.
+
+**Origin.** Raised by the P1-09 cross-machine lab run, where `merch-laptop` reported `Tls12` against a host-side record of `Tls13` and flagged the mismatch instead of reporting the expected value. That reading was a harness artifact — Windows PowerShell 5.1 runs on .NET Framework, whose `SslStream` does not offer TLS 1.3 — but chasing it is what exposed the unpinned listener behind it. `scripts/probe-tls.ps1` now prints its own runtime on every run and refuses to execute on .NET Framework, so that particular confusion cannot recur silently.
+
+**Evidence:** `evidence/phase-1/p1-21-tls-pinning.txt`
+
 ---
 
 ## ADR-012 · Delivery model — who receives this system, and on whose hardware

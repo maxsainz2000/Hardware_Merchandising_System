@@ -1,0 +1,244 @@
+=== P1-21 evidence: Kestrel's TLS protocol floor is pinned in code ===
+Captured: 2026-08-21 12:08 UTC on LAPTOP-3HH6OHHE (development/lab host)
+Card: tasks.md P1-21  |  Decision: docs/adr.md ADR-011.1  |  Spec: section 8, section 17
+
+--------------------------------------------------------------------------------
+SECTION 0 - WHAT WAS WRONG
+--------------------------------------------------------------------------------
+
+Program.vb called the two-argument overload:
+
+    listenOptions.UseHttps(certificateOptions.PfxPath, certificateOptions.Password)
+
+No SslProtocols argument, so Kestrel deferred its protocol floor to Schannel -
+the host operating system's own TLS configuration.
+
+That is safe on THIS machine and only on this machine. Under ADR-012 the API is
+handed to classmates and run on a Windows 10 host that nobody in this project
+configures or inspects, where TLS 1.0 and 1.1 can still be enabled at the
+Schannel level. The guarantee "this API speaks modern TLS" would have been a
+statement about someone else's registry, and its failure would be silent: a
+downgraded connection is indistinguishable from a good one at the client.
+
+Fixed by Merchandising.Api.Security.TlsPolicy, applied through the
+three-argument UseHttps(path, password, configureOptions) overload.
+
+--------------------------------------------------------------------------------
+SECTION 1 - THE HOST'S OWN SCHANNEL STATE, MEASURED
+--------------------------------------------------------------------------------
+
+    HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols
+      Parent key exists : True
+      Subkey count      : 0
+      Values on parent  : 0
+
+CORRECTION TO THE CARD'S OWN WORDING. tasks.md P1-21 says this host has "no
+SCHANNEL\Protocols registry keys at all". Measured, the container key DOES
+exist - it is simply empty. No per-protocol subkey (TLS 1.0 / TLS 1.1 / ...)
+and no Enabled or DisabledByDefault value exists anywhere beneath it, so the
+conclusion the card drew is correct even though the detail was not: every
+protocol on this machine sits at the Windows 11 default, unmodified.
+
+Recorded because this is exactly the sort of near-miss that gets quoted back
+later as though it had been verified. It has now actually been queried.
+
+--------------------------------------------------------------------------------
+SECTION 2 - THE HARNESS PROBLEM THIS CARD EXISTS TO AVOID REPEATING
+--------------------------------------------------------------------------------
+
+P1-09 measured the negotiated protocol with Windows PowerShell 5.1 and read
+back Tls12. That figure describes the CLIENT, not the server: Windows
+PowerShell 5.1 runs on .NET Framework, whose SslStream does not offer TLS 1.3
+through AuthenticateAsClient. p1-09-cross-machine-trust.txt flags this in its
+METHOD section and must never be quoted as a measurement of the API.
+
+Every reading below therefore prints its own client runtime first, and
+scripts/probe-tls.ps1 THROWS if it finds itself running on .NET Framework:
+
+      PowerShell      : 7.6.5
+      Edition         : Core
+      .NET runtime    : .NET 10.0.11
+      OS              : Microsoft Windows NT 10.0.26200.0
+
+That is a .NET 10 client, satisfying the card's third box. The 10.0.11 figure
+is the shell's own runtime and is not a product dependency - the pinned
+Microsoft.AspNetCore.App runtime for this project remains 10.0.9 (ADR-002).
+
+--------------------------------------------------------------------------------
+SECTION 3 - RUN A: THE PINNED BUILD (Tls12 Or Tls13) - THE SHIPPING VALUE
+--------------------------------------------------------------------------------
+
+Published Release/win-x64, framework-dependent, ASPNETCORE_ENVIRONMENT=Production,
+real certificate from %ProgramData%\MerchandisingSystem\config\certificate.json.
+TCP to 127.0.0.1:8443 presenting SNI name MERCH-HOST (name-only SAN, ADR-011).
+
+  A1. Client offers whatever its OS permits
+      TLS protocol    : Tls13
+      Cipher suite    : TLS_AES_256_GCM_SHA384
+      Cipher algorithm: Aes256 256-bit
+      SslPolicyErrors : None
+      Cert subject    : CN=MERCH-HOST
+      Cert thumbprint : 759021AA351D8572EF19DD24ADDEF1A94A4849C9
+      HANDSHAKE SUCCEEDED
+
+  A2. Client offers TLS 1.2 only
+      TLS protocol    : Tls12
+      Cipher suite    : TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      HANDSHAKE SUCCEEDED
+
+  A3. Client offers TLS 1.3 only
+      TLS protocol    : Tls13
+      Cipher suite    : TLS_AES_256_GCM_SHA384
+      HANDSHAKE SUCCEEDED
+
+Both pinned protocols are individually reachable. Neither half of the pin is
+decorative.
+
+--------------------------------------------------------------------------------
+SECTION 4 - RUN B: THE DISCRIMINATING PROOF THAT PROGRAM.VB ACTUALLY CALLS IT
+--------------------------------------------------------------------------------
+
+THE PROBLEM. Run A on its own proves almost nothing. This host would negotiate
+TLS 1.3 with an UNPINNED listener too, because Windows 11 defaults to it. And
+refusal of TLS 1.0/1.1 cannot be attributed to the pin here either - the OS
+already refuses them. A test that passes identically with and without the
+change under test is not evidence.
+
+Nor can an in-process test close the gap: the entire ConfigureKestrel block is
+skipped under the "Testing" environment (the P1-19 guard that stops a test host
+loading a .pfx which exists on this machine and on no clean clone), so there is
+no configured listener for TlsPolicyTests to inspect.
+
+THE METHOD. Change ONE value - TlsPolicy.AllowedProtocols, from
+(Tls12 Or Tls13) to Tls12 alone - rebuild, and re-probe. Same machine, same OS,
+same registry, same certificate, same client, same probe script. If the
+observable handshake follows that value, then Program.vb demonstrably applies
+TlsPolicy, and the listener's protocol set is demonstrably the one this project
+chose rather than the one Windows chose.
+
+  B1. Client offers whatever its OS permits
+      TLS protocol    : Tls12          <-- was Tls13 in A1
+      Cipher suite    : TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      HANDSHAKE SUCCEEDED
+
+      The server forced a client that WANTED TLS 1.3, and had it available,
+      down to TLS 1.2. Only the pin can have done that.
+
+  B2. Client offers TLS 1.3 only
+      Exception       : System.Management.Automation.MethodInvocationException
+      Inner           : Authentication failed because the remote party sent a
+                        TLS alert: 'HandshakeFailure'.
+      HANDSHAKE FAILED
+
+      "the remote party sent a TLS alert" - the REFUSAL CAME FROM KESTREL, not
+      from the client's own protocol list, and not from Schannel policy. This
+      is the refusal half of the guarantee, demonstrated portably: TLS 1.3
+      stands in for "a protocol outside the pin" precisely because this machine
+      supports it, which is what makes the refusal attributable.
+
+RESTORED. The Tls12-only edit existed only to produce the paragraph above. The
+source was restored from a backup taken before the edit, re-verified by reading
+the file back (Return SslProtocols.Tls12 Or SslProtocols.Tls13, line 65) and by
+a full green suite afterwards - see SECTION 6. The Tls12-only binary was
+published to a scratchpad directory outside the repository and is not shipped.
+
+--------------------------------------------------------------------------------
+SECTION 5 - WHAT THE AUTOMATED TESTS DO AND DO NOT COVER
+--------------------------------------------------------------------------------
+
+src/tests/Merchandising.Tests.Integration/TlsPolicyTests.vb - 4 tests:
+
+  HttpsOptions_WithoutTheProject_DeferToTheOperatingSystem
+        A fresh HttpsConnectionAdapterOptions reports SslProtocols.None, i.e.
+        "the OS decides". This is the half that gives the next test meaning:
+        without it, Apply_PinsTls12AndTls13 would keep passing even if
+        TlsPolicy.Apply were deleted, provided the framework default happened
+        to match. Same discriminating-pair lesson as P1-19's
+        X-Non-Production-Http tests.
+
+  Apply_PinsTls12AndTls13            exact equality with Tls12 Or Tls13
+
+  Apply_LeavesNoObsoleteProtocolEnabled
+        Written as a mask - (SslProtocols And Not (Tls12 Or Tls13)) must be
+        None - rather than four HasFlag calls naming Ssl2, Ssl3, Tls and Tls11.
+        Stronger, because it also refuses protocols added to the enum after
+        this was written. And cheaper: naming those four members directly costs
+        four obsolescence warnings (SYSLIB0039, BC40000) in a build that is
+        otherwise at zero warnings, and a warning nobody can fix is how a
+        warning list stops being read. The first draft of this test did name
+        them and did produce those four warnings; that draft was discarded.
+
+  AllowedProtocols_IsTheValueApplied
+
+  THE LIMIT, STATED PLAINLY: these four tests prove the POLICY. They do not
+  prove the WIRING - that Program.vb calls TlsPolicy.Apply at all. Nothing
+  in-process can, for the reason in SECTION 4. SECTION 4 is the wiring proof,
+  and it is a manual capture. A future reader must not upgrade a green test run
+  into a claim about the listener.
+
+--------------------------------------------------------------------------------
+SECTION 6 - GUARDRAILS AND TEST SUITE, AFTER RESTORING THE PINNED SOURCE
+--------------------------------------------------------------------------------
+
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+    All guardrails passed.
+
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+
+    Passed! - Failed: 0, Passed: 21, Skipped: 0, Total: 21  Merchandising.Tests.Unit.dll (net10.0)
+    Passed! - Failed: 0, Passed: 48, Skipped: 0, Total: 48  Merchandising.Tests.Integration.dll (net10.0)
+
+    All checks passed.
+
+Integration count 44 -> 48: the four tests in SECTION 5. Unit count unchanged
+at 21. Every source file added or changed by this card is Visual Basic or
+PowerShell; no C# anywhere (G-A).
+
+--------------------------------------------------------------------------------
+SECTION 7 - THE FAILING TEST CAME FIRST, AND ITS WEAKNESS
+--------------------------------------------------------------------------------
+
+TlsPolicyTests.vb was written and run BEFORE TlsPolicy.vb existed:
+
+    TlsPolicyTests.vb(69,9): error BC30451: 'TlsPolicy' is not declared.
+    TlsPolicyTests.vb(87,9): error BC30451: 'TlsPolicy' is not declared.
+    TlsPolicyTests.vb(114,9): error BC30451: 'TlsPolicy' is not declared.
+    TlsPolicyTests.vb(116,25): error BC30451: 'TlsPolicy' is not declared.
+    Build FAILED.  4 Warning(s)  4 Error(s)
+
+Honest about what that is worth: a compile error is a weaker red than a test
+that runs and asserts the wrong value. It confirms the test reaches the code
+under test and nothing more. The genuinely discriminating red/green pair for
+this card is SECTION 4, where the same probe returns Tls13 and then Tls12
+against two builds that differ in exactly one expression.
+
+The 4 warnings in that first run were the obsolescence warnings described in
+SECTION 5, and are why the mask formulation replaced the named-flag one.
+
+--------------------------------------------------------------------------------
+SECTION 8 - REPRODUCING THIS
+--------------------------------------------------------------------------------
+
+    # with the API running and listening on 8443:
+    pwsh ./scripts/probe-tls.ps1
+    pwsh ./scripts/probe-tls.ps1 -ClientProtocols Tls12
+    pwsh ./scripts/probe-tls.ps1 -ClientProtocols Tls13
+
+    # from the host itself, independent of what MERCH-HOST resolves to today:
+    pwsh ./scripts/probe-tls.ps1 -ConnectHost 127.0.0.1 -TlsName MERCH-HOST
+
+scripts/probe-tls.ps1 is committed rather than left in a scratchpad because it
+is worth running again on each demo workstation and on the demo rig: it answers
+"what TLS is this host actually negotiating, and which runtime is telling me
+so" in one command, which is the question this card was raised by.
+
+CARRIED FORWARD TO P1-16. The Windows Service card publishes and installs this
+same binary. The pin travels with it - it is compiled in, not configured - but
+the service run is the first time the listener starts without a console session
+behind it, and this probe is the cheapest way to confirm the HTTPS listener
+came up identically under the service identity.

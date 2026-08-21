@@ -1082,7 +1082,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-21 · Pin Kestrel's minimum TLS version explicitly
+### ✅ P1-21 · Pin Kestrel's minimum TLS version explicitly — closed 2026-08-21; pin proven by A/B against the real binary, not by a green test
 
 **Spec:** §8, §17 · **Closes:** G-07 (hardens) · **Raised:** 2026-08-21, cross-machine lab run
 
@@ -1100,13 +1100,27 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Kestrel's HTTPS listener pins `SslProtocols.Tls12 Or SslProtocols.Tls13`, set in code, not in configuration a host can override
-- [ ] A test asserts the pin — an integration test that inspects the configured `HttpsConnectionAdapterOptions`, since negotiating an obsolete protocol from a modern client to prove refusal is not portable across machines
-- [ ] The negotiated protocol is captured from a **.NET 10** client, not from Windows PowerShell 5.1 — the existing `Tls12` reading is a harness artifact and must not be filed as a product measurement
-- [ ] `docs/adr.md` records the decision and the ADR-012 reasoning behind it
-- [ ] Guardrails pass; VB only
+- [x] Kestrel's HTTPS listener pins `SslProtocols.Tls12 Or SslProtocols.Tls13`, set in code, not in configuration a host can override — `Merchandising.Api.Security.TlsPolicy`, applied via the three-argument `UseHttps(path, password, configureOptions)` overload. No appsettings key, no environment variable
+- [x] A test asserts the pin — `TlsPolicyTests.vb`, 4 tests over `HttpsConnectionAdapterOptions`, integration project. **Read the caveat in the Result below: these prove the policy, not the wiring**
+- [x] The negotiated protocol is captured from a **.NET 10** client — pwsh 7.6.5 on **.NET 10.0.11**, printed in the capture itself; `scripts/probe-tls.ps1` throws if it finds itself on .NET Framework, so the P1-09 harness confusion cannot recur silently
+- [x] `docs/adr.md` records the decision and the ADR-012 reasoning behind it — **ADR-011.1, ACCEPTED**
+- [x] Guardrails pass; VB only — G-A through G-D pass, 0 warnings, 21 unit / 48 integration green
 
 **Evidence:** `p1-21-tls-pinning.txt`
+
+> **Result.** `TlsPolicy` pins TLS 1.2 and 1.3 and nothing else. TLS 1.3 alone was considered and rejected: it requires Windows 11 / Server 2022 on the Schannel side, and ADR-012 makes the host's Windows version a fact about a classmate's laptop, not a decision this project makes — a 1.3-only listener would refuse every connection on a Windows 10 host. The pin is deliberately unconfigurable; the value a host could override is the value this card exists to take away from the host.
+>
+> **The card asked for a test that inspects the configured `HttpsConnectionAdapterOptions`, and that turned out to be impossible — say so rather than let a green suite imply it.** The whole `ConfigureKestrel` block is skipped under the `Testing` environment (the P1-19 guard that stops a test host loading a `.pfx` which exists on this machine and on no clean clone), so there is no configured listener in the test process to inspect. `TlsPolicyTests` proves `Apply` sets the right value on an options object it constructs itself. It cannot prove `Program.vb` calls it.
+>
+> **So the wiring was proven by A/B against the real published binary instead, and that is the strongest evidence on this card.** Run A (pin = `Tls12 Or Tls13`): a client offering everything negotiated **TLS 1.3**; TLS-1.2-only and TLS-1.3-only clients each connected, so neither half of the pin is decorative. Run B (`AllowedProtocols` temporarily narrowed to `Tls12`, nothing else changed, source restored from backup immediately after): the same client on the same machine with the same certificate was forced down to **TLS 1.2**, and a TLS-1.3-only client was refused with `HandshakeFailure` — **an alert sent by Kestrel**, not a client-side or Schannel refusal. That is also how refusal got proven portably: TLS 1.3 stands in for "a protocol outside the pin" precisely because this machine supports it, which is what makes the refusal attributable. Run A alone would have proven nothing — an unpinned listener on Windows 11 negotiates TLS 1.3 too.
+>
+> **A factual correction to this card's own text.** It states the host has "no `SCHANNEL\Protocols` registry keys at all". Queried directly: the container key **does** exist, it is simply empty — 0 subkeys, 0 values. The conclusion the card drew was right; the detail was not. Fixed in the evidence file and in the `TlsPolicy` header comment, because near-misses like this get re-quoted later as though they had been verified.
+>
+> **One test was rewritten before it landed.** The obsolete-protocol refusal was first written as four `HasFlag` calls naming `Ssl2`, `Ssl3`, `Tls` and `Tls11`. That compiled with four obsolescence warnings (SYSLIB0039, BC40000) in a build that is otherwise at zero, and a warning nobody can fix is how a warning list stops being read. Replaced with a mask — `(SslProtocols And Not (Tls12 Or Tls13))` must be `None` — which is both silent and stronger, since it also refuses any protocol added to the enum after this was written.
+>
+> **`scripts/probe-tls.ps1` is committed rather than discarded.** It answers "what TLS is this host actually negotiating, and which runtime is telling me so" in one command, which is worth running again on each demo workstation, on the demo rig, and at P1-16 when the listener first starts under a service identity with no console session behind it.
+>
+> Also hit: nothing new from the VB compiler. `AddressOf TlsPolicy.Apply` binds to `Action(Of HttpsConnectionAdapterOptions)` without ceremony — no repeat of the `BC30371` class of problem P1-19 found.
 
 ---
 
