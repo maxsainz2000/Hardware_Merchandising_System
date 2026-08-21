@@ -11,6 +11,7 @@
 ' InternalsVisibleTo half of that seam belongs to P1-19, not here.
 
 Imports System.Net
+Imports Merchandising.Api.Hosting
 Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Security
@@ -22,7 +23,10 @@ Imports Microsoft.AspNetCore.Hosting
 Imports Microsoft.AspNetCore.Server.Kestrel.Core
 Imports Microsoft.Extensions.DependencyInjection
 Imports Microsoft.Extensions.Hosting
+Imports Microsoft.Extensions.Hosting.WindowsServices
 Imports Microsoft.Extensions.Logging
+Imports Microsoft.Extensions.Logging.EventLog
+Imports System.Runtime.Versioning
 
 ''' <summary>
 ''' Entry point for the Merchandising API.
@@ -60,6 +64,24 @@ Public Module Program
     Public Const TestingEnvironmentName As String = "Testing"
 
     ''' <summary>
+    ''' Names the Event Log source the service writes under.
+    ''' </summary>
+    ''' <remarks>
+    ''' A named method rather than an inline lambda purely so the platform
+    ''' annotation has somewhere to live. CA1416's flow analysis does not
+    ''' follow an OperatingSystem.IsWindows() check at the call site into a
+    ''' lambda body, so the inline version warned even though it was already
+    ''' guarded. Annotating this method states the same fact where the
+    ''' analyser can see it, and the guarded call site above satisfies it.
+    ''' </remarks>
+    <SupportedOSPlatform("windows")>
+    Private Sub ConfigureEventLogSource(settings As EventLogSettings)
+
+        settings.SourceName = WindowsServiceInfo.EventLogSourceName
+
+    End Sub
+
+    ''' <summary>
     ''' Builds and runs the ASP.NET Core host.
     ''' </summary>
     ''' <param name="args">
@@ -69,6 +91,86 @@ Public Module Program
     Public Sub Main(args As String())
 
         Dim builder = WebApplication.CreateBuilder(args)
+
+        ' P1-16 / spec section 6.4: run as a Windows Service when Windows
+        ' started us as one, and as an ordinary console process otherwise.
+        '
+        ' SAFE TO CALL UNCONDITIONALLY, and that is worth knowing rather than
+        ' guessing. AddWindowsService consults WindowsServiceHelpers.
+        ' IsWindowsService() internally and does nothing at all when the
+        ' process was not launched by the service control manager - so a
+        ' console run, a `dotnet run`, and P1-19's WebApplicationFactory host
+        ' are all unaffected. Guarding it with an environment check would add
+        ' a second thing that can be configured wrongly for no benefit.
+        '
+        ' WHAT IT FIXES BEYOND THE LIFETIME. A service is started with
+        ' C:\Windows\System32 as its working directory, not the directory the
+        ' binary lives in. Without this call the content root would point
+        ' there, and anything resolved relative to it would silently read from
+        ' the wrong place.
+        '
+        ' It does NOT, however, turn on Event Log logging - an earlier draft of
+        ' this comment claimed it did, and that was wrong. The framework
+        ' registers that provider on Windows regardless of whether the process
+        ' is a service; see the block below for what actually had to be done
+        ' about it.
+        builder.Services.AddWindowsService(
+            Sub(serviceOptions)
+                serviceOptions.ServiceName = WindowsServiceInfo.ServiceName
+            End Sub)
+
+        ' The Event Log source. Named explicitly, because the default is the
+        ' application name and this project's operator-facing name for the
+        ' service is WindowsServiceInfo.ServiceName - the same string used by
+        ' sc.exe, by the ACL grant, and by the post-reboot health check. One
+        ' name for one thing.
+        '
+        ' The source must already be registered when the service first writes,
+        ' and creating it needs administrator rights, so it is created by
+        ' scripts/install-service.ps1 at install time rather than lazily here:
+        ' a restricted service account cannot create it, and the failure would
+        ' arrive as a missing log rather than as an error.
+        '
+        ' CONFIGURE, NOT AddEventLog. There is nothing to add: on Windows,
+        ' WebApplication.CreateBuilder's default host configuration ALREADY
+        ' registers the Event Log logger provider, at Warning level, writing
+        ' under the stock ".NET Runtime" source. All this needs to do is give
+        ' it the right name. Calling AddEventLog as well would register a
+        ' second provider and log everything twice.
+        '
+        ' THE IsWindowsService() GUARD IS THE LOAD-BEARING PART, and it is here
+        ' because P1-16's own post-reboot evidence caught its absence. Without
+        ' it this Configure applies to EVERY process built from this entry
+        ' point - which includes P1-19's WebApplicationFactory test host. The
+        ' integration suite duly wrote seven NonProductionWarningMiddleware
+        ' warnings into the host's Application log under the source name
+        ' "MerchandisingApi", where they are indistinguishable from entries
+        ' written by the actual service. Measured, not theorised: the log went
+        ' from 12 entries to 19 across one `run-tests.ps1`.
+        '
+        ' That is worse than untidy. Box 4 of this card asserts that the
+        ' service's events appear in the Event Log, and the diagnostic value of
+        ' that channel depends entirely on entries in it having come from the
+        ' service. A test run masquerading as the service would send whoever
+        ' reads that log after a failed demo looking in the wrong place.
+        '
+        ' Non-service runs keep the framework's default ".NET Runtime" source,
+        ' which always exists on Windows - so nothing has to be created, and a
+        ' clean clone with no service ever installed still runs its tests
+        ' without touching a source that is not there.
+        '
+        ' THE OperatingSystem.IsWindows() GUARD IS NOT DEFENSIVE PADDING. This
+        ' project targets net10.0, not net10.0-windows, and EventLogSettings is
+        ' annotated Windows-only - so without the guard the compiler emits
+        ' CA1416 and this build stops being a zero-warning build. Suppressing
+        ' the warning, or moving the whole API to net10.0-windows to make it go
+        ' away, would both be larger changes that say less. On this system the
+        ' condition is always true (spec section 18 fixes win-x64), which is
+        ' the point: the guard costs one branch and states a fact the type
+        ' system otherwise could not see.
+        If OperatingSystem.IsWindows() AndAlso WindowsServiceHelpers.IsWindowsService() Then
+            builder.Services.Configure(Of EventLogSettings)(AddressOf ConfigureEventLogSource)
+        End If
 
         ' P1-09 / ADR-011: HTTPS on 8443 for every environment, using a
         ' name-only SAN certificate (MERCH-HOST, no IP) so the same .pfx

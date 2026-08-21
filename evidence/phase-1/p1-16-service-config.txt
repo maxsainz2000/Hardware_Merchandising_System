@@ -1,0 +1,272 @@
+=== P1-16 evidence: the API installed and running as a Windows Service ===
+Captured: 2026-08-21 12:49-12:56 UTC on LAPTOP-3HH6OHHE
+Card: tasks.md P1-16  |  Spec: section 6.4, section 17  |  Consumes: ADR-010
+
+Covers boxes 1, 4 and 5. Box 3 is in p1-16-recovery.txt. Box 2 (reboot) is in
+p1-16-post-reboot-health.txt.
+
+--------------------------------------------------------------------------------
+SECTION 1 - WHAT WAS INSTALLED
+--------------------------------------------------------------------------------
+
+Published per ADR-010, SELF-CONTAINED win-x64 - not framework-dependent:
+
+    pwsh -File scripts/publish-release.ps1 -Component Api -Mode SelfContained -OutputRoot C:\MerchandisingService
+    output    : C:\MerchandisingService\Api-sc
+    files     : 350
+    size      : 106.2 MB
+    package   : 1FB11494DBD7DC6D1D65A39D9A2EE6F2DD8420CB839901D34A0FCAD10FB8D2F5
+
+ADR-010 measured 347 files / 105.1 MB at P1-03; the growth is
+Microsoft.Extensions.Hosting.WindowsServices 10.0.9 and its
+System.ServiceProcess.ServiceController dependency, added by this card.
+
+Installed with, from an elevated PowerShell 7 session:
+
+    pwsh -File scripts/install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc
+
+      OK   Running elevated.
+      OK   Binary found: C:\MerchandisingService\Api-sc\Merchandising.Api.exe
+      OK   Configuration present in C:\ProgramData\MerchandisingSystem\config
+      OK   Created, start=auto, running as NT SERVICE\MerchandisingApi
+      OK   Image path verified: "C:\MerchandisingService\Api-sc\Merchandising.Api.exe"
+      OK   Description set.
+      OK   Restart after 5s, then 10s, then 30s. Failure count resets after 24h.
+      OK   Recovery also applies to a non-zero exit, not only to a crash.
+      OK   Source 'MerchandisingApi' created in the Application log.
+      OK   C:\ProgramData\MerchandisingSystem\config - read and execute, inherited by contents.
+      OK   C:\ProgramData\MerchandisingSystem\certs\merch-host.pfx - read.
+      OK   Service status: Running
+      OK   Listening on 8443.
+
+--------------------------------------------------------------------------------
+SECTION 2 - REGISTERED CONFIGURATION (sc.exe qc)
+--------------------------------------------------------------------------------
+
+    SERVICE_NAME: MerchandisingApi
+            TYPE               : 10  WIN32_OWN_PROCESS
+            START_TYPE         : 2   AUTO_START
+            ERROR_CONTROL      : 1   NORMAL
+            BINARY_PATH_NAME   : "C:\MerchandisingService\Api-sc\Merchandising.Api.exe"
+            LOAD_ORDER_GROUP   :
+            TAG                : 0
+            DISPLAY_NAME       : Merchandising System API
+            DEPENDENCIES       :
+            SERVICE_START_NAME : NT SERVICE\MerchandisingApi
+
+START_TYPE AUTO_START is what box 2 depends on. The quoted BINARY_PATH_NAME is
+deliberate: the SCM stores that string verbatim and splits it on whitespace, so
+an unquoted path containing a space registers a service that starts the wrong
+executable. install-service.ps1 reads the value back after creating the service
+and refuses to continue if it does not contain the expected path, rather than
+trusting PowerShell's native-argument quoting to have done the right thing.
+
+--------------------------------------------------------------------------------
+SECTION 3 - RECOVERY ACTIONS (sc.exe qfailure)
+--------------------------------------------------------------------------------
+
+    SERVICE_NAME: MerchandisingApi
+            RESET_PERIOD (in seconds)    : 86400
+            REBOOT_MESSAGE               :
+            COMMAND_LINE                 :
+            FAILURE_ACTIONS              : RESTART -- Delay = 5000 milliseconds.
+                                           RESTART -- Delay = 10000 milliseconds.
+                                           RESTART -- Delay = 30000 milliseconds.
+
+Escalating rather than three identical delays: an API that died because MariaDB
+had not finished starting recovers on the first retry, while one that died
+because its certificate is missing must not spin in a restart loop filling the
+Event Log. The count resets after 24 hours without incident.
+
+failureflag is also set to 1, and it does not appear in qfailure's output. It
+is the part that is easy to miss: without it the SCM applies recovery actions
+only when the process CRASHES. A .NET host that catches a fatal startup error
+and exits with a non-zero code has, as far as the SCM is concerned, stopped
+normally - and would never be restarted.
+
+--------------------------------------------------------------------------------
+SECTION 4 - BOX 5: THE SERVICE ACCOUNT IS NOT AN ADMINISTRATOR
+--------------------------------------------------------------------------------
+
+    Service StartName : NT SERVICE\MerchandisingApi
+    StartMode         : Auto
+    State             : Running
+
+    Members of BUILTIN\Administrators on this host:
+      LAPTOP-3HH6OHHE\Admin           [User]
+      LAPTOP-3HH6OHHE\Administrator   [User]
+
+    The service account appears in that list: False
+
+NT SERVICE\MerchandisingApi is a VIRTUAL SERVICE ACCOUNT. Windows creates it
+implicitly from the service name: there is no account to create beforehand, no
+password stored anywhere, nothing to hand over to a classmate, and nothing to
+rotate. It is not an administrator, which is what spec section 17's "restricted
+service identity where practical" asks for.
+
+Chosen over the two alternatives deliberately. LocalSystem needs no ACL work at
+all precisely because it is administrator-equivalent, which is the thing being
+avoided. NetworkService is unprivileged but SHARED - every service on the host
+running as NetworkService has the same identity, so an ACL grant to it is a
+grant to all of them. A virtual account carries its own SID, so the grants in
+section 5 name this service and nothing else.
+
+--------------------------------------------------------------------------------
+SECTION 5 - FILESYSTEM PERMISSIONS
+--------------------------------------------------------------------------------
+
+    C:\ProgramData\MerchandisingSystem\config
+        NT SERVICE\MerchandisingApi : (OI)(CI)(RX)
+        NT AUTHORITY\SYSTEM         : (OI)(CI)(F)
+        BUILTIN\Administrators      : (OI)(CI)(F)
+        LAPTOP-3HH6OHHE\Admin       : (OI)(CI)(F)
+
+Read and execute, no write. The API reads this configuration and has no
+business changing it. Inheritance on this directory was already disabled at
+P0-07, deliberately - database.json holds the merch_api password.
+
+    C:\ProgramData\MerchandisingSystem\certs\merch-host.pfx
+        NT SERVICE\MerchandisingApi : (R)
+        NT AUTHORITY\SYSTEM         : (I)(F)
+        BUILTIN\Administrators      : (I)(F)
+        LAPTOP-3HH6OHHE\Admin       : (I)(F)
+        BUILTIN\Users               : (I)(RX)     <-- A DEFECT. See below.
+
+A DEFECT FOUND BY READING THE ACL BACK RATHER THAN ASSUMING IT. The .pfx
+inherited BUILTIN\Users:(I)(RX) from its parent directory, so every local
+account on this host could read the file containing the server's private key.
+P0-07 disabled inheritance on the config directory for exactly this reason; the
+certs directory beside it never received the same treatment, and nothing before
+now had looked.
+
+Severity, stated honestly: the key inside that file is password-protected, and
+the password lives in certificate.json, which IS restricted - so this was a
+weakened layer, not an open door. It is still worth closing. Under ADR-012 the
+host is a laptop belonging to someone else and quite possibly shared, and "no
+other account on this machine can read the private key" is a cheaper guarantee
+to make than to explain.
+
+FIXED in install-service.ps1, which now breaks inheritance on the .pfx and
+removes BUILTIN\Users after granting the service account read. /inheritance:d
+copies the inherited entries before disconnecting them, so SYSTEM and
+Administrators keep their access and only the removal changes anything.
+
+RE-OBSERVED AND CLOSED. This paragraph originally said "not yet re-observed",
+because a claim about an ACL that nobody has read back is exactly the kind this
+section exists to distrust. It has now been read back, twice, after re-running
+install-service.ps1 - see p1-16-post-reboot-health.txt section 6:
+
+    NT SERVICE\MerchandisingApi : (R)
+    NT AUTHORITY\SYSTEM         : (F)
+    BUILTIN\Administrators      : (F)
+    LAPTOP-3HH6OHHE\Admin       : (F)
+
+BUILTIN\Users is gone, and the surviving entries have lost their (I) flag -
+so inheritance was broken cleanly and the accounts that needed access kept it.
+
+--------------------------------------------------------------------------------
+SECTION 6 - BOX 4: EVENTS APPEAR IN THE EVENT LOG
+--------------------------------------------------------------------------------
+
+    Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='MerchandisingApi'}
+
+    2026-08-21 20:49:47  Information  Service started successfully.
+    2026-08-21 20:56:08  Information  Service started successfully.
+
+Two entries: the install-time start, and the automatic restart after the forced
+kill in p1-16-recovery.txt. Source name 'MerchandisingApi' - the same string as
+the service name, the virtual account, and the Get-Service call, all of which
+come from Merchandising.Api.Hosting.WindowsServiceInfo and are held to it by
+WindowsServiceInfoTests.
+
+The source is created by install-service.ps1 at install time rather than lazily
+by the API. Creating an Event Log source requires administrator rights, which a
+restricted service account does not have - so a missing source would surface as
+an ABSENT LOG rather than as an error, which is the worst available way to lose
+diagnostics on a machine nobody can inspect.
+
+A RELATED REGRESSION, AND A CLAIM MADE HERE THAT TURNED OUT TO BE FALSE. The
+first version of this change called builder.Logging.AddEventLog()
+unconditionally. It was replaced with builder.Services.Configure(Of
+EventLogSettings), and this section originally justified that by saying
+"AddWindowsService registers the provider, and only when the process really is
+a service".
+
+THAT WAS WRONG, and the post-reboot evidence caught it. WebApplication.
+CreateBuilder registers the Event Log provider on Windows regardless of whether
+the process is a service, so the Configure call was renaming the source for
+EVERY process built from this entry point - including the P1-19 test host,
+which then wrote its warnings into this machine's Application log wearing the
+service's name. Measured at 12 -> 19 entries across one test run.
+
+Fixed by guarding the Configure call with WindowsServiceHelpers.
+IsWindowsService(); the full account, the measurement, and the proof are in
+p1-16-post-reboot-health.txt section 5. The original wording is corrected here
+rather than deleted, because "this file once asserted something untrue about
+the logging path" is itself worth knowing when reading the rest of it.
+
+The published self-contained binary still starts and serves from an ordinary
+unelevated console (section 7), which was the property the change was for.
+
+--------------------------------------------------------------------------------
+SECTION 7 - THE API IS ACTUALLY SERVING, NOT MERELY "RUNNING"
+--------------------------------------------------------------------------------
+
+"The SCM reports Running" and "the API is serving" are different claims. A host
+that fails during startup can leave the SCM reporting Running for seconds.
+
+    HTTP over TLS, from a .NET 10 client (pwsh 7.6.5 on .NET 10.0.11):
+      GET https://MERCH-HOST:8443/health
+      status : 200 OK
+      body   : {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T12:51:42.3361106Z"}
+
+    TLS, via scripts/probe-tls.ps1 against the SERVICE process:
+      TLS protocol    : Tls13
+      Cipher suite    : TLS_AES_256_GCM_SHA384
+      SslPolicyErrors : None
+      Cert subject    : CN=MERCH-HOST
+      Cert thumbprint : 759021AA351D8572EF19DD24ADDEF1A94A4849C9
+      HANDSHAKE SUCCEEDED
+
+P1-21 CARRIED FORWARD SUCCESSFULLY. This is the first time the HTTPS listener
+has started under a restricted service identity with no console session behind
+it, and with the certificate read through an ACL grant rather than as the
+interactive user. The TLS 1.2/1.3 pin holds, and the service account can read
+the private key.
+
+A HARNESS BUG, RECORDED SO IT IS NOT MISREAD AS A PRODUCT FAULT. The first
+capture attempt reported "The SSL connection could not be established" against
+this same endpoint and died there. The cause was in the capture script, not the
+API: it assigned a PowerShell ScriptBlock to
+HttpClientHandler.ServerCertificateCustomValidationCallback, and that
+conversion fails at handshake time in this context. The callback was never
+needed - the certificate is genuinely trusted, SslPolicyErrors is None. Removing
+it produced the 200 above. This is the same class of mistake as the P1-09
+PowerShell 5.1 Tls12 reading: a harness limitation that reads exactly like a
+product defect.
+
+--------------------------------------------------------------------------------
+SECTION 8 - BOX 2, AND THE PREDICTION THIS FILE MADE BEFORE IT WAS TESTED
+--------------------------------------------------------------------------------
+
+Written BEFORE the reboot, and left here unedited because a prediction is only
+worth anything if it was recorded before the result:
+
+    "Box 2 is NOT proven by anything above. START_TYPE is AUTO_START and the
+     service is Running, which is necessary and not sufficient: auto-start
+     services can still fail at boot for reasons that never occur on a warm
+     start, most obviously ordering against MariaDB, which this API needs and
+     does not declare a dependency on."
+
+OUTCOME: the concern was real and was acted on before the reboot rather than
+discovered by it. `depend=` on the detected MariaDB service was added to
+install-service.ps1, and the post-reboot capture shows MariaDB starting at
++16.2s and the API at +17.4s - the ordering the dependency exists to enforce.
+
+Box 2 is proven in p1-16-post-reboot-health.txt: rebooted at 21:07:43, service
+up unattended, health 200, an authenticated-path 401 showing the database was
+genuinely reachable, and TLS 1.3 still pinned.
+
+That file also records a defect the reboot exposed - the test host writing to
+the Event Log under this service's source name - which is the second thing this
+card found that no amount of warm-machine checking would have surfaced.

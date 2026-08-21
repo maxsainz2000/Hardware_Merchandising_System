@@ -1,0 +1,201 @@
+=== P1-16 evidence: box 2 - the host reboots and the API serves, unattended ===
+Captured: 2026-08-21 13:11:48 UTC on LAPTOP-3HH6OHHE
+Card: tasks.md P1-16  |  Spec: section 6.4, section 24 step 10
+
+This is the box that spec section 24 step 10 turns on, and the one the card
+could not close from a warm machine.
+
+--------------------------------------------------------------------------------
+SECTION 1 - THE REBOOT ACTUALLY HAPPENED
+--------------------------------------------------------------------------------
+
+    boot time before   : 2026-08-17 08:48:41   (recorded BEFORE the reboot,
+                                                in p1-16-prereboot capture)
+    boot time now      : 2026-08-21 21:07:43
+    uptime at capture  : 00:04:04
+    REBOOTED           : True
+
+The prior boot time was written down before the restart, deliberately. "The
+service is running" on a machine that never rebooted is the easiest possible
+way to file this box wrongly, and it would be indistinguishable afterwards.
+
+The capture script requires no elevation, also deliberately: it must not be
+able to change what it measures.
+
+--------------------------------------------------------------------------------
+SECTION 2 - NOTHING WAS STARTED BY HAND
+--------------------------------------------------------------------------------
+
+    MerchandisingApi   state=Running  start=Auto  pid=6688  account=NT SERVICE\MerchandisingApi
+    mysql              state=Running  start=Auto  pid=4776  account=LocalSystem
+
+    MerchandisingApi   started 2026-08-21 21:08:00   (+17.4s after boot)
+    mysql              started 2026-08-21 21:07:59   (+16.2s after boot)
+
+The capture was the first thing run after logging in. No service was started,
+no XAMPP control panel was opened.
+
+THE ORDERING IS THE PART WORTH READING. MariaDB started 1.2 seconds before the
+API, which is what `depend= mysql` exists to guarantee. That dependency was
+added during this card, after noticing that both services are automatic-start
+and nothing ordered them.
+
+Why it mattered, and why the symptom would have been misleading: the API reads
+its database configuration from a FILE at startup and does not open a
+connection until the first request. An API that started first would therefore
+start cleanly, serve /health with a 200, and report perfectly healthy with no
+database behind it. The failure would surface later as the first login of the
+morning - on the machine of whoever is presenting, with the service apparently
+running fine.
+
+The dependency is DETECTED, not hardcoded: install-service.ps1 finds the
+service whose image path matches mysqld.exe and declares that name. XAMPP
+registers it as 'mysql' here, but that is a property of how someone installed
+XAMPP, and under ADR-012 that someone is not us. A hardcoded depend= naming a
+service that does not exist would leave our own service unable to start at all
+- trading a short race for a hard failure.
+
+The capture script prints the ordering and says explicitly that a reversed
+result would mean the dependency is not doing what this card claims. It was
+written to be capable of reporting a failure, not only a success.
+
+--------------------------------------------------------------------------------
+SECTION 3 - IT SERVES, AND THE DATABASE PATH SERVES
+--------------------------------------------------------------------------------
+
+    client runtime: .NET 10.0.11 (pwsh 7.6.5)
+
+    GET https://MERCH-HOST:8443/health
+      status : 200 OK
+      body   : {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T13:11:50.8907318Z"}
+
+    POST https://MERCH-HOST:8443/api/v1/auth/login
+      status : 401 Unauthorized
+      body   : {"errorCode":"INVALID_CREDENTIALS",
+                "message":"Username or password is incorrect.",
+                "correlationId":"a47f9479-c6ea-47ed-bb28-0af82a3c38bf",
+                "errors":null}
+
+THE SECOND REQUEST IS THE ONE THAT MATTERS, and it is here because the first
+one is not sufficient. /health touches no database at all, so a 200 from it
+looks identical whether MariaDB came up or not - exactly the false pass
+section 2 describes. The login attempt reaches AuthService, which queries the
+Users table as merch_api; a 401 with the standard error envelope proves the
+connection was made and the credentials were rejected, rather than the request
+failing to reach a database at all.
+
+The expected answer was verified BEFORE the reboot against the same endpoint,
+so that a 500 or a connection error afterwards could not be rationalised as
+"probably how it always responds".
+
+Note also what the 401 body does not contain: no stack trace, no SQL, no
+connection detail. ADR-014's envelope held through an unattended start.
+
+--------------------------------------------------------------------------------
+SECTION 4 - P1-21'S TLS PIN SURVIVED AN UNATTENDED START
+--------------------------------------------------------------------------------
+
+    negotiated : Tls13   TLS_AES_256_GCM_SHA384
+
+This is the first time the HTTPS listener has come up with no console session
+behind it, under a restricted service account, reading the certificate through
+an ACL grant rather than as the interactive user - and after a cold boot. Every
+one of those was a way the pin or the certificate load could have behaved
+differently, and none did.
+
+--------------------------------------------------------------------------------
+SECTION 5 - A DEFECT THIS REBOOT FOUND, AND THE FIX
+--------------------------------------------------------------------------------
+
+The Application log carried seven Warning entries under source
+'MerchandisingApi' timestamped 21:00:17-21:00:18 - before the reboot, and from
+NonProductionWarningMiddleware, which only fires on a NON-HTTPS request. The
+service has no plain-HTTP listener. Something else was writing to the Event Log
+under the service's identity.
+
+MEASURED RATHER THAN REASONED ABOUT. Counting entries around one run of
+scripts/run-tests.ps1: 12 before, 19 after. The P1-19 WebApplicationFactory
+test host was writing into the host's Windows Event Log under the service's
+source name.
+
+ROOT CAUSE, AND A COMMENT IN THIS PROJECT THAT WAS WRONG. Program.vb claimed
+AddWindowsService registers the Event Log provider "and ONLY when the process
+really is a service". It does not. WebApplication.CreateBuilder's default host
+configuration registers that provider on Windows regardless, at Warning level,
+under the stock ".NET Runtime" source. The Configure(Of EventLogSettings) call
+added by this card then renamed that source for EVERY process built from this
+entry point - the test host included.
+
+WHY IT IS WORSE THAN UNTIDY. Box 4 of this card asserts that the service's
+events appear in the Event Log. That assertion is only worth something if
+entries under that source came from the service. Test-run warnings wearing the
+service's name would send whoever reads that log after a failed demonstration
+to the wrong place entirely - and they would arrive with timestamps, a
+plausible category, and no way to tell them apart.
+
+FIX: the Configure call is now guarded by
+WindowsServiceHelpers.IsWindowsService(). Non-service processes keep the
+framework's ".NET Runtime" source, which always exists on Windows - so a clean
+clone that has never installed the service still runs its tests without
+touching a source that is not there.
+
+PROVEN: the same count across a full suite after the fix - 19 before, 19 after,
+where the identical measurement had produced 12 -> 19 beforehand. The stale
+comment was corrected in place rather than deleted, so the next reader sees
+that the claim was tested and found false.
+
+--------------------------------------------------------------------------------
+SECTION 6 - FINAL STATE, WITH THE POST-FIX BINARY DEPLOYED
+--------------------------------------------------------------------------------
+
+Captured 2026-08-21 13:20:56 UTC, after republishing and reinstalling.
+
+    mysql              state=Running  start=Auto  account=LocalSystem
+    MerchandisingApi   state=Running  start=Auto  account=NT SERVICE\MerchandisingApi
+
+    START_TYPE         : 2   AUTO_START
+    BINARY_PATH_NAME   : "C:\MerchandisingService\Api-sc\Merchandising.Api.exe"
+    DEPENDENCIES       : mysql
+    SERVICE_START_NAME : NT SERVICE\MerchandisingApi
+
+    merch-host.pfx ACL:
+        NT SERVICE\MerchandisingApi : (R)
+        NT AUTHORITY\SYSTEM         : (F)
+        BUILTIN\Administrators      : (F)
+        LAPTOP-3HH6OHHE\Admin       : (F)
+      -> BUILTIN\Users is GONE, and the surviving entries have lost their (I)
+         inherited flag, so inheritance was broken cleanly and SYSTEM and
+         Administrators kept their access. This closes the defect recorded in
+         p1-16-service-config.txt section 5, which was written while it was
+         still open.
+
+    GET  /health : 200 {"status":"ok","version":"0.1.0", ...}
+    POST /login  : 401  (database reachable, credentials rejected)
+    TLS          : Tls13  TLS_AES_256_GCM_SHA384
+
+    Application log, source MerchandisingApi:
+      2026-08-21 21:20:29  Information  Service stopped successfully.
+      2026-08-21 21:20:55  Information  Service started successfully.
+
+Those last two lines are the service's own entries written by the FIXED binary,
+which confirms the IsWindowsService() guard did not also silence the service -
+the failure mode a careless version of that fix would have introduced.
+
+--------------------------------------------------------------------------------
+SECTION 7 - HONEST SCOPE OF THE REBOOT CLAIM
+--------------------------------------------------------------------------------
+
+The reboot in sections 1-4 was performed with the binary that PREDATES the
+section 5 fix. The reboot was not repeated afterwards.
+
+That is stated rather than glossed over, and the reason it is acceptable is
+specific: inside a Windows Service, WindowsServiceHelpers.IsWindowsService()
+returns true, so the guarded branch is taken exactly as it was before. The fix
+can only change behaviour in processes that are NOT services. Service-mode
+behaviour is unchanged by construction, and section 6 shows the reinstalled
+post-fix binary starting, serving, and logging identically.
+
+ONE REBOOT, ONE HOST. This proves the mechanism on this machine. It is not a
+claim about the classmates' machines, which under ADR-012 remain unsurveyed
+(P0-02) - and where the MariaDB service could carry a different name, which is
+why the dependency is detected rather than assumed.

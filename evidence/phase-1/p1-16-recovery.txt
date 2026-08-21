@@ -1,0 +1,99 @@
+=== P1-16 evidence: box 3 - a forced process kill triggers automatic restart ===
+Captured: 2026-08-21 12:56:02 UTC on LAPTOP-3HH6OHHE
+Card: tasks.md P1-16  |  Spec: section 6.4, section 17
+
+--------------------------------------------------------------------------------
+SUBSTITUTION NOTE - THIS FILE REPLACES p1-16-recovery.png
+--------------------------------------------------------------------------------
+
+The card names a screenshot. This is text instead, by the same convention
+already agreed for evidence/phase-0/xampp-services.txt.
+
+The reason is not convenience. A screenshot of the Recovery tab would show the
+CONFIGURATION - the same three dropdowns already captured verbatim by
+sc.exe qfailure in p1-16-service-config.txt section 3. What the card's box
+actually asks is whether the recovery action FIRES, and no dialog can show
+that. What follows is the behaviour: a real process killed, and the Service
+Control Manager's own record of noticing and restarting it.
+
+--------------------------------------------------------------------------------
+METHOD - AND WHY IT IS A KILL AND NOT A STOP
+--------------------------------------------------------------------------------
+
+    Stop-Process -Id <pid> -Force
+
+NOT Stop-Service. A service stop is a graceful shutdown that the SCM initiated
+itself, and recovering from one proves nothing at all: the SCM would simply be
+doing what it was asked. Recovery actions apply only to a termination the SCM
+did not ask for. Killing the process is the only way to produce one on demand.
+
+--------------------------------------------------------------------------------
+RESULT
+--------------------------------------------------------------------------------
+
+    state before     : Running
+    PID before kill  : 21400
+    started at       : 2026-08-21 20:49:46 (local)
+
+    Stop-Process -Force issued against PID 21400.
+
+    PID after restart: 17776   (different from 21400, so this is a NEW process)
+    recovered in     : 6.8s    (configured first action is restart after 5s)
+    RESULT: restarted automatically by the SCM.
+
+The PID comparison is the load-bearing assertion. "The service is Running"
+afterwards would be satisfied by a service that never died; a different process
+id proves the original was killed and a replacement was started. 6.8 seconds
+against a configured 5-second delay is the delay plus host startup, which is
+what it should be - a figure at or below 5s would mean the process had not
+actually died.
+
+--------------------------------------------------------------------------------
+THE SCM'S OWN ACCOUNT, FROM THE SYSTEM LOG
+--------------------------------------------------------------------------------
+
+    2026-08-21 20:49:41  id=7045  A service was installed in the system.
+    2026-08-21 20:56:02  id=7031  The Merchandising System API service terminated
+                                  unexpectedly. It has done this 1 time(s). The
+                                  following corrective action will be taken in
+                                  5000 milliseconds: Restart the service.
+
+Event 7031 is the independent confirmation. It is written by the Service
+Control Manager, not by this project's code or its test harness, and it states
+in Windows' own words both that the termination was unexpected and what was
+done about it. Nothing in this repository could have produced that line.
+
+--------------------------------------------------------------------------------
+THE RESTARTED PROCESS ACTUALLY SERVES
+--------------------------------------------------------------------------------
+
+    GET https://MERCH-HOST:8443/health   (from a .NET 10 client)
+      status : 200 OK
+      body   : {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T12:56:13.1542416Z"}
+
+    Application log, source 'MerchandisingApi':
+      2026-08-21 20:49:47  Information  Service started successfully.
+      2026-08-21 20:56:08  Information  Service started successfully.
+
+The second Event Log entry is the recovered process announcing itself, twelve
+seconds after the kill. A restart that produced a running process which could
+not serve would satisfy the SCM and fail the system, so the health request is
+part of the proof rather than a courtesy.
+
+--------------------------------------------------------------------------------
+WHAT THIS DOES NOT PROVE
+--------------------------------------------------------------------------------
+
+One kill, one restart. The escalation ladder (10s on the second failure, 30s on
+the third) and the 24-hour reset period are configured and captured in
+p1-16-service-config.txt section 3, but only the first rung has been observed
+firing. Exercising the second and third would mean three kills inside the reset
+window, which tests the SCM rather than this system.
+
+failureflag=1 - recovery on a non-zero exit rather than only on a crash - is
+likewise set but NOT separately demonstrated here. This test killed the
+process, which is a crash by the SCM's definition and would have recovered with
+or without that flag. Proving the flag would need a build that exits non-zero
+from Main after startup, which is a fault-injection seam this card does not
+have and P1-12's seam does not reach. Recorded as configured-but-unobserved
+rather than quietly counted as proven.

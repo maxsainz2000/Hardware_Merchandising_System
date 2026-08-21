@@ -35,10 +35,16 @@
     rather than by reading the props file. See
     evidence/phase-1/p1-02-project-file.txt.
 
-    NO PackageReference. ASP.NET Core arrives through the Web SDK's
-    implicit framework reference, so the API needs no NuGet package at
-    all at this stage. Anything added later must have its version pinned
-    in docs/adr.md first (CLAUDE.md section 6).
+    ONE PackageReference, ADDED AT P1-16. ASP.NET Core itself still
+    arrives through the Web SDK's implicit framework reference and needs
+    no package. Windows Service hosting does: spec section 6.4 requires
+    the API to run as a service, and UseWindowsService plus the Event Log
+    logger provider live in Microsoft.Extensions.Hosting.WindowsServices.
+    Pinned to 10.0.9 in docs/adr.md ADR-002 BEFORE it was written here,
+    matching the measured Microsoft.AspNetCore.App runtime and the same
+    reasoning that pinned Mvc.Testing to 10.0.9 rather than 10.0.11.
+    Anything added after this must be pinned in docs/adr.md first
+    (CLAUDE.md section 6).
 
     NO appsettings.json AND NO Properties/launchSettings.json. Runtime
     configuration is read from an ACL protected host location outside the
@@ -73,6 +79,10 @@
     <RootNamespace>Merchandising.Api</RootNamespace>
     <TargetFramework>$(MerchNetTfm)</TargetFramework>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Merchandising.Domain\Merchandising.Domain.vbproj" />

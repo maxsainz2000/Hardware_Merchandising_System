@@ -979,21 +979,41 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track F — Hosting and recovery
 
-### ⬜ P1-16 · Windows Service hosting
+### ✅ P1-16 · Windows Service hosting — closed 2026-08-21; rebooted unattended, and the reboot found two defects
 
-**Spec:** §6.4 · **Closes:** G-09
+**Spec:** §6.4 · **Closes:** G-09 · **Consumes:** ADR-010 (self-contained publish)
 
 **Do:** Service registration, restricted identity, filesystem permissions, Windows Event Log, recovery actions (restart on failure).
 
 **Done when:**
 
-- [ ] Service installs and starts
-- [ ] **Host reboots and the API serves with no human action**
-- [ ] A forced process kill triggers automatic restart
-- [ ] Events appear in Event Viewer
-- [ ] Service account is not an administrator where practical
+- [x] Service installs and starts — `scripts/install-service.ps1`, idempotent and elevation-checked; `AUTO_START`, image path verified by reading it back from the SCM
+- [x] **Host reboots and the API serves with no human action** — boot moved to `21:07:43`; service up at **+17.4s** with nothing started by hand; `/health` 200 **and** a login 401 proving the database path, not just the static endpoint
+- [x] A forced process kill triggers automatic restart — PID `21400` → `17776` in **6.8s**; SCM event **7031** is the independent witness
+- [x] Events appear in Event Viewer — source `MerchandisingApi`, created at install time because a restricted account cannot create one
+- [x] Service account is not an administrator where practical — virtual account `NT SERVICE\MerchandisingApi`; `BUILTIN\Administrators` enumerated and it is not a member
 
-**Evidence:** `p1-16-service-config.txt`, `p1-16-post-reboot-health.txt`, `p1-16-recovery.png`
+**Evidence:** `p1-16-service-config.txt`, `p1-16-post-reboot-health.txt`, `p1-16-recovery.txt`
+
+> **Result.** The API runs as `MerchandisingApi` under the virtual service account `NT SERVICE\MerchandisingApi` — no password to store or hand over, not an administrator, and carrying its own SID so the config-directory grant names this service rather than every service sharing a built-in account. LocalSystem was rejected as administrator-equivalent; NetworkService as shared. Installed from a **self-contained** publish per ADR-010 (350 files, 106.2 MB): a framework-dependent API on a host with no runtime fails as a service that silently never starts.
+>
+> **`p1-16-recovery.png` is a `.txt` instead**, by the convention already agreed for `evidence/phase-0/xampp-services.txt`. A screenshot of the Recovery tab shows the *configuration*, which `sc.exe qfailure` already captures verbatim; it cannot show the action *firing*, which is what the box actually asks. The text file has a real process killed and the SCM's own 7031 record of restarting it.
+>
+> **The reboot earned its place — it found two things a warm machine could not.**
+>
+> **One: the API and MariaDB raced at boot.** Both are auto-start and nothing ordered them. This would have failed in the most misleading way available: the API reads its database config from a *file* and does not connect until the first request, so it starts, serves `/health` with a 200, and reports perfectly healthy with no database behind it. The symptom arrives as the first login of the morning. Fixed before the reboot with `depend=`, **detected by image path (`mysqld.exe`) rather than hardcoded as `mysql`** — that name is a property of how someone installed XAMPP, and under ADR-012 that someone is not us; a hardcoded name that does not exist would trade a short race for a service that cannot start at all. Post-reboot ordering confirms it: MariaDB +16.2s, API +17.4s.
+>
+> **Two: the integration test host was writing to the Windows Event Log under this service's source name.** Spotted as seven `NonProductionWarningMiddleware` warnings under `MerchandisingApi` from a process with no HTTP listener, then measured rather than reasoned about — **12 → 19 entries across one `run-tests.ps1`**. Root cause was a claim this card had itself written into `Program.vb`: that `AddWindowsService` registers the Event Log provider "only when the process really is a service". It does not — `WebApplication.CreateBuilder` registers it on Windows regardless, and the `Configure(Of EventLogSettings)` call was renaming the source for *every* process built from this entry point. That is worse than untidy: box 4 asserts the service's events appear in the Event Log, and that channel is only worth something if entries in it came from the service. Fixed by guarding on `WindowsServiceHelpers.IsWindowsService()`; non-service runs keep the framework's `.NET Runtime` source, which always exists, so a clean clone still runs its tests. Verified **19 → 19**. The false comment was corrected in place, not deleted.
+>
+> **A third defect, found by reading an ACL back instead of assuming it.** `merch-host.pfx` inherited `BUILTIN\Users:(I)(RX)` — every local account could read the file holding the server's private key. P0-07 disabled inheritance on the config directory for exactly this reason; the certs directory beside it never got the same treatment. Honest severity: the key is password-protected and that password lives in the restricted `certificate.json`, so this was a weakened layer, not an open door. The installer now breaks inheritance and removes `BUILTIN\Users`; re-read afterwards to confirm.
+>
+> **Scope of the reboot claim, stated plainly.** One reboot, one host, and it ran the binary that *predates* the Event Log fix. Acceptable for a specific reason rather than a convenient one: inside a service `IsWindowsService()` is true, so the guarded branch is taken exactly as before — the fix can only change non-service processes. The reinstalled post-fix binary was then confirmed starting, serving and logging identically. This proves the mechanism on **this** machine; it says nothing about the classmates' machines, which remain unsurveyed (P0-02).
+>
+> **Not proven, and not counted as proven:** `failureflag=1` (recovery on a non-zero exit rather than only a crash) is configured but unobserved — the kill test produces a crash, which would recover with or without it. Demonstrating it needs a build that exits non-zero from `Main` after startup, a fault-injection seam this card does not have. Likewise only the first rung of the 5s/10s/30s escalation ladder has been seen firing.
+>
+> **New package:** `Microsoft.Extensions.Hosting.WindowsServices` **10.0.9** — pinned in ADR-002 before it was written into the `.vbproj`, matching the measured `Microsoft.AspNetCore.App` runtime and the same reasoning that pinned `Mvc.Testing` to 10.0.9 over 10.0.11. It is the API project's **first** `PackageReference`; the comment there claiming the file deliberately has none was updated rather than left to mislead.
+>
+> Also hit and fixed: `CA1416` (Event Log APIs are Windows-only and this project targets `net10.0`, not `net10.0-windows`) — the analyser's flow analysis does not follow an `OperatingSystem.IsWindows()` check into a lambda body, so the settings callback is a named method carrying `<SupportedOSPlatform("windows")>`. And `MSTEST0032` correctly flagged two tests written for this card as always-true: they compared `Const` values the compiler folds and could never fail. Both were deleted, with a note in the file explaining why they must not come back.
 
 ---
 
