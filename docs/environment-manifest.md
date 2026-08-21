@@ -5,7 +5,7 @@
 The spec is explicit that "works on the developer's machine" is not acceptance. This file is what makes that testable — every version below must be captured from the **actual** classroom machines, not assumed.
 
 **Status:** ⬜ Incomplete — **restructured 2026-08-18 by ADR-012 into lab vs demo.** §1, §2, §3.1 and §4.1 describe the author's development and test lab and are largely complete. §3.2 and §4.2 describe the environment the system is actually demonstrated on — the classmates' three workstations and a self-provided demo LAN — and **neither has been specified or captured.** That, not hardware, is what remains. See §5.
-**Last updated:** 2026-08-18 (delivery model reframed — ADR-012)
+**Last updated:** 2026-08-21 (§3.1 replaced with measured data from two lab clients; the machine it previously named does not exist)
 
 ---
 
@@ -85,22 +85,49 @@ A second machine — any second machine — is enough to prove the *software* wo
 
 ---
 
-### 3.1 Lab test workstation — `DESKTOP-OUU3M8J` — **not a deliverable**
+### 3.1 Lab test workstations — **two machines, neither a deliverable**
 
-Acquired 2026-08-18. A Windows 10 desktop, wired by Ethernet to the author's home router. Its value is that it is *not the build machine*: it is where "works on my laptop" gets tested against something that isn't the laptop.
+**Captured on the machines 2026-08-21**, with `scripts/capture-client-baseline.ps1`, which also runs the P0-03 and P1-04 cross-machine negative tests in one pass. Everything below is measured, not expected.
 
-Capture it with `scripts/capture-client-baseline.ps1`, which also runs the P0-03 and P1-04 cross-machine negative tests in one pass.
+> **Three of this section's previous assumptions were wrong, and the machine it named does not exist.** It recorded the workstation as `DESKTOP-OUU3M8J`, taken from the tailnet registration with the note *"confirm on the machine"*. Confirming it found the Windows computer name is `DESKTOP-G83CCSH` — the tailnet name was never the Windows name. It also predicted "no SDK" (both machines had one) and that the desktop would *not* exercise the 1366×768 baseline (it is exactly 1366×768). The instruction to verify is the only reason any of this was caught; the same caution applies to every row below that a demo workstation will later be compared against.
+
+#### 3.1.1 `DESKTOP-G83CCSH` — wired lab client
 
 | Item | Value |
 |---|---|
-| Machine name | `DESKTOP-OUU3M8J` — from the tailnet registration; **confirm on the machine** |
-| Windows edition + build | _(record — Windows 10; exact edition / build / DisplayVersion outstanding)_ |
-| Architecture | _(**verify x64** — a 32-bit OS cannot run `win-x64` output at all)_ |
-| Screen resolution / scaling | _(record — will **not** exercise the 1366×768 @125% baseline; that stays with the laptop)_ |
-| .NET Desktop Runtime | _(expect "not installed" — needs 10.0.9 x64 before P1-15. Runtime only: no SDK, no XAMPP)_ |
-| LAN connection | Ethernet to the home router — MAC to be recorded |
+| Machine name | `DESKTOP-G83CCSH` — **confirmed on the machine** |
+| Windows edition + build | Windows 10 Home, 10.0.19041, build 19041.508 |
+| Architecture | 64-bit (x64) — gate passed |
+| Hardware | "Default string / Default string" (self-built; DMI unset), 4 logical processors, 3.5 GB RAM |
+| Windows install date | 2026-08-20 |
+| Screen resolution / scaling | **1366×768 @ 100%** (96 DPI) — *is* the baseline resolution, at 100% not 125% |
+| .NET | Runtimes 10.0.11 (AspNetCore / NETCore / WindowsDesktop); **SDK 10.0.400, installed by Visual Studio** |
+| Local administrator | **No** — `maxsa` is a standard user |
+| LAN connection | Ethernet, Realtek PCIe FE, MAC `00-E0-4F-0B-7C-C0`, 100 Mbps, `192.168.100.192/24`, gw `.1` |
+| Certificate trust | `CN=MERCH-HOST` installed in `CurrentUser\Root` (no admin needed) |
+| hosts entry | **None** — cannot be created, user lacks admin |
 
-> ⚠️ **Verify before trusting any cross-machine result: the lab client is wired, the lab host is on 5 GHz Wi-Fi.** Consumer routers normally bridge the two; some isolate the 5 GHz or guest SSID. If the client cannot ping the host, a refused connection in the negative tests is proving the *router's* behaviour, not the system's — the results are void rather than passing. The capture script gates on this explicitly.
+#### 3.1.2 `DESKTOP-F5LK8MA` — wireless lab client, and the runtime-only test machine
+
+| Item | Value |
+|---|---|
+| Machine name | `DESKTOP-F5LK8MA` — **confirmed on the machine** |
+| Windows edition + build | Windows 10 Home, 10.0.19041, build 19041.508 |
+| Architecture | 64-bit (x64) — gate passed |
+| Hardware | Tongfang Computer Co. NBPC1958, 8 logical processors, 5.9 GB RAM |
+| Windows install date | 2026-08-20 |
+| Screen resolution / scaling | **1920×1080 native @ 150%** (144 DPI) → ~1280×720 effective — **below** the 1366×768 baseline, and the harshest scaling available in the lab |
+| .NET | **Desktop Runtime 10.0.9 x64 and NETCore 10.0.9. No SDK. No AspNetCore runtime.** Deliberate — see note below |
+| Local administrator | **No** — `maxsa` is a standard user; both elevated steps were done by the owner by hand |
+| LAN connection | Wi-Fi, Intel Dual Band AC 7265, MAC `94-E2-3C-32-FA-3C`, 585 Mbps, `192.168.100.102/24`, gw `.1` |
+| Certificate trust | `CN=MERCH-HOST`, thumbprint `759021AA…49C9`, in `CurrentUser\Root` |
+| hosts entry | `192.168.100.165  MERCH-HOST` — **points at a DHCP lease, not a reservation** |
+
+> **This machine is deliberately left without an SDK and should stay that way.** It is the only machine in the project that models a classmate's workstation — Desktop Runtime at the pinned 10.0.9, nothing else — and P1-15's round trip was proven on it in that state. It reached that state by accident (an SDK uninstall removed the entire `dotnet` tree; see `evidence/phase-1/p1-15-runtime-free-launch.txt`), and the accident was measured before being repaired, which answered ADR-010's parked question. **It can no longer build anything.** Do not "fix" it by reinstalling the SDK without a reason.
+
+> ⚠️ **The two clients sit on different media, and that is useful rather than accidental.** `DESKTOP-G83CCSH` is wired; `DESKTOP-F5LK8MA` and the host are both on the same 5 GHz Wi-Fi. Consumer APs commonly isolate wireless stations from one another, which would make a refused connection prove the *access point's* behaviour rather than the system's. Both were gated on reachability first — ping 4/4 at 32 ms wired, 4/4 at 45 ms wireless — and a live TCP connection to 8443 was used as a positive control while every other port refused. Never trust a cross-machine negative result that lacks both.
+
+> ⚠️ **Neither machine's owner is a local administrator, and that is not a lab quirk.** It is the Windows Home default and the three demo workstations will very likely match. The documented client install **cannot be completed** on such an account: the `MERCH-HOST` hosts entry needs elevation. Certificate trust does not. See `evidence/phase-1/p1-10-cross-machine-denials.txt` — the mitigation is DNS on the demo LAN's router, which removes the hosts step entirely.
 
 ---
 

@@ -1,0 +1,250 @@
+===============================================================================
+P1-15 -- WPF CLIENT ROUND TRIP FROM A SECOND MACHINE
+Captured 2026-08-21 on DESKTOP-F5LK8MA, over HTTPS, across a real network.
+Companion to p1-15-runtime-free-launch.txt (what happens with NO runtime).
+===============================================================================
+
+THE MACHINE, AND WHY ITS CONFIGURATION IS THE POINT
+
+  DESKTOP-F5LK8MA   Windows 10 Home 19041.508 x64
+                    192.168.100.102, Wi-Fi (host is also Wi-Fi -- see note)
+                    Display 1920x1080 native @ 150% DPI, ~1280x720 effective
+                    .NET: Microsoft.WindowsDesktop.App 10.0.9
+                          Microsoft.NETCore.App 10.0.9
+                          NO SDK. NO Microsoft.AspNetCore.App.
+                    Logged-in user is a STANDARD USER, not an administrator.
+
+That .NET state is what P1-15 box 1 asks for and what no machine in this
+project had before tonight: the Desktop Runtime at the version ADR-002 pins,
+with no SDK to mask an SDK-only dependency. It was reached the hard way -- see
+p1-15-runtime-free-launch.txt for how the machine ended up with no .NET at all,
+and why that accident was measured before being repaired.
+
+The display matters too. At 150% scaling the effective resolution is BELOW the
+project's 1366x768 UI baseline, so this is the only machine available that can
+find high-DPI layout defects.
+
+WI-FI TO WI-FI. Host and client are both wireless on the same consumer AP,
+which commonly isolates stations from one another. Verified reachable first:
+ping 4/4, avg 45 ms. Without that gate a failure here would be the access
+point's behaviour rather than the system's.
+
+-------------------------------------------------------------------------------
+PREREQUISITES, AND WHICH ONES NEEDED ADMINISTRATOR RIGHTS
+-------------------------------------------------------------------------------
+
+  Desktop Runtime 10.0.9 x64 install    ADMIN required
+  hosts entry 192.168.100.165 MERCH-HOST  ADMIN required
+  certificate trust, CurrentUser\Root   no admin needed
+
+Both elevated steps were performed by hand by the machine's owner rather than
+by script -- a deliberate choice after a scripted elevation earlier in the
+session removed the entire dotnet installation.
+
+The hosts entry is UNAVOIDABLE for this client. SpikeViewModel.DefaultApiAddress
+is a compile-time constant, "https://MERCH-HOST:8443/", rendered in a read-only
+TextBlock with no user interface to change it, and the certificate's name-only
+SAN (ADR-011) means connecting by IP fails validation anyway. See the admin
+finding in p1-10-cross-machine-denials.txt: on a standard Windows Home account
+the documented install cannot be completed without elevation, and the hosts
+entry is now the ONLY remaining reason a client needs it.
+
+-------------------------------------------------------------------------------
+THE ROUND TRIP
+-------------------------------------------------------------------------------
+
+Launch, before any call:
+
+    Header    : "Phase 1 client spike against https://merch-host:8443/"
+    Indicator : "Not contacted yet"
+    Status    : "Not signed in."
+
+The idle state is a THIRD state, distinct from both connected and unavailable.
+That is the G-26 design working: an indicator claiming "online" before anything
+has been contacted would be asserting evidence it does not have.
+
+Sign-in (demo_clerk, InventoryClerk):
+
+    Indicator : "Connected" (green)
+    Status    : "Signed in as demo_clerk (InventoryClerk).
+                 Session expires 2026-08-21 18:44:25Z.
+                 Token held in memory only - never written to disk."
+
+GET /api/v1/auth/me:
+
+    "GET /api/v1/auth/me succeeded."
+    Username: demo_clerk   Roles: InventoryClerk
+
+Decrement, product 4, quantity 5:
+
+    "Stock decremented. Product 4: 250.000 -> 245.000.
+     Movement ID: 126.
+     Idempotency key: 5c672e3b-8e45-4e4f-9a4e-0d2eca7b8ffb."
+
+VERIFIED INDEPENDENTLY ON THE SERVER, not taken from the client's own report:
+
+    StockBalances : Quantity 245.000, RowVersion 2
+    SUM(Delta) of all movements for product 4 : 245.000
+    Movement 125 : +250.000, 0.000 -> 250.000, "Opening balance (seed-demo)"
+    Movement 126 :   -5.000, 250.000 -> 245.000, "P1-15 client spike", actor 9
+    AuditLogs 593: StockDecremented, Success, ee948b0f-...,
+                   "Quantity 250.000 -> 245.000 (movement 126)"
+
+The balance equals the sum of its movements. A balance no movement explains is
+the exact inconsistency the append-only ledger exists to prevent, so this
+equality -- not the client's success message -- is the actual result.
+
+-------------------------------------------------------------------------------
+THE API STOPPED: connection-unavailable state
+-------------------------------------------------------------------------------
+
+Conditions, all three of which had to be true at once and were not achievable
+earlier in the project: hosts entry live and correct, certificate trusted, API
+genuinely stopped (nothing listening on 8443, confirmed host-side). So the
+indicator fires because the SERVER is gone, not because the address is dead.
+P1-15's own note warned against capturing this in the weaker state.
+
+    Indicator : "API unavailable - writes refused"
+    Status    : "The API could not be reached. Nothing was sent and nothing
+                 was saved.
+
+                 The API did not respond within 10 seconds.
+
+                 This client is online-only by design. The request has NOT
+                 been queued and will NOT be retried automatically - re-run
+                 it once the API is back."
+
+  * No stack trace, no exception type, no URL, no socket error code.
+  * Rendered inline in the same status area as every other result, not a modal.
+    The application stayed usable; no freeze, no crash.
+  * The refusal is affirmative rather than an omission: it states that nothing
+    was sent, nothing saved, nothing queued, nothing retried.
+
+VERIFIED SERVER-SIDE after the refused attempt:
+
+    StockMovements rows for product 4 : 2        (unchanged)
+    StockBalances                     : 245.000  (unchanged)
+    New AuditLogs rows                : NONE
+
+The client's claim that nothing was sent is true from the server's side as
+well. That is a stronger statement than the on-screen message alone, and it is
+what makes "no outbox, by design" a verified property rather than a promise.
+
+Recovery after the API was restarted was confirmed by the client noticing and
+returning to a connected state.
+
+-------------------------------------------------------------------------------
+LAYOUT AND KEYBOARD, AT 150% SCALING
+-------------------------------------------------------------------------------
+
+Checked across idle, signed-in, post-/auth/me and post-decrement states:
+
+  no clipped or truncated text          no controls past the window edge
+  window did not open oversized         no overlapping elements
+  all labels fully readable             "Round trip" controls within the card
+
+Focus rings: tabbed through all eight controls -- Username, Password, Sign in,
+Sign out, Product ID, Quantity, Call /auth/me, Decrement stock. Every control
+showed a visible focus indicator at 150%. Spec section 16 requires keyboard
+navigation, and a focus ring that washes out at high DPI is precisely the
+defect that only appears on a machine like this one.
+
+No layout defects found.
+
+-------------------------------------------------------------------------------
+DEFECT FOUND AND FIXED DURING THIS RUN -- correlation ID never displayed
+-------------------------------------------------------------------------------
+
+WHAT WAS OBSERVED, across two runs, and why it looked self-contradictory:
+
+  Run 1 (a mistyped password, then successes)
+      All states displayed 7f124b2c-fd33-43c1-9625-3006de2a47ff.
+      The server had recorded ee948b0f-... for the decrement in that run.
+      7f124b2c belongs to a LoginFailed row, one attempt before the successful
+      login -- so the screen was showing a FAILED call's ID during successes.
+
+  Run 2 (clean, no failed attempts)
+      No correlation ID line rendered AT ALL, in any of three states.
+
+THE CAUSE, one line, explaining both:
+
+    Private Sub ShowSuccess(status As String, detail As String, correlationId As String)
+        ...
+        CorrelationId = correlationId     ' <-- no-op
+    End Sub
+
+VB identifiers are CASE-INSENSITIVE. The parameter shadowed the CorrelationId
+property, so the statement assigned the parameter to itself. It reads exactly
+like a working assignment. Option Strict On cannot reject it -- self-assignment
+is legal. The build emitted zero warnings.
+
+ShowFailure has no parameter of that name in scope, so ITS assignment worked.
+That asymmetry produced both symptoms: with a failure first, the failure's ID
+was published and then frozen through every later success; with no failure,
+nothing was ever published and the line stayed hidden.
+
+WHY IT MATTERS MORE THAN ITS SIZE. ADR-014 makes the correlation ID the
+identifier an operator reads off the screen and quotes when reporting a
+failure. A frozen value hands support an ID that matches no AuditLogs row for
+the call in question -- worse than showing nothing, because it points
+confidently at the wrong request.
+
+FIX AND COVER. Four tests written BEFORE the fix. Before: three failed and the
+one that PASSED was the rejection-path test, reproducing the field asymmetry in
+isolation. The parameter was renamed so it cannot shadow the property, with a
+comment recording the trap. After: unit suite 21/21 green, up from 17.
+
+  SuccessfulCall_PublishesItsCorrelationIdToTheViewModel
+  EachSuccessfulCall_ReplacesThePreviousCorrelationId
+  RejectedCall_StillPublishesItsCorrelationId
+  UnreachableCall_ClearsTheCorrelationIdRatherThanLeavingAStaleOne
+
+VERIFIED ON THE MACHINE THAT FOUND IT, not only in tests. Rebuilt client
+(Merchandising.Inventory.dll SHA-256 42f01fc4...54d4, confirmed on the client
+before testing), clean sign-in, no failed attempts:
+
+    A  post sign-in       c853d6f9-2a11-4248-915e-fecc3df5095d
+    B  post 1st /auth/me  6cd0cbde-4e95-4db2-9ef2-bbadc88fb86d
+    C  post 2nd /auth/me  5164fd3e-27ab-4994-831d-e111d73453e8
+
+All three present, all three different. And the end-to-end claim, checked on
+the server:
+
+    AuditLogs 596  LoginSucceeded  Success  c853d6f9-2a11-4248-915e-fecc3df5095d
+
+The ID on the operator's screen matches the server's record exactly. B and C
+correctly have no audit rows -- /auth/me is read-only and writes nothing.
+
+HOW IT WAS FOUND, recorded because the method matters more than the bug.
+
+Not by review. Every layer beneath the view model was individually correct --
+fresh Guid per request, server echo, ApiResult carrying the value -- and
+reading them led to the WRONG conclusion twice: first that the defect was
+confirmed when it was not yet established, then that it did not exist because
+four correct layers appeared to rule it out. The bug was in the one line where
+a correct-looking assignment silently does nothing.
+
+It was found because the lab operator reported what it actually saw. Offered
+two possible outcomes with one signalled as expected, it reported neither,
+because neither matched. Told the source did not support its original finding,
+it did not withdraw it. Had it reported the expected answer, this would have
+reached the presentation.
+
+-------------------------------------------------------------------------------
+WHAT THIS CLOSES AND WHAT IT DOES NOT
+-------------------------------------------------------------------------------
+
+CLOSES:
+  * Full round trip over HTTPS from a second machine, on a client with the
+    Desktop Runtime 10.0.9 and no SDK.
+  * The connection-unavailable state, captured under honest conditions.
+  * No queue, no retry, no fake accept -- verified from the server side.
+  * Layout and focus rings at 150% scaling, below the UI baseline.
+  * Screenshots owed since the original P1-15 pass.
+
+DOES NOT CLOSE:
+  * Anything about the three demo workstations. DESKTOP-F5LK8MA is lab
+    equipment under ADR-012; its Windows baseline is not P0-02 evidence.
+  * The install procedure on a machine whose owner lacks admin rights. It
+    cannot currently be completed -- the hosts entry needs elevation. Recorded
+    in p1-10-cross-machine-denials.txt with the DNS-on-the-router mitigation.

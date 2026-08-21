@@ -1,0 +1,46 @@
+P1-09 firewall state AFTER correction  --  captured 2026-08-21 14:58:43
+Host: LAPTOP-3HH6OHHE
+
+1. Network profile -- the precondition the scoped rule depends on.
+   Home Wi-Fi was classified Public, which would have made the rule inert.
+
+Name             InterfaceAlias NetworkCategory
+----             -------------- ---------------
+Tailscale        Tailscale              Private
+HUAWEI-5G-fP2f 2 Wi-Fi                  Private
+
+
+
+2. Auto-prompt rules removed (4 were present: TCP+UDP for the Debug build,
+   TCP+UDP for the published build; the published pair covered Public too).
+   none remaining
+
+3. The scoped rule created by scripts/configure-firewall-dev.ps1:
+
+
+Profile       : Private
+Enabled       : True
+Action        : Allow
+Protocol      : TCP
+LocalPort     : 8443
+RemoteAddress : LocalSubnet
+
+
+
+
+4. Listening sockets at this moment:
+
+LocalAddress LocalPort
+------------ ---------
+::                  80
+0.0.0.0             80
+0.0.0.0            443
+::                 443
+127.0.0.1         3306
+0.0.0.0           8443
+
+
+
+   3306 is loopback-only (my.ini bind-address). 8443 is the API. 80/443 are
+   Apache, started deliberately for this session so the phpMyAdmin test is not
+   vacuous -- with the auto-prompt rules gone, no firewall rule now admits 80.

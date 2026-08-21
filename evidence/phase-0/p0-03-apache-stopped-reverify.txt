@@ -1,0 +1,97 @@
+P0-03 RE-VERIFICATION after the deliberate Apache run  --  2026-08-21 19:11:19
+
+Apache was started deliberately at 14:39 for the cross-machine phpMyAdmin test
+(p1-10-cross-machine-denials.txt) and stopped again here. This file re-proves
+P0-03 box 1 -- 'only MariaDB runs' -- rather than assuming the earlier capture
+still holds after the machine was deliberately changed.
+
+--- XAMPP-related processes now running ---
+
+Name     Id
+----     --
+mysqld 4576
+
+
+
+
+--- Listening ports that XAMPP components would use ---
+
+LocalAddress LocalPort OwningProcess
+------------ --------- -------------
+127.0.0.1         3306          4576
+
+
+
+
+--- Windows services registered for any XAMPP component ---
+
+Name   Status StartType
+----   ------ ---------
+mysql Running Automatic
+
+
+
+
+EXPECTED: mysqld only, listening on 127.0.0.1:3306 only. Apache/FileZilla/
+Mercury/Tomcat absent. No XAMPP Windows services.
+
+===============================================================================
+CORRECTION TO evidence/phase-0/xampp-services.txt -- two statements are false
+===============================================================================
+
+The re-verification above turned up a Windows service the original P0-03
+capture said did not exist. Full detail:
+
+    Name        : mysql
+    DisplayName : mysql
+    State       : Running
+    StartMode   : Auto
+    ProcessId   : 4576          <- the same process listening on 127.0.0.1:3306
+    PathName    : "C:\xampp\mysql\bin\mysqld.exe"
+                  "--defaults-file=C:\xampp\mysql\bin\my.ini" "mysql"
+    StartName   : LocalSystem
+
+That is XAMPP's own MariaDB, registered as an auto-starting Windows service
+running as LocalSystem. Two claims in xampp-services.txt are therefore wrong:
+
+  line 9   "Result: none registered. This XAMPP install runs components as
+            plain processes launched from the Control Panel, not as Windows
+            services."
+           -> FALSE for MariaDB. One component IS a service.
+
+  line 15  "XAMPP Control Panel itself is not configured to launch at Windows
+            boot, so none of its modules can auto-start with the OS."
+           -> The premise is true; the CONCLUSION does not follow, and the
+              mysql service is the counterexample. A module registered as a
+              service auto-starts with the OS whether or not the Control Panel
+              does. The original reasoning inferred module autostart from
+              Control-Panel autostart, and that inference is invalid.
+
+WHETHER THIS WAS ALWAYS TRUE OR CHANGED SINCE IS NOT DETERMINABLE HERE. The
+service may have been registered via the XAMPP Control Panel's "Service"
+checkbox after the original capture, or the original query may have been too
+narrow. Recorded as an open uncertainty rather than guessed at.
+
+WHAT IT DOES NOT CHANGE -- P0-03's actual acceptance boxes still hold:
+
+  * Apache, FileZilla, Mercury and Tomcat: no services registered for any of
+    them, no processes running, nothing listening on 80/443/21/25/110/8080.
+    Confirmed again above. Those four are what the card is about.
+  * MariaDB is SUPPOSED to run. "Keep MariaDB only" is the card's instruction,
+    so a running MariaDB is compliance, not drift.
+
+TWO CONSEQUENCES WORTH CARRYING FORWARD
+
+1. FOR P1-16 (Windows Service hosting) -- this is good news, partly.
+   "Host reboots and the API serves with no human action" requires MariaDB to
+   be up before the API needs it. MariaDB already auto-starts as a service, so
+   that half is satisfied without further work. The API service will need a
+   dependency on it, or a retry, so that boot ordering is not a race.
+
+2. FOR P1-16's least-privilege box -- LocalSystem is the highest-privilege
+   local account there is. P1-16 requires "service account is not an
+   administrator where practical". This is XAMPP's default and is out of scope
+   for P0-03, but it should be examined when P1-16 sets up the API's own
+   service identity: the API running as LocalSystem alongside a database also
+   running as LocalSystem would put the whole system on the most privileged
+   account on the box, by default rather than by decision.

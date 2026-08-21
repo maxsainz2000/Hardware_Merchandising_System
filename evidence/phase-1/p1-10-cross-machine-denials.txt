@@ -1,0 +1,272 @@
+===============================================================================
+CROSS-MACHINE NEGATIVE TESTS -- the boxes that needed a second machine
+Captured 2026-08-21, home LAN, 192.168.100.0/24
+Closes: P1-04 (root from another machine), P0-03 (phpMyAdmin), P1-10 boxes 1 and 5
+===============================================================================
+
+WHAT WAS FINALLY AVAILABLE THAT WAS NOT BEFORE
+
+Two client machines on the same subnet as the host, simultaneously, on two
+DIFFERENT physical media -- one wired, one wireless. Every earlier attempt at
+these boxes was blocked on having any second machine at all (P0-02, P0-03,
+P0-05, P1-04, P1-10, P1-15 all carried the same note).
+
+Both are LAB machines under ADR-012. They prove SOFTWARE BEHAVIOUR across a
+real network boundary. They do NOT satisfy P0-02 or P0-05, which are about the
+three classmates' demo workstations and cannot be closed with lab equipment.
+
+-------------------------------------------------------------------------------
+THE THREE MACHINES
+-------------------------------------------------------------------------------
+
+HOST      LAPTOP-3HH6OHHE   Windows 11 Home Single Language 26200
+                            192.168.100.165  Wi-Fi  DHCP  (see note on the lease)
+                            API on 0.0.0.0:8443, Production. MariaDB 127.0.0.1:3306.
+                            Apache running on 0.0.0.0:80 and :443, deliberately.
+
+CLIENT 1  DESKTOP-G83CCSH   Windows 10 Home 19041.508 x64, 4 cores, 3.5 GB
+                            192.168.100.192  ETHERNET  Realtek PCIe FE
+                            MAC 00-E0-4F-0B-7C-C0, 100 Mbps
+                            Display 1366x768 @ 100% (96 DPI)
+                            .NET runtimes 10.0.11, SDK 10.0.400 (from Visual Studio)
+                            User 'maxsa' is NOT a local administrator
+                            Windows install date 2026-08-20
+
+CLIENT 2  DESKTOP-F5LK8MA   Windows 10 Home 19041.508 x64, 8 cores, 5.9 GB
+                            192.168.100.102  WI-FI  Intel Dual Band AC 7265
+                            MAC 94-E2-3C-32-FA-3C, 585 Mbps
+                            Tongfang Computer Co. NBPC1958
+                            Display 1920x1080 native @ 150% (144 DPI), ~1280x720 effective
+                            .NET runtimes 10.0.11, SDK 10.0.400
+                            User 'maxsa' is NOT a local administrator
+                            Windows install date 2026-08-20
+
+  MANIFEST CORRECTION. Section 3.1 records the lab test workstation as
+  'DESKTOP-OUU3M8J -- from the tailnet registration; confirm on the machine'.
+  Confirmed on the machine: the Windows computer name is DESKTOP-G83CCSH. The
+  tailnet name was never the Windows name. The manifest's own instruction to
+  verify is what caught this; it is corrected in section 3.1.
+
+  Section 3.1 also predicted ".NET Desktop Runtime: expect 'not installed' ...
+  Runtime only: no SDK, no XAMPP" and "will NOT exercise the 1366x768 baseline".
+  Both wrong, both now measured: the SDK is present, and the display IS exactly
+  1366x768. Three of three assumptions about this machine were incorrect.
+
+-------------------------------------------------------------------------------
+THE GATE -- run first, because without it every result below is void
+-------------------------------------------------------------------------------
+
+A refused connection cannot distinguish "the host is not listening" from "the
+network isolated the two machines". If the clients could not reach the host at
+all, every PASS below would be proving the ACCESS POINT's behaviour.
+
+  DESKTOP-G83CCSH  ping 192.168.100.165 -- 4/4 replies, avg 32 ms   [PASS]
+  DESKTOP-F5LK8MA  ping 192.168.100.165 -- 4/4 replies, avg 45 ms   [PASS]
+
+The wireless client matters most here: host and client are both on the same
+Huawei AP, and consumer APs commonly enable client isolation between wireless
+stations. This one does not.
+
+SECOND, STRONGER GATE -- a live TCP connection to a port that IS open:
+
+  Both clients connected to 192.168.100.165:8443 at the TCP layer successfully
+  (see the TLS section). So at the moment of testing, this host was accepting
+  connections from both machines on a port that is open, while refusing every
+  port below. The refusals are therefore properties of the host, not the network.
+
+-------------------------------------------------------------------------------
+P1-04 -- "Root login from another machine fails"                        [CLOSED]
+-------------------------------------------------------------------------------
+
+  DESKTOP-G83CCSH  192.168.100.165:3306 refused/timed out            [PASS]
+  DESKTOP-F5LK8MA  192.168.100.165:3306 refused/timed out            [PASS]
+
+A root login was never attempted, because it CANNOT be attempted: there is no
+routable listener to attempt it against. my.ini:46 sets bind-address="127.0.0.1",
+and the live socket table on the host shows 3306 bound to 127.0.0.1 only while
+8443 is bound to 0.0.0.0. That is a stronger property than a rejected login --
+a rejected login proves the credential check works; an unreachable port proves
+the credential check is never reached.
+
+THE CONFOUND THIS TEST NORMALLY HAS, AND WHY IT DOES NOT APPLY HERE.
+
+Normally a remote refusal cannot distinguish "nothing is listening" from "a
+firewall dropped it". On this host that ambiguity is absent, and for an unusual
+reason: the host firewall EXPLICITLY PERMITS 3306 from this exact subnet. Rules
+belonging to the unrelated VISTA / merchsys_central installation (out of project
+scope, flagged at P0-04) are live:
+
+    VISTA MariaDB LAN                 3306   Any profile   192.168.100.0/24
+    MariaDB - Tailscale only (VISTA)  3306   Any profile   100.64.0.0/10
+    MariaDB TCP 3306                  3306   Any profile   ANY REMOTE ADDRESS
+
+A firewall rule admits traffic to a listener. It does not create one. With 3306
+explicitly allowed from the whole subnet and the connection still refused, the
+only remaining explanation is the bind address. The confound is not argued away
+here -- it is absent.
+
+  (Those VISTA rules should still be narrowed by whoever owns that install.
+   They are harmless only while that server stays on loopback. Out of scope for
+   this card; recorded in p1-10-host-state-during-test.txt section 6.)
+
+Third, independent layer, unchanged from the earlier structural evidence: 'root'
+has no '%' host entry in mysql.user -- only localhost, 127.0.0.1 and ::1.
+
+-------------------------------------------------------------------------------
+P0-03 / P1-10 box 5 -- "phpMyAdmin unreachable from the client"         [CLOSED]
+-------------------------------------------------------------------------------
+
+  DESKTOP-G83CCSH   port 80 refused/timed out                        [PASS]
+                    port 443 refused/timed out                       [PASS]
+                    port 8080 refused/timed out                      [PASS]
+                    http://192.168.100.165/phpmyadmin/  unreachable  [PASS]
+                    http://192.168.100.165/            unreachable   [PASS]
+                    http://192.168.100.165/dashboard/  unreachable   [PASS]
+                    Test-NetConnection :80 TcpTestSucceeded=False
+                                          PingSucceeded=True (31 ms)
+
+  DESKTOP-F5LK8MA   identical results, all six [PASS]
+
+Apache WAS running throughout. Verified on the host at the time of the test:
+two httpd PIDs, listening on 0.0.0.0:80, ::80, 0.0.0.0:443, ::443. So this is
+not the vacuous version of the test that P1-10 warned about, where a refusal
+merely reflects a stopped service.
+
+WHICH DEFENCE LAYER THIS ACTUALLY PROVED -- stated precisely, because the two
+are not interchangeable and only one of them was exercised.
+
+  Layer 1, host firewall            PROVEN. Port 80 is closed to both clients.
+  Layer 2, Apache 'Require local'   NOT EXERCISED. No HTTP response was ever
+                                    returned to either client -- no 403, no
+                                    status code at all. The connection failed
+                                    below the HTTP layer.
+
+The cause is a host-side change made earlier in the same session: every Apache
+and httpd firewall rule on this host is scoped to the PUBLIC profile, and the
+Wi-Fi profile was moved to PRIVATE so the API's LocalSubnet rule would apply.
+On Private, nothing admits port 80 and Windows' default-deny drops the probe
+before Apache sees it.
+
+Both client sessions independently read their result as a network/firewall-layer
+refusal rather than an HTTP-layer one, and challenged the host-side assumption
+that Apache being up meant Apache was answering. That challenge was correct.
+
+The box is ticked because the box asks whether phpMyAdmin is REACHABLE, and it
+demonstrably is not, from two machines on two media. But the claim is exactly
+"unreachable, at the firewall layer" -- not "Require local refused a remote
+requester", which remains unproven and is the layer that would still protect
+the demo rig if someone opened port 80 there. See the OPEN ITEM at the end.
+
+-------------------------------------------------------------------------------
+P1-10 box 1 -- "MariaDB port unreachable from the client"      [UPGRADED]
+-------------------------------------------------------------------------------
+
+Previously ticked on a structural claim, with an explicit honesty note saying
+the literal "observed from a second machine" reading was NOT satisfied. It is
+now satisfied literally, from two machines. The honesty note can be retired
+rather than argued around.
+
+-------------------------------------------------------------------------------
+P1-09 box 3 -- "An untrusted client fails clearly"             [CLOSED, in part]
+-------------------------------------------------------------------------------
+
+Both clients, with NO certificate trust installed:
+
+  DESKTOP-G83CCSH   TCP connect to 8443           SUCCESS
+                    AuthenticateAsClient('MERCH-HOST')  FAILED
+                    SslPolicyErrors : RemoteCertificateChainErrors
+                    "The remote certificate is invalid according to the
+                     validation procedure."
+
+  DESKTOP-F5LK8MA   identical, verbatim
+
+Both halves matter. The TCP connect SUCCEEDING is what proves the failure is a
+trust decision rather than an unreachable host; the handshake FAILING is the
+security property. A test that only showed the failure could not tell the two
+apart.
+
+METHOD NOTE -- why this was done with a raw SslStream and not Invoke-WebRequest.
+Neither client can write a hosts file entry: both logged-in users are standard
+users, not administrators. The certificate has a name-only SAN (ADR-011), so a
+client must present the NAME to TLS. Connecting by IP at the TCP layer while
+calling AuthenticateAsClient('MERCH-HOST') sets SNI and validates against the
+name -- achieving for certificate purposes exactly what a hosts entry would,
+without requiring admin. Same technique as the original P1-09 loopback capture,
+now across a real network boundary.
+
+The WPF-surfaces-a-readable-message half of this box belongs to P1-15.
+
+-------------------------------------------------------------------------------
+FINDING -- the install procedure requires administrator rights on every client
+-------------------------------------------------------------------------------
+
+Not a lab detail. Both client machines' everyday accounts are standard users,
+which is the Windows Home default. On such a machine the documented procedure
+CANNOT BE COMPLETED: docs/installation-guide.md section 1 requires a hosts-file
+entry for MERCH-HOST, and writing to %SystemRoot%\System32\drivers\etc\hosts
+requires elevation. Without it the client resolves nothing, because the
+certificate is name-only and no DNS server on this network serves that name.
+
+Both clients confirmed it: "[PENDING] 'MERCH-HOST' does not resolve".
+
+Under ADR-012 the demo runs on three classmates' laptops. Any one of them
+without admin rights on their own machine cannot run the client at all, and the
+failure would surface at the presentation. This is precisely the risk P0-02's
+"local administrator rights confirmed per demo workstation" box was added to
+catch, now observed on 2 of 2 real machines rather than anticipated.
+
+THE FIX IS PROBABLY NOT "GET ADMIN". A self-provided demo LAN (manifest section
+4.2) has a router, and a router can serve DNS for MERCH-HOST. That removes the
+per-machine hosts edit from the install procedure entirely, converting ADR-011's
+known inconvenience from a per-machine elevated task into one router setting.
+Certificate trust into CurrentUser\Root needs no admin, so DNS is the only
+remaining elevation requirement on a client.
+
+-------------------------------------------------------------------------------
+DEFECT FOUND IN scripts/capture-client-baseline.ps1
+-------------------------------------------------------------------------------
+
+The display section prints a hardcoded note: "a desktop monitor at 100% does NOT
+exercise the 1366x768 @125% baseline. That test stays with the laptop." It
+printed verbatim on DESKTOP-F5LK8MA, which IS a laptop, running at 150% scaling.
+The note assumes the machine it is running on. It should report, not advise.
+
+Also worth noting: the script's own display reading (WMI-based) contradicted an
+earlier reading taken via [Windows.Forms.Screen]::PrimaryScreen.Bounds in a
+non-interactive PowerShell session, which reported 1280x720 @ 100%. The WMI
+reading -- 1920x1080 native at 150% -- is the correct one. A non-interactive
+session is not a reliable source of display metrics.
+
+-------------------------------------------------------------------------------
+OPEN ITEM -- proving Apache's 'Require local' layer
+-------------------------------------------------------------------------------
+
+Requires one elevated command on the host and one re-probe from either client:
+
+  New-NetFirewallRule -DisplayName 'TEMP phpMyAdmin proof (delete after)' `
+    -Direction Inbound -Protocol TCP -LocalPort 80 `
+    -RemoteAddress LocalSubnet -Profile Private -Action Allow
+
+Then from a client: http://192.168.100.165/phpmyadmin/
+  Expected: HTTP 403 -- Apache accepts the connection and Require local refuses
+  the requester's address. That is the layer that survives someone opening port
+  80 on the demo rig, and it is the one this run did not reach.
+
+Then:
+  Remove-NetFirewallRule -DisplayName 'TEMP phpMyAdmin proof (delete after)'
+and the same probe must time out again.
+
+-------------------------------------------------------------------------------
+ADDRESSING NOTE -- do not read 192.168.100.165 as a fixed value
+-------------------------------------------------------------------------------
+
+The host held 192.168.100.165 during this run, matching the hosts entry written
+at P0-05. That is a DHCP lease, not a reservation. P1-10 previously recorded the
+host at .123 with the hosts entry stale at .165; the lease has since returned to
+.165, so the name happens to resolve correctly again on the host itself.
+
+This is the trap recorded in evidence/phase-0/host-ip-reservation.txt: an address
+that is correct today by coincidence passes a test now and fails after a lease
+expiry, with a symptom that looks like a certificate or firewall fault. Nothing
+in this run depends on .165 being durable -- both clients were given the address
+explicitly at run time, and neither has a hosts entry.

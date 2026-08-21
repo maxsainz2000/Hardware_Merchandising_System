@@ -1,0 +1,51 @@
+P1-09 firewall state BEFORE correction  --  captured 2026-08-21 14:40:53
+Host: LAPTOP-3HH6OHHE
+
+Wi-Fi network profile:
+
+Name             InterfaceAlias NetworkCategory
+----             -------------- ---------------
+Tailscale        Tailscale              Private
+HUAWEI-5G-fP2f 2 Wi-Fi                   Public
+
+
+
+
+Auto-prompt rules created by clicking Allow on a Windows prompt, NOT by configure-firewall-dev.ps1
+(which has never been run -- the rule it creates does not exist):
+
+
+Profile : Private
+Action  : Allow
+Proto   : TCP
+Port    : Any
+Remote  : Any
+App     : C:\users\admin\documents\hardware_merchandising_system\src\merchandising.api\bin\debug\net10.0\merchandising.api.exe
+
+Profile : Private
+Action  : Allow
+Proto   : UDP
+Port    : Any
+Remote  : Any
+App     : C:\users\admin\documents\hardware_merchandising_system\src\merchandising.api\bin\debug\net10.0\merchandising.api.exe
+
+Profile : Private, Public
+Action  : Allow
+Proto   : TCP
+Port    : Any
+Remote  : Any
+App     : C:\users\admin\documents\hardware_merchandising_system\artifacts\publish\api-fd\merchandising.api.exe
+
+Profile : Private, Public
+Action  : Allow
+Proto   : UDP
+Port    : Any
+Remote  : Any
+App     : C:\users\admin\documents\hardware_merchandising_system\artifacts\publish\api-fd\merchandising.api.exe
+
+
+
+
+
+Scoped rule sought by scripts/configure-firewall-dev.ps1:
+0 found (expected 0 before correction)

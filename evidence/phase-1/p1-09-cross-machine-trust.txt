@@ -1,0 +1,185 @@
+===============================================================================
+P1-09 -- CERTIFICATE TRUST ACROSS A REAL NETWORK BOUNDARY
+Captured 2026-08-21. Two client machines, two media, one host.
+Supersedes the same-host simulation in p1-09-invalid-cert-behaviour.txt.
+===============================================================================
+
+WHAT THE EARLIER CAPTURE COULD NOT CLAIM
+
+p1-09-invalid-cert-behaviour.txt proved the trust MECHANISM using a raw TLS
+client against the real Kestrel process over loopback, and said so plainly:
+"a literal second physical machine following this exact procedure is not yet
+proven and stays an open item." That item is closed here, twice over.
+
+  HOST      LAPTOP-3HH6OHHE   192.168.100.165   Kestrel 0.0.0.0:8443, Production
+  CLIENT 1  DESKTOP-G83CCSH   192.168.100.192   Ethernet
+  CLIENT 2  DESKTOP-F5LK8MA   192.168.100.102   Wi-Fi
+
+Certificate under test: self-signed, CN=MERCH-HOST, ONE SAN entry
+(DNS Name=MERCH-HOST, no IP), valid 2026-08-18 to 2028-08-18,
+thumbprint 759021AA351D8572EF19DD24ADDEF1A94A4849C9.
+
+-------------------------------------------------------------------------------
+METHOD -- and why it is not Invoke-WebRequest
+-------------------------------------------------------------------------------
+
+Neither client could write a hosts entry: the logged-in user on both machines
+is a STANDARD USER, not an administrator (see the finding in
+p1-10-cross-machine-denials.txt). Without a hosts entry the name MERCH-HOST
+resolves to nothing, and the certificate is name-only, so the client must
+present the NAME to TLS regardless.
+
+Resolution: connect by IP at the TCP layer, then call
+
+    AuthenticateAsClient('MERCH-HOST')
+
+which sets the SNI server name and validates the certificate against that name.
+For certificate-validation purposes this is exactly what a hosts entry achieves
+-- the only thing skipped is the DNS lookup itself. Same technique as the
+original loopback capture, now across a real network.
+
+HARNESS LIMITATION, STATED SO IT IS NOT MISREAD LATER. These runs used
+Windows PowerShell 5.1, which is .NET Framework, not .NET 10. Consequences:
+
+  - Negotiated protocol reads Tls12 on BOTH clients. This is a property of
+    .NET Framework's SslStream, which does not offer TLS 1.3 for the
+    AuthenticateAsClient(String) overload. It is NOT evidence of a downgrade
+    and NOT a Kestrel setting: the host has no SCHANNEL\Protocols registry
+    keys at all, and Kestrel pins no SslProtocols (Program.vb:102), so the
+    host was willing to negotiate 1.3.
+  - NegotiatedCipherSuite returns blank on both. That property is a .NET Core+
+    addition and is not populated by .NET Framework.
+
+  THE Tls12 FIGURE DESCRIBES POWERSHELL, NOT THE PRODUCT. The real WPF client
+  is .NET 10 and is expected to negotiate 1.3 against the same endpoint. Do not
+  quote this file as a measurement of the API's TLS version.
+
+  Both client sessions flagged the Tls12/Tls13 discrepancy independently rather
+  than reporting back the value they had been told to expect. Chasing it is what
+  surfaced the unpinned listener now filed as P1-21.
+
+-------------------------------------------------------------------------------
+STEP 1 -- BEFORE TRUST. Both clients. Must fail.
+-------------------------------------------------------------------------------
+
+DESKTOP-G83CCSH
+    TCP connect to 192.168.100.165:8443 : SUCCESS
+    AuthenticateAsClient('MERCH-HOST')  : FAILED
+    SslPolicyErrors : RemoteCertificateChainErrors
+    "The remote certificate is invalid according to the validation procedure."
+
+DESKTOP-F5LK8MA
+    identical, verbatim.
+
+Both halves are load-bearing. The TCP connect SUCCEEDING proves the failure is
+a trust decision rather than an unreachable host or a firewall drop. The
+handshake FAILING is the security property. A capture showing only the failure
+could not distinguish the two, and would be consistent with the API being down.
+
+-------------------------------------------------------------------------------
+STEP 2 -- THE TRUST PROCEDURE, followed by a human on each machine
+-------------------------------------------------------------------------------
+
+Both clients printed the certificate thumbprint and compared it BY EYE against
+the value supplied out of band before installing anything:
+
+    759021AA351D8572EF19DD24ADDEF1A94A4849C9      matched on both machines
+
+That comparison is the entire security value of a manual trust step. Automating
+it away would defeat the point, which is why the procedure asks for it and why
+both runs stopped to do it.
+
+Installed into CurrentUser\Root, NOT LocalMachine\Root, on both machines --
+because neither user has administrator rights. Worth recording: the per-user
+store is sufficient for the client to work and needs no elevation, so
+certificate trust is NOT one of the reasons a demo workstation needs an admin.
+The hosts entry is.
+
+-------------------------------------------------------------------------------
+STEP 3 -- AFTER TRUST. Same connection, same certificate. Must succeed.
+-------------------------------------------------------------------------------
+
+DESKTOP-G83CCSH
+    SslPolicyErrors : None
+    TLS protocol    : Tls12   (harness limitation -- see METHOD)
+    HTTP/1.1 200 OK
+    Content-Type: application/json; charset=utf-8
+    Server: Kestrel
+    X-Correlation-Id: 715830d5-b9ad-48dc-8b2a-0b7c76b3e808
+    {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T08:37:16.2803436Z"}
+
+DESKTOP-F5LK8MA
+    SslPolicyErrors : None
+    TLS protocol    : Tls12
+    HTTP/1.1 200 OK
+    X-Correlation-Id: 9346e3a0-73a8-426f-95c9-6d02094fd4e5
+    {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T08:25:58.5708565Z"}
+
+A real HTTP request was issued over the established stream rather than stopping
+at a completed handshake, so this proves the API ANSWERED, not merely that TLS
+negotiated. Each response carries a distinct X-Correlation-Id, per ADR-014.
+
+-------------------------------------------------------------------------------
+STEP 4 -- THE NEGATIVE CONTROL. The one that makes step 3 mean something.
+-------------------------------------------------------------------------------
+
+After trust is installed, validate against the IP instead of the name:
+
+DESKTOP-G83CCSH
+    AuthenticateAsClient('192.168.100.165')  : FAILED
+    SslPolicyErrors : RemoteCertificateNameMismatch
+
+WHY THIS IS THE MOST INFORMATIVE RESULT IN THE FILE.
+
+Without it, "it works after trust" is consistent with a client that simply
+stopped checking anything -- which is the single most common way a TLS test
+passes while proving nothing. This shows the client is still checking, and
+still refusing, on a different and more specific ground.
+
+Note the CHANGE in the error between step 1 and step 4, which is what carries
+the information:
+
+    before trust, by name :  RemoteCertificateChainErrors
+    after trust,  by IP   :  RemoteCertificateNameMismatch   (chain error GONE)
+
+The chain error disappeared because the chain is now trusted. What remains is
+purely the name check. So the name-only SAN of ADR-011 is enforced
+INDEPENDENTLY of chain trust -- the two validations are separable and both are
+live. Had step 4 returned both errors together, or a generic failure, it would
+not have distinguished the two mechanisms.
+
+-------------------------------------------------------------------------------
+PROCESS NOTE -- worth keeping
+-------------------------------------------------------------------------------
+
+On DESKTOP-G83CCSH the agent session's own permission layer refused to run the
+certificate install and the trusted request, AND refused to modify its own
+permission settings to allow them. It did not route around either refusal; Max
+ran those three commands himself in his own shell and the agent reported the
+output verbatim. The same session earlier declined a set of ad-hoc HTTP probes
+for the same reason.
+
+Recorded because the alternative -- an agent quietly widening its own
+permissions to finish a task -- would have produced identical-looking evidence
+with no way to tell the difference afterwards.
+
+-------------------------------------------------------------------------------
+WHAT THIS FILE DOES AND DOES NOT CLOSE
+-------------------------------------------------------------------------------
+
+CLOSES:
+  - "An untrusted client fails clearly"     -- proven on two machines, with the
+                                               successful TCP connect as control
+  - "Trust procedure ... followed on every client"
+                                            -- followed on both lab clients,
+                                               thumbprint compared by hand
+  - The name-only SAN decision (ADR-011)    -- enforced, not merely documented,
+                                               and separably from chain trust
+
+DOES NOT CLOSE:
+  - The literal "client reaches https://MERCH-HOST:8443/health" via DNS/hosts
+    resolution. These runs supplied the name through SNI and the address
+    explicitly. The hosts-file half is proven only once a client with an actual
+    MERCH-HOST entry issues an ordinary request -- see P1-15's WPF run.
+  - The WPF-surfaces-a-readable-message half of box 3, which is P1-15's.
+  - Anything about the three demo workstations. These are lab machines (ADR-012).

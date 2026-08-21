@@ -1,0 +1,98 @@
+HOST STATE DURING THE CROSS-MACHINE TEST  --  2026-08-21 16:13:00
+Host: LAPTOP-3HH6OHHE   IPv4: 192.168.100.165
+
+This file is the counterpart to the client-side captures. A refused connection
+observed from a client proves nothing unless the host state at that moment is
+known -- 'refused' and 'nothing was listening' and 'the network isolated us'
+look identical from the far end.
+
+--- 1. Listening sockets (the ground truth) ---
+
+LocalAddress LocalPort OwningProcess
+------------ --------- -------------
+::                  80         15420
+0.0.0.0             80         15420
+0.0.0.0            443         15420
+::                 443         15420
+127.0.0.1         3306          4576
+0.0.0.0           8443         16292
+
+
+
+--- 2. MariaDB bind address (my.ini) ---
+my.ini:46  bind-address="127.0.0.1"
+  => no routable listener exists for 3306. A client cannot reach it to attempt
+     a root login at all, which is a stronger property than a rejected login.
+
+--- 3. Apache is deliberately RUNNING for this test ---
+httpd.conf:60  Listen 80
+  => binds ALL interfaces, unlike MariaDB. Its protection is Require local:
+  httpd-xampp.conf:87  Require local
+  httpd-xampp.conf:94  Require local
+  httpd-xampp.conf:106  Require local
+  => evaluated against the REQUESTER address, so a host self-test is granted by
+     definition and would produce a false FAIL. Only a second machine can test it.
+
+--- 4. Inbound firewall rules admitting anything ---
+
+Rule                                                 Profile Port Remote                     
+----                                                 ------- ---- ------                     
+mysqld                                                Public Any  Any                        
+mysqld                                                Public Any  Any                        
+httpd.exe                                             Public Any  Any                        
+httpd.exe                                             Public Any  Any                        
+mysqld.exe                                            Public Any  Any                        
+mysqld.exe                                            Public Any  Any                        
+VISTA MariaDB LAN                                        Any 3306 192.168.100.0/255.255.255.0
+MariaDB - Tailscale only (VISTA)                         Any 3306 100.64.0.0/255.192.0.0     
+MariaDB TCP 3306                                         Any 3306 Any                        
+Merchandising API HTTPS (dev, private networks only) Private 8443 LocalSubnet                
+
+
+
+  => 8443/LocalSubnet/Private is the ONLY project rule. The four Any-port/Any-
+     remote auto-prompt rules were removed before this test (see
+     p1-09-firewall-before.txt / -after.txt).
+
+--- 5. API liveness at capture time (positive control) ---
+HTTP 200  {"status":"ok","version":"0.1.0","utcTime":"2026-08-21T08:13:10.9121617Z"}
+  => if a client reports 8443 answering while 3306/80 refuse, the network is
+     demonstrably NOT isolating the two machines, and the refusals are real.
+
+--- 6. ANNOTATION added after reading section 4: pre-existing 3306 rules ---
+
+Section 4 surfaced inbound rules that do NOT belong to this project and were
+not created by it. They belong to the unrelated "VISTA" / merchsys_central
+installation already flagged as out-of-project at P0-04 and in manifest section 2:
+
+    VISTA MariaDB LAN                 3306   Any profile   192.168.100.0/24
+    MariaDB - Tailscale only (VISTA)  3306   Any profile   100.64.0.0/10
+    MariaDB TCP 3306                  3306   Any profile   ANY REMOTE ADDRESS
+    mysqld / mysqld.exe               Any    Public        ANY REMOTE ADDRESS
+
+Read carelessly this looks like a hole. It is not, and the reason it is not is
+worth stating precisely, because it converts an ambiguous test result into an
+unambiguous one.
+
+  A firewall rule ALLOWS traffic to reach a listener. It does not create one.
+  MariaDB binds 127.0.0.1 (my.ini:46), so on this host there is no socket on
+  any routable interface for those rules to admit traffic to.
+
+The consequence for the P1-04 and P1-10 evidence is the opposite of a problem:
+
+  A client's refused connection to 3306 CANNOT be attributed to the host
+  firewall, because the host firewall explicitly permits 3306 from the entire
+  192.168.100.0/24 subnet and, in one rule, from any address at all.
+
+That removes the single largest confound in a remote negative test. Normally a
+refusal cannot distinguish "nothing is listening" from "a firewall dropped it";
+here the firewall is demonstrably NOT dropping it, so the only remaining
+explanation is the bind address. The 8443 positive control in section 5 rules
+out network-level isolation. Together the three facts leave exactly one cause.
+
+ACTION SEPARATELY: these rules should still be reviewed and probably narrowed
+or removed by whoever owns the VISTA installation. "MariaDB TCP 3306 / Any
+remote address / any profile" is standing configuration that would expose that
+project's database the moment its server binds a routable interface. That is
+out of scope for this project's cards, but it is not out of scope for Max's
+machine, and it is recorded here rather than silently passed over.

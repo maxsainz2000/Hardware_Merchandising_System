@@ -1,0 +1,148 @@
+===============================================================================
+P1-15 / ADR-010 -- WHAT A FRAMEWORK-DEPENDENT WPF CLIENT DOES ON A MACHINE
+WITH NO .NET RUNTIME AT ALL
+Captured 2026-08-21 on DESKTOP-F5LK8MA (Windows 10 Home 19041.508, x64)
+===============================================================================
+
+WHY THIS CAPTURE EXISTS, AND WHY IT WAS PREVIOUSLY THOUGHT IMPOSSIBLE
+
+ADR-010 chose framework-dependent deployment for the WPF clients and parked one
+item as unvalidated: a framework-dependent client fails at launch where no
+.NET Desktop Runtime is installed, and no machine in this project could
+demonstrate what that failure looks like -- every machine had a runtime, and
+most had an SDK. P1-15's first acceptance box carries the same requirement and
+the same note.
+
+The question that actually matters for the handover (ADR-012): a classmate
+double-clicks the client on a laptop nobody prepared. Do they get an actionable
+message, or a baffling silent failure? The first means the install guide can
+lean on Windows. The second means the installer needs its own prerequisite
+check. There was no way to know without measuring it.
+
+HOW THE OPPORTUNITY AROSE -- recorded honestly, because it was not planned.
+
+An attempt to remove ONLY the .NET SDK from this machine, so it would model a
+classmate's runtime-only workstation, removed the entire C:\Program Files\dotnet
+tree instead. Sequence, from the machine's own Application event log:
+
+  17:55:18  Windows Installer removed "VS Script Debugging Common"
+            (product {F5796163-6EC6-488A-B2DE-E1E94477F6AD})
+  17:57:04  two transactions against {86E08F1C-EDC3-4C70-985C-83447B6690BD}
+            -- returned 1605, ERROR_UNKNOWN_PRODUCT
+
+Two contributing causes, and the order matters:
+
+  * The GUID handed to the operator as an "MSI product code" was a Burn
+    BUNDLE id for a Visual-Studio-bundled installer. msiexec /x cannot act on
+    it, which is what 1605 means. That instruction was wrong.
+  * But the timeline indicates the shared runtime went with the VS component
+    uninstall performed through the Settings GUI at 17:55, BEFORE the msiexec
+    calls that returned 1605 and changed nothing. The bad instruction did not
+    cause the removal; a Visual Studio component uninstall cascaded into the
+    shared dotnet folder.
+
+The lab operator checked the event log rather than accepting the first
+explanation offered, which is the only reason the second cause is on record.
+
+The resulting machine -- no dotnet.exe, no shared frameworks, nothing -- is a
+better model of an unprepared classmate laptop than anything that could have
+been built on purpose, so it was measured BEFORE being repaired.
+
+-------------------------------------------------------------------------------
+PRE-CONDITIONS AT CAPTURE TIME
+-------------------------------------------------------------------------------
+
+  C:\Program Files\dotnet                     does not exist
+  dotnet.exe                                  not found, not on PATH
+  Microsoft.WindowsDesktop.App                absent
+  DOTNET_ROOT / DOTNET_ROOT_X64               unset
+  HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64\InstallLocation
+                                              unset
+  Certificate CN=MERCH-HOST                   trusted in CurrentUser\Root
+  hosts entry for MERCH-HOST                  absent
+
+The client under test is the framework-dependent publish of
+Merchandising.Inventory (ADR-010), at
+C:\merch-lab\client-kit\Inventory-client\Merchandising.Inventory.exe
+
+-------------------------------------------------------------------------------
+RESULT -- a named, actionable dialog. NOT a silent failure.
+-------------------------------------------------------------------------------
+
+A modal Windows dialog appeared, with an error icon:
+
+    Title bar : Merchandising.Inventory.exe
+    Body      : "You must install .NET Desktop Runtime to run this application."
+    Link      : "Download it now"
+                subtext "You will need to run the downloaded installer"
+    Controls  : "See details" (collapsed expander), "Close"
+
+Process exit code: -2147450749
+
+Application event log, source ".NET Runtime", EntryType Error, same moment:
+
+    Description: A .NET application failed.
+    Application: Merchandising.Inventory.exe
+    Path: C:\merch-lab\client-kit\Inventory-client\Merchandising.Inventory.exe
+    Message: You must install .NET to run this application.
+    App host version: 10.0.9
+    .NET location: Not found
+    Searched: application directory,
+              DOTNET_ROOT_X64 / DOTNET_ROOT (unset),
+              HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64\InstallLocation (unset),
+              default location C:\Program Files\dotnet
+    Download the .NET runtime:
+      https://aka.ms/dotnet-core-applaunch?missing_runtime=true&arch=x64
+      &rid=win-x64&os=win10&apphost_version=10.0.9
+
+-------------------------------------------------------------------------------
+WHAT THIS SETTLES
+-------------------------------------------------------------------------------
+
+1. THE FAILURE IS GRACEFUL AND SELF-DESCRIBING. The dialog names the missing
+   component precisely -- ".NET Desktop Runtime", not the vaguer ".NET Runtime"
+   -- which is correct for a WindowsDesktop app model client, and offers a
+   working download link. A classmate hitting this is told what to do.
+
+2. THE INSTALL GUIDE DOES NOT NEED ITS OWN PREREQUISITE CHECK. This was a live
+   open question. The apphost already performs one, reports it clearly, and
+   points at the fix. Building a bespoke check into the installer would
+   duplicate a working mechanism.
+
+3. THE REQUIRED VERSION IS NAMED BY THE ARTIFACT ITSELF. "App host version:
+   10.0.9" -- the published client states which runtime it expects, and it
+   matches the version pinned in ADR-002 and named as the client prerequisite
+   in environment-manifest section 3.2. The pin is confirmed by measurement,
+   not only by document. This is what settled the choice to reinstall 10.0.9
+   rather than the 10.0.11 the machine previously carried.
+
+4. ADR-010's PARKED ITEM CAN BE CLOSED. The framework-dependent choice's known
+   risk is now characterised rather than assumed.
+
+-------------------------------------------------------------------------------
+WHAT THIS DOES NOT SETTLE
+-------------------------------------------------------------------------------
+
+  * That the client WORKS once the runtime is present. That is the second half
+    of P1-15 box 1 and is captured separately, after installing the Desktop
+    Runtime 10.0.9 x64 with no SDK.
+  * Anything about the three demo workstations. DESKTOP-F5LK8MA is lab
+    equipment (ADR-012) and its Windows baseline is not P0-02 evidence.
+  * Whether the download link resolves to the right build for this app --
+    aka.ms/dotnet-core-applaunch carries arch, rid and apphost_version, but
+    what Microsoft serves from it was not followed or verified here.
+
+-------------------------------------------------------------------------------
+OPERATIONAL LESSON WORTH KEEPING
+-------------------------------------------------------------------------------
+
+Do not pass a GUID to msiexec /x because a registry Uninstall key displayed it.
+A VS-bundled component's key can carry a Burn bundle id, which msiexec rejects
+with 1605 while the GUI uninstall for the same entry behaves very differently
+and can cascade into shared components. Where a shared runtime is at stake,
+establish first whether the entry is an MSI product or a bundle, and prefer the
+vendor's own uninstall path over msiexec.
+
+Recovery from this state is a plain reinstall of the Desktop Runtime, so the
+cost here was time rather than data -- but on a demo workstation the day before
+a presentation it would not have been.

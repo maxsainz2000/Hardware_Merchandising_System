@@ -20,3 +20,12 @@ Only 127.0.0.1:3306 (MariaDB, loopback-only per P0-04) is active among XAMPP-rel
 
 === phpMyAdmin reachability from a client laptop ===
 NOT VERIFIED. No client laptop is provisioned yet (see P0-02). Apache itself is confirmed not running and port 80/443 confirmed not listening from this host's own perspective, which makes phpMyAdmin unreachable by construction (it depends on Apache serving it) -- but a genuine cross-machine LAN reachability test is deferred until a client laptop exists, consistent with P0-02's status.
+
+-------------------------------------------------------------------------------
+SUPERSEDED IN PART -- 2026-08-21
+Lines 9 and 15 above are FALSE. XAMPP's MariaDB IS registered as an
+auto-starting Windows service ("mysql", LocalSystem). See
+evidence/phase-0/p0-03-apache-stopped-reverify.txt for the correction and its
+consequences for P1-16. This file's conclusions about Apache, FileZilla,
+Mercury and Tomcat are unaffected and still hold.
+-------------------------------------------------------------------------------

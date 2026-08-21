@@ -344,12 +344,22 @@ Namespace ViewModels
         End Function
 
         ''' <summary>Renders a successful call.</summary>
-        Private Sub ShowSuccess(status As String, detail As String, correlationId As String)
+        ''' <remarks>
+        ''' The parameter is NOT named <c>correlationId</c>, and that is load-bearing.
+        ''' VB identifiers are case-insensitive, so a parameter of that name shadows
+        ''' the <see cref="CorrelationId"/> property, and <c>CorrelationId = correlationId</c>
+        ''' silently assigns the parameter to itself instead of publishing it. It reads
+        ''' exactly like a working assignment, <c>Option Strict On</c> cannot reject it
+        ''' (self-assignment is legal), and the build emits no warning. That defect
+        ''' shipped and was caught on a lab client, not by review - see
+        ''' <c>SpikeViewModelTests</c>.
+        ''' </remarks>
+        Private Sub ShowSuccess(status As String, detail As String, callCorrelationId As String)
 
             LastCallFailed = False
             StatusMessage = status
             ResultText = detail
-            CorrelationId = correlationId
+            CorrelationId = callCorrelationId
 
         End Sub
 

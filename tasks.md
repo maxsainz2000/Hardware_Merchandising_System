@@ -93,7 +93,7 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision i
 
 ---
 
-### 🟡 P0-03 · Install and strip XAMPP — phpMyAdmin cross-machine test now unblocked
+### ✅ P0-03 · Install and strip XAMPP — closed 2026-08-21; phpMyAdmin proven unreachable from two clients, Apache stopped and re-verified
 
 **Spec:** §3, §17 · **Closes:** G-03 (partially)
 
@@ -103,9 +103,9 @@ Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision i
 
 **Done when:**
 
-- [x] Only MariaDB runs; evidence at `evidence/phase-0/xampp-services.txt` (screenshot substituted with PowerShell output, by agreement)
+- [x] Only MariaDB runs — **re-verified 2026-08-21 after Apache was deliberately started and stopped** for the cross-machine phpMyAdmin test. `mysqld` only, listening on `127.0.0.1:3306` only. Evidence: `evidence/phase-0/xampp-services.txt` (original) and `p0-03-apache-stopped-reverify.txt` (the re-verification, which **corrects two false statements** in the original — XAMPP's MariaDB *is* an auto-starting Windows service running as `LocalSystem`, which the original said did not exist. Consequences carried forward to P1-16)
 - [x] Apache/FileZilla/Mercury/Tomcat confirmed not running, no OS-level autostart mechanism found
-- [ ] phpMyAdmin unreachable from another machine — **not verified, but no longer blocked.** The lab desktop is sufficient: this is a property of the host, not of a demo machine (ADR-012). `scripts/capture-client-baseline.ps1` performs the check
+- [x] phpMyAdmin unreachable from another machine — **verified 2026-08-21 from two lab clients**, one wired (`DESKTOP-G83CCSH`) and one wireless (`DESKTOP-F5LK8MA`). Ports 80/443/8080 and all three URLs (`/phpmyadmin/`, `/`, `/dashboard/`) unreachable from both, with Apache deliberately **running** so the test is not vacuous. **Read the claim precisely:** unreachable at the *host firewall* layer. Apache's `Require local` was never exercised — no HTTP response of any kind reached either client — because every Apache firewall rule here is Public-scoped and the Wi-Fi profile was moved to Private. Evidence: `p1-10-cross-machine-denials.txt`
 - [x] XAMPP version recorded in manifest §2 — `8.2.12-0`, now also pinned in ADR-002
 
 **Unblocked by:** any second machine on the same network as the host. The author's lab desktop is sufficient here — unlike P0-02, this card tests a *property of the host* (that phpMyAdmin is not exposed), not a fact about a demo machine, so the lab proves it.
@@ -550,7 +550,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track B — Database and migrations
 
-### 🟡 P1-04 · MariaDB setup and least-privilege accounts — grant model rebuilt 2026-08-18; root-from-another-machine box still open
+### ✅ P1-04 · MariaDB setup and least-privilege accounts — closed 2026-08-21, root-from-another-machine proven from two lab clients
 
 **Spec:** §17 · **Closes:** G-03, G-10 (begins) · **Decides:** ADR-003, **ADR-013**
 
@@ -564,7 +564,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [x] `merch_migrator` can `CREATE` and `DROP`, so P1-06's migration tests are re-runnable
 - [x] `merch_api` **cannot** `DROP DATABASE` — attempt recorded, `ERROR 1044 (42000): Access denied`, database confirmed intact afterward
 - [x] `merch_backup` **cannot** write — `INSERT`/`UPDATE`/`DELETE`/`CREATE` all denied against a scratch table; `SELECT` succeeds alongside, proving the denial is real privilege enforcement and not a broken account
-- [ ] Root login from another machine fails — **unblocked 2026-08-18: the lab desktop is sufficient.** This tests a property of the *host* (root is not reachable off-box), not a fact about a demo machine, so any second machine proves it. Structural evidence recorded instead: `bind-address=127.0.0.1` (P0-04) plus `root` having no `%`-host entry (only `localhost`/`127.0.0.1`/`::1`) — two independent layers, neither a substitute for the real cross-machine test
+- [x] Root login from another machine fails — **closed 2026-08-21 from two lab clients.** 3306 refused from both, on two different media. A login was never attempted because it *cannot* be: there is no routable listener to attempt it against. The usual confound is absent rather than argued away — the host firewall **explicitly permits** 3306 from `192.168.100.0/24` and, in one rule, from any address (stray VISTA rules, out of scope), so the refusal cannot be attributed to filtering; only `bind-address=127.0.0.1` remains. Third layer unchanged: `root` has no `%`-host entry. Evidence: `p1-10-cross-machine-denials.txt`
 - [x] ADR-003 records charset, collation, engine — **already ACCEPTED at P0-07 with measured values.** This card now *consumes* ADR-003 rather than deciding it.
 - [x] **`STRICT_TRANS_TABLES` added to `sql_mode` in `C:\xampp\mysql\bin\my.ini`, server restarted, and the change logged in the manifest §6** — re-ran the ADR-003.2 truncation demo under strict mode: `ERROR 1406 (22001)` where it previously silently stored a mangled value. The decimal-*scale* rounding half of that demo is **not** fixed by strict mode (expected — that's ADR-004.1's job, at the API layer, not here)
 
@@ -750,7 +750,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### 🟡 P1-09 · HTTPS with a LAN-valid certificate — mechanism proven on one machine, cross-machine and firewall still open
+### ✅ P1-09 · HTTPS with a LAN-valid certificate — closed 2026-08-21; cross-machine trust proven on two clients, firewall applied and scoped
 
 **Spec:** §8, §17 · **Closes:** G-07, G-25 · **Decides:** ADR-011
 
@@ -768,11 +768,11 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Client reaches `https://MERCH-HOST:8443/health` with no certificate warning after following the procedure — **mechanism proven same-host; a literal second machine has not run this yet**
-- [ ] Trust procedure written and followed on **every** client — **written** (`docs/installation-guide.md` §4, `p1-09-client-trust-steps.md`); followed on the lab host only so far
-- [ ] An untrusted client fails clearly; the WPF client surfaces a readable message rather than silently proceeding — **untrusted-client failure proven** (`RemoteCertificateChainErrors`, clean exception); the WPF half belongs to **P1-15**, not built here
+- [x] Client reaches `https://MERCH-HOST:8443/health` with no certificate warning after following the procedure — **closed 2026-08-21.** Proven twice, at two strengths. Both lab clients completed the trust procedure and got `SslPolicyErrors: None` plus `HTTP 200` with a correlation ID, supplying the name through SNI because neither could write a hosts entry (`p1-09-cross-machine-trust.txt`). Then `DESKTOP-F5LK8MA`, with an actual hosts entry and the real WPF client, completed a full signed-in round trip through ordinary name resolution — no warning, no bypass callback (`p1-15-cross-machine-roundtrip.txt`)
+- [x] Trust procedure written and followed on **every** client — **followed on both lab clients 2026-08-21**, thumbprint `759021AA…49C9` compared by eye on each machine before installing. Installed to `CurrentUser\Root`, not `LocalMachine\Root`, because neither user is an administrator — which establishes that certificate trust is **not** one of the reasons a demo workstation needs admin rights. The hosts entry is. Evidence: `p1-09-cross-machine-trust.txt`. *Still owed for the three demo workstations, which do not exist yet (ADR-012).*
+- [x] An untrusted client fails clearly; the WPF client surfaces a readable message rather than silently proceeding — **proven across a real network boundary 2026-08-21**, verbatim on both lab clients: TCP connect to 8443 **succeeds** while `AuthenticateAsClient("MERCH-HOST")` fails with `RemoteCertificateChainErrors`. Both halves matter — the successful TCP connect is what proves the failure is a trust decision and not an unreachable host. The WPF half belongs to **P1-15**
 - [x] Dev HTTP profile displays a non-production warning — `X-Non-Production-Http` header + startup log, proven not to leak onto the HTTPS listener even in Development
-- [ ] Firewall allows 8443 from the private subnet only — script written and its elevation guard proven, **not yet applied** (needs an elevated session on this machine)
+- [x] Firewall allows 8443 from the private subnet only — **applied and verified 2026-08-21.** `configure-firewall-dev.ps1` run elevated; rule live as TCP 8443 / LocalSubnet / Private / Allow. **Four** pre-existing auto-prompt rules were removed first (not two, as P1-15 recorded): TCP+UDP for the Debug build on Private, and TCP+UDP for the *published* build scoped **Private, Public**, all Any-port/Any-remote. Also required a precondition nobody had noticed — the home Wi-Fi was classified **Public**, which would have left the rule inert. Before/after: `p1-09-firewall-before.txt`, `p1-09-firewall-after.txt`
 
 > **ADR-012 note — unblocked, and one design lean firmed up.**
 >
@@ -784,11 +784,11 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 >
 > **Refined at P1-09.** A subnet hard-coded to the demo LAN would be actively wrong on every network this laptop develops on — home, school, office — since none of them is that subnet. `scripts/configure-firewall-dev.ps1` uses `-RemoteAddress LocalSubnet -Profile Private` instead: it resolves dynamically to whichever subnet the adapter is on, and only applies at all on networks Windows already classifies Private (school/office Wi-Fi is typically Public, so 8443 stays closed there by Windows' own default-deny). The demo rig's own firewall rule, scoped to its actual fixed subnet, is a separate install-time step for when that hardware exists — not this script.
 
-**Evidence:** `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.txt` (screenshot substituted with a captured terminal transcript — no second machine was reachable this session, same substitution precedent as P0-03)
+**Evidence:** `p1-09-cross-machine-trust.txt` (**the cross-machine capture, 2026-08-21 — supersedes the loopback simulation for boxes 2 and 3**), `p1-09-firewall-before.txt`, `p1-09-firewall-after.txt`, `p1-09-cert-details.txt`, `p1-09-client-trust-steps.md`, `p1-09-invalid-cert-behaviour.txt` (the original same-host mechanism proof)
 
 ---
 
-### 🟡 P1-10 · Negative security tests — host-side complete, phpMyAdmin box needs a second machine
+### ✅ P1-10 · Negative security tests — closed 2026-08-21; every box now observed from a real second machine
 
 **Spec:** §17 · **Closes:** G-03, G-10 · **Decides:** ADR-014 (raised here)
 
@@ -816,11 +816,11 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [x] MariaDB port unreachable from the client — **no routable listener exists** (`my.ini:46` + live socket table + refused connect to the host's own LAN address, with the API answering on 8443 as a positive control). The literal "observed from a second machine" reading is **not** satisfied; see the honesty note in the evidence
+- [x] MariaDB port unreachable from the client — **the honesty note is now retired.** Originally ticked on the structural claim, with an explicit note that the literal "observed from a second machine" reading was *not* satisfied. It is now satisfied literally, from two machines on two media, 2026-08-21. Evidence: `p1-10-cross-machine-denials.txt`
 - [x] Unauthenticated → 401 — three cases live (no token, garbage bearer token, `/me`)
 - [x] Wrong role → 403 — valid Cashier token on the Admin endpoint, with an Admin 200 as the discriminating control
 - [x] Error bodies carry a correlation ID and **no** stack trace, SQL, or connection detail — 8 error bodies scanned against 29 forbidden fragments, 0 hits; every body carries a parseable correlation ID
-- [ ] phpMyAdmin unreachable from the client — **needs a second machine.** `Require local` grants a self-test by definition, so this cannot be proven here; Apache is also currently stopped. Procedure to close it is in `p1-10-port-scan.txt`
+- [x] phpMyAdmin unreachable from the client — **closed 2026-08-21 from two lab clients**, with Apache running throughout so the refusal is not merely a stopped service. **Ticked on the claim the box actually makes (unreachable), not a stronger one:** the layer proven is the host firewall, not `Require local`, which was never reached — no HTTP status was returned to either client. Both client sessions independently identified this and challenged the host-side assumption; they were right. Proving the `Require local` layer needs one temporary port-80 rule and a re-probe — procedure at the end of `p1-10-cross-machine-denials.txt`
 
 **Evidence:** `p1-10-port-scan.txt`, `p1-10-denials.txt`
 
@@ -937,7 +937,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ## Track E — Client seam
 
-### 🟡 P1-15 · WPF client spike over HTTPS — client behaviour proven, cross-machine round trip still open
+### ✅ P1-15 · WPF client spike over HTTPS — closed 2026-08-21; round trip from a runtime-only second machine, and one shipped defect found and fixed
 
 **Spec:** §6.1, §16 · **Closes:** G-26 (partially)
 
@@ -967,13 +967,13 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Full round trip over HTTPS **from a second machine**, not the dev machine — the lab test workstation satisfies this (ADR-012). It must have the .NET 10 Desktop Runtime 10.0.9 x64 and **not** the SDK: a framework-dependent WPF client (ADR-010) that fails at launch on a runtime-free machine is exactly the failure this card exists to catch — **not attempted; impossible on this machine, see the result note**
-- [x] Stopping the API produces a clear connection-unavailable state — `ApiUnreachable_ProducesUnavailableStateAndAPlainMessage`, with `ServerRefusal_IsReportedAsRejectedAndStaysOnline` as the discriminating control. **Screenshot still owed** (see above); the behaviour itself is proven by test
+- [x] Full round trip over HTTPS **from a second machine**, not the dev machine — **closed 2026-08-21 on `DESKTOP-F5LK8MA`**, running **Desktop Runtime 10.0.9 x64 with no SDK** and no `Microsoft.AspNetCore.App` — the exact state a classmate's machine will be in. Sign-in, `/auth/me`, and a decrement of product 4 (`250.000 → 245.000`, movement 126), each verified **on the server** rather than from the client's own message: balance equals the sum of its movements. **The card's underlying question — what a framework-dependent client does with *no* runtime at all — was also answered, which ADR-010 had parked as unvalidatable**: a named, actionable dialog quoting `App host version: 10.0.9`, not a silent failure (`p1-15-runtime-free-launch.txt`)
+- [x] Stopping the API produces a clear connection-unavailable state — proven by test, and **now captured live and screenshotted 2026-08-21** under the only conditions that make it honest: hosts entry correct, certificate trusted, API genuinely stopped — so the indicator fires because the *server* is gone, not because the address is dead. `"API unavailable - writes refused"`, no stack trace, no URL, no socket code, rendered inline rather than as a modal. **The refused write left no movement row, no balance change and no audit row** — the client's claim that nothing was sent is true from the server's side too. Screenshot debt from the original pass is cleared
 - [x] The client **refuses** to queue or fake the write when offline — `UnreachableWrite_IsNeverQueuedOrReplayedAfterRecovery`: exactly one decrement reaches the wire across a down/up cycle in which a later call demonstrably succeeded
 - [x] Token never written to disk — `SignIn_WritesTheTokenNowhereOnDisk` searches every file created or modified during sign-in across the app directory and the four per-application data locations for the token string; 0 hits. A targeted sweep, not a whole-disk proof — the limit is stated in the evidence
 - [x] `ClientCommon` still references only `Contracts` (G-B passes) — guardrails green in the same run
 
-**Evidence:** `p1-15-client-behaviour.txt` · **still owed:** `p1-15-client-roundtrip.png`, `p1-15-api-down-state.png` (both blocked on the hosts correction, then capturable same-host; box 1's own screenshot needs the second machine)
+**Evidence:** `p1-15-cross-machine-roundtrip.txt` (**the cross-machine run, 2026-08-21 — includes the correlation-ID defect, its cause and its fix**), `p1-15-runtime-free-launch.txt` (**what the client does with no .NET installed at all — answers ADR-010's parked item**), `p1-15-client-behaviour.txt` (the original test-level proof). Screenshot debt from the original pass is cleared: the signed-in round trip and the API-down state were both captured on `DESKTOP-F5LK8MA`.
 
 ---
 
@@ -1079,6 +1079,34 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [x] Integration project still carries `<Assembly: DoNotParallelize>` (ADR-009.2) — unchanged, and now more load-bearing: the HTTP tests share one TestServer and one MariaDB instance
 
 **Evidence:** `p1-19-test-run.log`
+
+---
+
+### ⬜ P1-21 · Pin Kestrel's minimum TLS version explicitly
+
+**Spec:** §8, §17 · **Closes:** G-07 (hardens) · **Raised:** 2026-08-21, cross-machine lab run
+
+**Do:** Restrict Kestrel's HTTPS listener to TLS 1.2 and 1.3 explicitly instead of inheriting the host operating system's Schannel configuration.
+
+> **Why this is not a theoretical concern, and why it belongs to this project rather than to the machine's owner.**
+>
+> `Program.vb:102` calls `listenOptions.UseHttps(certificateOptions.PfxPath, certificateOptions.Password)` with no `SslProtocols` argument, so the effective protocol floor is whatever the host OS permits. This host has **no** `SCHANNEL\Protocols` registry keys at all — every protocol sits at Windows default, and on Windows 11 that is fine.
+>
+> **Under ADR-012 the API does not stay on this machine.** It is handed to classmates and run on a Windows 10 host that nobody in this project configures or inspects, where TLS 1.0 and 1.1 can still be enabled at the Schannel level. The guarantee "this API speaks modern TLS" would then be a property of someone else's registry rather than of the delivered software, and its failure would be completely silent — a downgraded connection looks identical to a good one from the client side.
+>
+> This is the same reasoning that put `STRICT_TRANS_TABLES` in `ConnectionFactory` as well as `my.ini` (P1-05): a guarantee that a reinstalled or unfamiliar host can quietly revoke is not a guarantee. Set it in code, where it ships with the product.
+>
+> **Found by the lab client, not by inspection.** `merch-laptop` reported the negotiated protocol as `Tls12` where the host-side evidence had recorded `Tls13`, and flagged the mismatch rather than reporting back the predicted value. That reading turned out to be an artifact of the test harness — Windows PowerShell 5.1 runs on .NET Framework, whose `SslStream` does not offer TLS 1.3 for `AuthenticateAsClient(String)` — so it was **not** evidence of a downgrade. Chasing the discrepancy is what exposed the unpinned listener behind it. Recorded because the harness/product distinction is exactly the sort of thing that gets misread later: the `Tls12` line in `p1-09-cross-machine-trust.txt` describes PowerShell, not Kestrel.
+
+**Done when:**
+
+- [ ] Kestrel's HTTPS listener pins `SslProtocols.Tls12 Or SslProtocols.Tls13`, set in code, not in configuration a host can override
+- [ ] A test asserts the pin — an integration test that inspects the configured `HttpsConnectionAdapterOptions`, since negotiating an obsolete protocol from a modern client to prove refusal is not portable across machines
+- [ ] The negotiated protocol is captured from a **.NET 10** client, not from Windows PowerShell 5.1 — the existing `Tls12` reading is a harness artifact and must not be filed as a product measurement
+- [ ] `docs/adr.md` records the decision and the ADR-012 reasoning behind it
+- [ ] Guardrails pass; VB only
+
+**Evidence:** `p1-21-tls-pinning.txt`
 
 ---
 
