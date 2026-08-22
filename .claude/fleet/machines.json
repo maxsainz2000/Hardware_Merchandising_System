@@ -6,11 +6,17 @@
     "Paths use forward slashes - .NET, pwsh, and git all accept them on Windows, and it keeps",
     "this file free of backslash-escaping bugs.",
     "",
+    "Hostnames do NOT indicate form factor. Windows auto-names most PCs DESKTOP-XXXXXXX;",
+    "box3 reports DESKTOP-F5LK8MA but is physically a laptop (PCSystemType=Mobile, internal",
+    "battery). Recorded here so nobody re-derives it from the name and gets it wrong.",
+    "",
     "transport:",
     "  local  - same machine as the orchestrator. Bash/pwsh directly.",
     "  ssh    - headless. `ssh <target> claude -p ...`. Structured JSON back. Needs sshd + key auth.",
-    "  rc     - Remote Control. That box runs `claude --remote-control <name>` signed into the",
-    "           same Anthropic account; drive it with SendMessage, not with a shell.",
+    "  rc     - Remote Control. That box runs `claude --remote-control`, signed into the same",
+    "           Anthropic account; drive it with SendMessage, not with a shell. rcSessionName is",
+    "           a HINT ONLY - the name changes every time the session restarts, so always confirm",
+    "           against a live ListAgents before dispatching.",
     "",
     "enabled:false means the transport is declared but not yet provisioned. /orchestrate must",
     "refuse to dispatch to it and say which setup step is missing - never silently fall back."
@@ -19,24 +25,44 @@
     {
       "id": "box1",
       "hostname": "LAPTOP-3HH6OHHE",
+      "formFactor": "laptop",
       "role": "primary",
       "transport": "local",
       "repo": "C:/Users/Admin/Documents/Hardware_Merchandising_System",
       "enabled": true,
+      "sdk": "10.0.301",
       "owns": ["src/", "tests/", "db/", "docs/"],
-      "notes": "The machine the orchestrator session runs on. XAMPP/MariaDB 10.4.32 lives here, so every task touching the database belongs on box1."
+      "notes": "Orchestrator host. The ONLY machine with XAMPP/MariaDB 10.4.32, so every card touching the database, a migration, or the running API belongs here (ADR-013 pins the three DB identities to this host)."
     },
     {
       "id": "box2",
-      "hostname": "",
+      "hostname": "DESKTOP-G83CCSH",
+      "formFactor": "desktop",
       "role": "secondary",
-      "transport": "ssh",
+      "transport": "rc",
+      "rcSessionName": "desktop-g83ccsh-inherited-bear",
       "sshTarget": "",
       "repo": "",
       "enabled": false,
+      "sdk": "10.0.400",
+      "freeGb": 200.9,
       "owns": ["evidence/", "scripts/"],
-      "notes": "Second machine. Fill hostname + sshTarget + repo, confirm key auth, then set enabled:true. See /orchestrate 'Provisioning box2'.",
-      "fallback": { "transport": "rc", "sessionName": "" }
+      "notes": "BLOCKED on two things: (1) no repo - needs the remote created and cloned; (2) SDK drift - has 10.0.400, global.json requires exactly 10.0.301, so dotnet will refuse until 10.0.301 is installed side-by-side. Currently running in C:/Users/maxsa (user-profile root), which loads no project CLAUDE.md and cannot resolve /worker - must be restarted inside the clone."
+    },
+    {
+      "id": "box3",
+      "hostname": "DESKTOP-F5LK8MA",
+      "formFactor": "laptop",
+      "role": "secondary",
+      "transport": "rc",
+      "rcSessionName": "desktop-f5lk8ma-abstract-ritchie",
+      "sshTarget": "",
+      "repo": "",
+      "enabled": false,
+      "sdk": "10.0.400",
+      "freeGb": 57.8,
+      "owns": ["documentations/"],
+      "notes": "Same two blockers as box2. Physically a laptop despite the DESKTOP- hostname."
     }
   ],
   "defaults": {
@@ -45,6 +71,7 @@
     "permissionMode": "acceptEdits",
     "maxBudgetUsd": 5,
     "maxFleet": 3,
-    "timeoutMinutes": 30
+    "timeoutMinutes": 30,
+    "requiredSdk": "10.0.301"
   }
 }

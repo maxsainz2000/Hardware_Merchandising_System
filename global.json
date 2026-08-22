@@ -1,0 +1,23 @@
+{
+  "$comment": [
+    "Pins the SDK so every machine in the fleet builds with the SAME toolchain.",
+    "",
+    "Why this file exists (added 2026-08-22): box1 had only 10.0.301 while two newly",
+    "added fleet machines had 10.0.400, and with no global.json `dotnet` silently picks",
+    "the newest SDK installed on each host. Three machines would have built the project",
+    "three different ways and nothing would have reported it.",
+    "",
+    "Why 10.0.301 and not the newer 10.0.400: ADR-002/003 pin it, and ADR-001's central",
+    "finding -- that the ASP.NET Core Web SDK accepts a hand-authored .vbproj and emits",
+    "zero C# -- was measured on 10.0.301. That result is the project's dominant retired",
+    "risk. Moving the SDK would put it back on the table for no benefit.",
+    "",
+    "rollForward disable is deliberate: an exact-match requirement is the only setting",
+    "that makes the ADR pin actually true. A machine without 10.0.301 now fails loudly",
+    "at restore with a clear message, instead of building something subtly different."
+  ],
+  "sdk": {
+    "version": "10.0.301",
+    "rollForward": "disable"
+  }
+}

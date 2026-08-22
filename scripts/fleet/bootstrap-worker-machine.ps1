@@ -59,12 +59,32 @@ Check 'PowerShell 7+' { if ($PSVersionTable.PSVersion.Major -ge 7) { $PSVersionT
 Check 'claude CLI'    { (claude --version) 2>&1 } -Required | Out-Null
 Check 'git'           { (git --version)    2>&1 } -Required | Out-Null
 
-# .NET is required to run tests, but a box used only for evidence capture or docs can
-# still be useful without it -- so it is reported, not fatal.
-Check '.NET SDK 10'   {
-    $v = (dotnet --list-sdks 2>&1 | Select-String '^10\.' | Select-Object -First 1)
-    if ($v) { $v.ToString().Trim() }
-} | Out-Null
+# The SDK must match global.json EXACTLY. rollForward is 'disable', so a machine with
+# only a newer SDK (10.0.400, say) does not build a bit differently -- it refuses to
+# restore at all. Reporting "some 10.x present" would be worse than useless here: it
+# would read as PASS on a machine that cannot build. Check for the exact pin.
+$requiredSdk = '10.0.301'
+$reg = Join-Path $PSScriptRoot '../../.claude/fleet/machines.json'
+if (Test-Path $reg) {
+    try {
+        $d = Get-Content -Raw $reg | ConvertFrom-Json
+        if ($d.defaults.requiredSdk) { $requiredSdk = $d.defaults.requiredSdk }
+    } catch { }
+}
+
+$installedSdks = @(dotnet --list-sdks 2>&1 | ForEach-Object { ($_ -split ' ')[0] })
+Check ".NET SDK $requiredSdk (exact)" {
+    if ($installedSdks -contains $requiredSdk) { $requiredSdk }
+} -Required | Out-Null
+
+if ($installedSdks -and ($installedSdks -notcontains $requiredSdk)) {
+    Write-Host ''
+    Write-Host "  SDK MISMATCH: this machine has $($installedSdks -join ', ') but global.json"
+    Write-Host "  pins $requiredSdk with rollForward=disable. Install $requiredSdk side-by-side"
+    Write-Host "  (it coexists with newer SDKs; nothing is removed):"
+    Write-Host "    winget install Microsoft.DotNet.SDK.10 --version $requiredSdk"
+    Write-Host "  or download the $requiredSdk installer from dotnet.microsoft.com."
+}
 
 # --- Repo ---------------------------------------------------------------------------
 if (Test-Path (Join-Path $RepoPath '.git')) {
