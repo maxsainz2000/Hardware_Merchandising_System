@@ -755,6 +755,26 @@ Rules 1 and 2 are the general case. Rule 3 alone would have fixed this bug and l
 
 ---
 
+### ADR-015.1 · A maintenance lock inside the database cannot guard a restore of that database
+
+**Status:** ACCEPTED (practical hole closed) · **deeper fix deferred to Phase 6/7**
+**Date:** 2026-08-22
+**Found by:** running the P1-18 restore rehearsal for real, not by any test.
+
+**What happened.** `MaintenanceLocks` is a table in `merchandising`. The rehearsal acquired a lock, then restored a dump taken minutes earlier — predating the lock — and the restore erased the row. Step 7's release then failed with `MAINTENANCE_NOT_ACTIVE`, because there was genuinely nothing left to release.
+
+**Why it matters more than it first appears.** With verification passing, the system should reopen anyway, so the outcome was correct by accident. With verification **failing**, `restore-rehearsal.ps1` reports "maintenance deliberately LEFT ON" — while the lock no longer exists. The system would be **open for business while every human involved believed it closed**, which is the precise failure the lock was built to prevent.
+
+**Closed for now** by re-inserting the lock immediately after the restore, while the API service is still stopped, so no window exists in which the API is running and unlocked. It cannot be closed by calling the enter endpoint again after startup: that window *is* the problem.
+
+**The general lesson.** A guard stored inside the resource it guards does not survive that resource being replaced. The same shape would bite any lock, flag or lease kept in the database it protects.
+
+**Deferred, deliberately.** The durable fix is a maintenance flag outside the database — a file the middleware also consults — so no restore can clear it. That is a change to the enforcement path and belongs with Phase 6/7 hardening rather than being bolted on at the end of Phase 1. Recorded here so it is a known decision rather than an oversight someone rediscovers.
+
+**Evidence:** `evidence/phase-1/p1-18-rehearsal-run.txt`, step 7.
+
+---
+
 ## ADR-NNN · Short title
 
 **Status:** PENDING | ACCEPTED | SUPERSEDED by ADR-MMM

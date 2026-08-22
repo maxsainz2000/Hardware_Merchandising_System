@@ -1092,7 +1092,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### 🟡 P1-18 · Restore rehearsal with maintenance mode — maintenance mode done and proven; in-place rehearsal owed
+### ✅ P1-18 · Restore rehearsal with maintenance mode — closed 2026-08-22; RTO 3.0 s, and the rehearsal found a real defect
 
 **Spec:** §15 · **Closes:** G-14, G-08 (begins)
 
@@ -1104,20 +1104,23 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [x] Connected clients display the maintenance warning — amber banner on the spike window, driven by the refusal itself rather than by polling; two client unit tests cover raising it and clearing it
 - [x] Restore completes from the **off-host** copy — restored from the USB dump, all 13 tables, verified
 - [x] Expected users, products, balances present afterwards — 8 users, 3 products, 3 balances, 221 movements, 966 audit rows, checked by the restore itself rather than by eye
-- [ ] **Measured RTO recorded** — **partial, so left open.** The database portion is measured at **0.9 s to verified state** (0.1% of PA-005's 15-minute budget), but that excludes stopping and starting the Windows Service, which is the bulk of a real window and needs elevation. The full-procedure number is owed
+- [x] **Measured RTO recorded** — **3.0 seconds (0.05 min) to verified state**, full procedure, measured 2026-08-22 on the live host: service stopped → restored in place from the off-host copy → schema and rows verified → service restarted → `/health` answering. Against PA-005's demonstrated target of ≤ 15 minutes, that is 0.3% of the budget. The number is small because the database is small; it is recorded as measured, not rounded up to look prudent
 - [x] Lock releases only after verification succeeds — `verificationPassed: false` → 409 `VERIFICATION_NOT_CONFIRMED`, and the lock is asserted **still held** afterwards
 - [x] No API endpoint can trigger a restore — five candidate paths, GET and POST each, all 404
 
 **Evidence:** `p1-18-restore-log.txt`, `p1-18-verification-checklist.md`
 
-> **What the operator owes — the in-place seven-step rehearsal:**
+> **Run by the operator 2026-08-22.** All seven steps executed against the live host: maintenance ON → a real write refused with 503 → service stopped → restored in place from the `MERCHBACKUP` copy → verified → service restarted → `/health` 200. Transcript: `p1-18-rehearsal-run.txt`.
+
+> **THE DEFECT THE REHEARSAL FOUND, which is worth more than the RTO number.**
 >
-> ```powershell
-> pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin> -WhatIf   # walk it first
-> pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin>           # DESTRUCTIVE
-> ```
+> Step 7 failed with `MAINTENANCE_NOT_ACTIVE`. **The maintenance lock is a row in the database it is protecting.** The rehearsal acquired a lock at 14:32, then restored a dump taken at 14:26 — predating that lock — so the restore *erased the lock protecting it*. The system left maintenance implicitly, by destruction, rather than through the verified release gate.
 >
-> Steps 3 and 6 stop and start the Windows Service, which needs elevation — the same boundary that stopped P0-03 and P1-17's Task Scheduler registration. The script times the window, compares it against PA-005's 15-minute target, and on a failed verification **deliberately leaves the system in maintenance mode**.
+> On a passing verification that is merely untidy. **On a failing verification it is dangerous:** the script would report "maintenance deliberately LEFT ON" while the lock row no longer existed, leaving the system **open for business while everyone believed it closed** — the exact failure the lock exists to prevent.
+>
+> **Fixed** by a new step 5b: while the service is still stopped, the lock is re-inserted directly as `merch_migrator`, so there is no window in which the API is up and unlocked. It cannot be fixed by calling the enter endpoint again after startup, because that window is precisely the problem. Step 7 now also reports rather than dies if the lock is already gone.
+>
+> **The deeper point, recorded for Phase 6/7 hardening:** a lock stored inside the resource it guards cannot survive that resource being replaced. The durable answer is a maintenance flag that lives outside the database — a file the API also checks — so no restore can clear it. Out of scope here; the re-assert closes the practical hole.
 
 > **Result.** Maintenance mode is built, proven through the HTTP pipeline, and the restore utility works end to end from the off-host copy.
 >
@@ -1138,6 +1141,8 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > **Client scope held to Phase 1.** A banner on the one existing spike window, not a maintenance screen. Amber rather than red on purpose: this is a planned state the operator was told about, not a fault — red belongs to "API unreachable", which is genuinely different and already has it.
 >
 > **Tests:** 23 unit, 62 integration, 0 warnings. Guardrails pass.
+>
+> **Two defects the live rehearsal found that no test did.** The lock-erasure above, and before it a restore that **destroyed the AuditLogs table before failing**: `merch_migrator` held `DROP` and `CREATE` but not `LOCK TABLES`, so a dump's first table was dropped, recreated empty, and then the restore died at `ERROR 1044` with 1007 `INSERT`s never running. Fixed by `db/grants/0006` plus a preflight privilege check that refuses before touching a table. The P1-18 isolated verification could not have caught it: it ran as `root`, which holds every privilege — verifying with a more privileged identity than production is how a privilege defect stays invisible.
 
 > **What the measured number is compared against (PA-005, decided 2026-08-22):** the demonstrated RTO target is **≤ 15 minutes** to a verified state — chosen because it is a claim that can actually be made and defended inside a presentation, which ≤ 120 minutes cannot. The 120-minute figure survives only as the documented worst case for rebuilding a host from bare Windows. Record the real number either way; a miss is information, not a failure to hide.
 

@@ -248,6 +248,49 @@ if (-not $simulate) {
     $restoreOk = $true
 }
 
+# ------------------------------------------- 5b. RE-ASSERT THE LOCK --------
+# THE DEFECT THIS EXISTS TO CLOSE, found by running the rehearsal for real.
+#
+# The maintenance lock is a row in the database being restored. A restore
+# replaces that database with a dump taken BEFORE the lock was acquired, so
+# the restore ERASES THE LOCK PROTECTING IT. Step 7 then fails with
+# MAINTENANCE_NOT_ACTIVE, because there is genuinely nothing left to release.
+#
+# On a passing verification that is merely untidy - the system should reopen
+# anyway. On a FAILING verification it is dangerous: this script would report
+# "maintenance deliberately LEFT ON" while the lock row no longer existed, and
+# the system would be OPEN FOR BUSINESS while everyone believed it closed.
+# That is the exact failure the maintenance lock exists to prevent.
+#
+# Re-inserted here, while the service is still STOPPED, so there is no window
+# in which the API is up and unlocked. Written directly as merch_migrator
+# rather than through the API because the API is deliberately not running yet -
+# which is also why this cannot be solved by simply calling the enter endpoint
+# again after startup.
+if (-not $simulate -and $restoreOk) {
+
+    Write-Step '5b. Re-asserting the maintenance lock the restore erased'
+
+    $migratorConfig = Join-Path $env:ProgramData 'MerchandisingSystem\config\database.migrator.json'
+    $mig = Get-Content $migratorConfig -Raw | ConvertFrom-Json
+
+    $reassert = @"
+INSERT INTO MaintenanceLocks (Reason, RequestedByUserId, AcquiredAtUtc, CorrelationId)
+SELECT 'Re-asserted after restore - awaiting verification', MIN(Id), UTC_TIMESTAMP(6), UUID()
+FROM Users
+WHERE NOT EXISTS (SELECT 1 FROM MaintenanceLocks WHERE ReleasedAtUtc IS NULL);
+"@
+
+    $reassert | & 'C:\xampp\mysql\bin\mysql.exe' --user=$($mig.userId) "--password=$($mig.password)" --database=merchandising 2>&1 | Out-Null
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok 'Lock re-asserted - the window stays closed until verification releases it'
+    } else {
+        Write-Bad 'Could not re-assert the maintenance lock. The system may reopen unverified - check manually.'
+        $restoreOk = $false
+    }
+}
+
 Write-Step '6. Starting the API service and confirming health'
 
 if (-not $simulate) {
@@ -298,9 +341,19 @@ if ($simulate) {
         detail = "Restore rehearsal: schema complete, expected rows present. RTO $([math]::Round($rtoMinutes,2)) min."
     } | ConvertTo-Json
 
-    Invoke-RestMethod -Uri "$ApiBaseUrl/api/v1/admin/maintenance/release" -Method Post -Headers $headers2 `
-                      -Body $releaseBody -ContentType 'application/json' | Out-Null
-    Write-Ok 'Maintenance mode released'
+    try {
+        Invoke-RestMethod -Uri "$ApiBaseUrl/api/v1/admin/maintenance/release" -Method Post -Headers $headers2 `
+                          -Body $releaseBody -ContentType 'application/json' | Out-Null
+        Write-Ok 'Maintenance mode released'
+    } catch {
+        # MAINTENANCE_NOT_ACTIVE here means step 5b did not re-assert the lock,
+        # so the restore had already erased it. Reported rather than swallowed:
+        # the system IS open, which is the right end state after a passing
+        # verification, but it got there without passing through the release
+        # gate and that is worth knowing.
+        Write-Warn 'Release reported no active lock - the restore had erased it and 5b did not re-assert.'
+        Write-Warn 'The system is open. Confirm that is what you intended.'
+    }
 }
 
 Write-Host ''

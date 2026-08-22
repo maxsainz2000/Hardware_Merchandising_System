@@ -1,12 +1,12 @@
 **********************
 PowerShell transcript start
-Start time: 20260822135603
+Start time: 20260822143234
 Username: LAPTOP-3HH6OHHE\Admin
 RunAs User: LAPTOP-3HH6OHHE\Admin
 Configuration Name: 
 Machine: LAPTOP-3HH6OHHE (Microsoft Windows NT 10.0.26200.0)
 Host Application: C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.5.0_x64__8wekyb3d8bbwe\pwsh.dll .\scripts\restore-rehearsal.ps1 -SuperAdminUsername admin -LogFile .\evidence\phase-1\p1-18-rehearsal-run.txt
-Process ID: 6472
+Process ID: 8828
 PSVersion: 7.6.5
 PSEdition: Core
 GitCommitId: 7.6.5
@@ -19,25 +19,25 @@ WSManStackVersion: 3.0
 **********************
 
 === 0. Selecting the backup to restore ===
-  [ok]   Restoring from: D:\MerchandisingBackups\merchandising-20260822-055501.sql
-  [ok]   Size: 280,672 bytes, written 8/22/2026 1:55:02 PM
+  [ok]   Restoring from: D:\MerchandisingBackups\merchandising-20260822-062651.sql
+  [ok]   Size: 282,198 bytes, written 8/22/2026 2:26:52 PM
 Confirm
 Are you sure you want to perform this action?
-Performing the operation "REPLACE the live merchandising database with this backup" on target "D:\MerchandisingBackups\merchandising-20260822-055501.sql".
+Performing the operation "REPLACE the live merchandising database with this backup" on target "D:\MerchandisingBackups\merchandising-20260822-062651.sql".
 &Yes  Yes to &All  &No  No to A&ll  &Suspend
 Y
   [ok]   Using saved credential from C:\Users\Admin\merch-superadmin.xml
 
 === 1. Entering maintenance mode ===
   [ok]   Authenticated as admin
-  [ok]   Maintenance mode ON - Restore rehearsal 2026-08-22 13:56
+  [ok]   Maintenance mode ON - Restore rehearsal 2026-08-22 14:32
 
 === 2. Confirming the API refuses ordinary writes ===
 PS>TerminatingError(Invoke-RestMethod): "
 {
   "errorCode": "MAINTENANCE_MODE",
-  "message": "The system is under maintenance and is not accepting changes. Reason: Restore rehearsal 2026-08-22 13:56",
-  "correlationId": "27f2547a-9bde-40d2-9749-92b6ad2befb3",
+  "message": "The system is under maintenance and is not accepting changes. Reason: Restore rehearsal 2026-08-22 14:32",
+  "correlationId": "0d28aa8c-5dac-4f17-9419-4788cc0b6cce",
   "errors": null
 }"
   [ok]   Write correctly refused with 503 MAINTENANCE_MODE
@@ -47,19 +47,44 @@ PS>TerminatingError(Invoke-RestMethod): "
 
 === 4-5. Restoring and verifying ===
 
-  [FAIL] Restore FAILED verification. The system stays in maintenance.
+  [ok]   Restore verified - schema complete and expected rows present
 
 === 6. Starting the API service and confirming health ===
   [ok]   API responding on /health
 
-MEASURED RTO: 0.03 minutes (1.9 seconds) to verified state
+MEASURED RTO: 0.05 minutes (3.0 seconds) to verified state
   [ok]   Within the PA-005 demonstrated target of 15 minutes
 
 === 7. Releasing maintenance mode (only if verification passed) ===
-  [FAIL] VERIFICATION FAILED - maintenance mode deliberately LEFT ON.
-  A half-restored database that is open for business is worse than one that is visibly closed.
-  Investigate, restore again, then release manually once you can honestly confirm the data.
+PS>TerminatingError(Invoke-RestMethod): "
+{
+  "errorCode": "MAINTENANCE_NOT_ACTIVE",
+  "message": "The system is not in maintenance mode.",
+  "correlationId": "3d736419-4585-421f-a993-c76af9d8307f",
+  "errors": null
+}"
+>> TerminatingError(Invoke-RestMethod): "
+{
+  "errorCode": "MAINTENANCE_NOT_ACTIVE",
+  "message": "The system is not in maintenance mode.",
+  "correlationId": "3d736419-4585-421f-a993-c76af9d8307f",
+  "errors": null
+}"
+
+{
+  "errorCode": "MAINTENANCE_NOT_ACTIVE",
+  "message": "The system is not in maintenance mode.",
+  "correlationId": "3d736419-4585-421f-a993-c76af9d8307f",
+  "errors": null
+}
+Invoke-RestMethod: C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\restore-rehearsal.ps1:301
+Line |
+ 301 |      Invoke-RestMethod -Uri "$ApiBaseUrl/api/v1/admin/maintenance/rele …
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     |  {   "errorCode": "MAINTENANCE_NOT_ACTIVE",   "message": "The system is not in maintenance mode.",  
+     | "correlationId": "3d736419-4585-421f-a993-c76af9d8307f",   "errors": null }
+
 **********************
 PowerShell transcript end
-End time: 20260822135616
+End time: 20260822143250
 **********************
