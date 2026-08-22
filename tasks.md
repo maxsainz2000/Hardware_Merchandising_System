@@ -1034,7 +1034,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### 🟡 P1-17 · Backup via the maintenance utility — implemented and proven; scheduled-task registration owed
+### ✅ P1-17 · Backup via the maintenance utility — closed 2026-08-22; scheduled run proven end to end
 
 **Spec:** §15 · **Closes:** G-15
 
@@ -1046,7 +1046,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Scheduled run produces a valid dump + off-host copy + `BackupLogs` row — **the run is proven, the *scheduling* is not.** A manual run produced all three (dump 249,569 bytes, byte-identical off-host copy, `BackupLogs` row 16). `scripts/register-backup-task.ps1` is written and parse-checked but **not registered**: it requires an elevated session, and this session could not elevate — the same boundary that stopped P0-03. One command from the operator closes it, see below
+- [x] Scheduled run produces a valid dump + off-host copy + `BackupLogs` row — **closed 2026-08-22.** `Merchandising Nightly Backup` fired at 06:26:50 UTC with `LastTaskResult 0`, which this utility returns **only** for `Succeeded`, never for `Partial`. It produced `BackupLogs` row 30 (282,198 bytes, `d0a55334…`), a local dump and a byte-identical copy on the `MERCHBACKUP` volume — both re-hashed independently and both matching the recorded checksum. Nobody triggered it by hand
 - [x] Checksum recorded and verifiable — SHA-256 recomputed from the bytes on disk by an independent tool, matching the recorded value on **both** the local and off-host copies
 - [x] A deliberately broken run (wrong credentials) **records failure and warns** rather than failing silently — exit 1, MariaDB error 1045 carried through verbatim, no dump file left behind, and the failure written to a local log because the database was unreachable too
 - [x] Backup directory is not reachable through any API endpoint — no static-file middleware registered anywhere in the API, and four live probes against the running service (including a path-traversal attempt) all return 404
@@ -1054,7 +1054,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Evidence:** `p1-17-backup-success.log`, `p1-17-backup-failure.log`
 
-> **What the operator owes, exactly one elevated command:**
+> **Closed by the operator 2026-08-22.** Registered elevated, then run once on demand:
 >
 > ```powershell
 > pwsh ./scripts/register-backup-task.ps1
@@ -1062,7 +1062,13 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 > Get-ScheduledTaskInfo -TaskName 'Merchandising Nightly Backup' | Select-Object LastRunTime, LastTaskResult
 > ```
 >
-> The second and third lines matter as much as the first: registration proves nothing about execution, and a scheduled task pointing at a path that does not resolve fails every night while looking registered.
+> The second and third lines mattered as much as the first: registration proves nothing about execution.
+
+> **A verification lesson worth more than the card.** This card was reported twice as "task NOT REGISTERED" on the strength of `Get-ScheduledTask` returning nothing from a **non-elevated** agent session. That check was unsound: a task registered elevated with a SYSTEM principal cannot be enumerated by a standard-user token at all, so `Get-ScheduledTask` and `schtasks /query` both report *absent* when the honest answer is *invisible from here*. Confirmed after the fact — both still return nothing from the agent session while the task demonstrably exists and runs.
+>
+> The claim was corroborated at the time by "no scheduled backup row exists", but that only proved it had not **run**, never that it was not **registered**. The task may well have been registered on an earlier attempt.
+>
+> **What actually closed this card was the artefact, not the enumeration**: a `BackupLogs` row from a run nobody started, with a dump on disk whose checksum was recomputed independently in two locations. Where a check can only be run from a context that cannot see the answer, prefer the side effect over the status query.
 
 > **Result.** `Merchandising.Maintenance.exe backup` (`Backup/BackupCommand.vb`) dumps via `mysqldump.exe` as `merch_backup`, verifies, copies off-host, prunes, and records. Run end to end on this host: 249,569-byte dump, SHA-256 `1918ffa0…`, off-host copy on the `MERCHBACKUP` volume, `BackupLogs` row 16, exit 0.
 >

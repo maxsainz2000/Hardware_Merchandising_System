@@ -175,5 +175,47 @@ complete: mysqldump's trailing "-- Dump completed" marker is checked in
 production code, not only in the test, because exit code 0 plus a non-empty
 file does not rule out a truncated dump from a full disk or a killed process.
 
-The Task Scheduler job was triggered manually rather than waited on for a
-day. See p1-17-scheduled-task.log.
+SECTION 9 — SCHEDULED RUN, ADDED 2026-08-22
+-------------------------------------------------------------------------------
+The task was registered elevated and fired on demand rather than waited on
+for a day.
+
+    Task          Merchandising Nightly Backup
+    LastRunTime   8/22/2026 2:26:50 PM   (06:26:50 UTC)
+    LastTaskResult 0
+
+Exit code 0 is meaningful here rather than incidental: this utility returns 0
+ONLY for Succeeded, and returns 1 for Partial — the degraded case where the
+dump is good but the off-host copy did not happen. A scheduled task showing
+green therefore cannot be hiding a missing off-host copy.
+
+What the run produced, with nobody triggering it by hand:
+
+             Id: 30
+   StartedAtUtc: 2026-08-22 06:26:51.241299
+ CompletedAtUtc: 2026-08-22 06:26:51.874169
+         Result: Succeeded
+      SizeBytes: 282198
+         Sha256: d0a553346b5e323b7618b2bc87f92e5886547c8eee89ce39bf36e777b664c822
+    OffHostPath: D:\MerchandisingBackups\merchandising-20260822-062651.sql
+SourceDbVersion: 10.4.32-MariaDB
+ RetentionCount: 7
+PrunedFileCount: 0
+
+Both copies re-hashed independently, by a tool other than the one that wrote
+them:
+
+    C:/MerchandisingBackups     282198 bytes  sha256 MATCHES the BackupLogs row
+    D:/MerchandisingBackups     282198 bytes  sha256 MATCHES the BackupLogs row
+
+A VERIFICATION LESSON. This card was twice reported as "task NOT REGISTERED"
+on the strength of Get-ScheduledTask returning nothing from a non-elevated
+agent session. That check was unsound: a task registered elevated under a
+SYSTEM principal cannot be enumerated by a standard-user token, so both
+Get-ScheduledTask and schtasks /query report *absent* when the honest answer
+is *invisible from here*. Re-confirmed afterwards — both still return nothing
+from the agent session while the task exists and runs.
+
+Where a status query can only be issued from a context that cannot see the
+answer, trust the side effect instead: a ledger row and a file on disk whose
+checksum can be recomputed are not subject to the caller's privileges.
