@@ -67,12 +67,32 @@ param(
     [string] $BackupFile,
     [string] $OffHostVolumeLabel = 'MERCHBACKUP',
     [Parameter(Mandatory = $true)] [string] $SuperAdminUsername,
+
+    # Password without a console. Read-Host needs a console handle, and this
+    # script is most useful when its output is being captured - at which point
+    # the streams are redirected and Read-Host fails with "The handle is
+    # invalid" before anything has happened. Create the file once with:
+    #     Get-Credential | Export-Clixml $env:USERPROFILE\merch-superadmin.xml
+    # It is DPAPI-encrypted to this user on this machine, so it is not a
+    # plaintext password sitting on disk, and it never reaches shell history.
+    [System.Management.Automation.PSCredential] $Credential,
+    [string] $CredentialPath,
+
+    # Transcript. Built in rather than left to Tee-Object for the same reason:
+    # piping this script's output is what breaks its own prompt.
+    [string] $LogFile,
     [string] $ApiBaseUrl = 'https://MERCH-HOST:8443',
     [string] $ServiceName = 'MerchandisingApi',
     [string] $MaintenanceExe
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($LogFile) {
+    # Transcript rather than redirection, so the console stays a console and
+    # any prompt this script still needs keeps working.
+    Start-Transcript -Path $LogFile -Force | Out-Null
+}
 
 function Write-Step { param([string] $Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 function Write-Ok   { param([string] $Text) Write-Host "  [ok]   $Text" -ForegroundColor Green }
@@ -124,9 +144,43 @@ if (-not $PSCmdlet.ShouldProcess($BackupFile, "REPLACE the live merchandising da
 }
 
 # ------------------------------------------------------------ credentials --
-$securePassword = Read-Host -AsSecureString "Password for SuperAdmin '$SuperAdminUsername'"
-$plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword))
+# Three sources, in order of preference. The prompt is LAST because it is the
+# one that cannot work when this script's output is being captured.
+if (-not $Credential -and $CredentialPath) {
+    if (-not (Test-Path $CredentialPath)) {
+        Write-Bad "Credential file not found: $CredentialPath"
+        if ($LogFile) { Stop-Transcript | Out-Null }
+        exit 1
+    }
+    $Credential = Import-Clixml $CredentialPath
+}
+
+if (-not $Credential) {
+    $defaultCredentialPath = Join-Path $env:USERPROFILE 'merch-superadmin.xml'
+    if (Test-Path $defaultCredentialPath) {
+        $Credential = Import-Clixml $defaultCredentialPath
+        Write-Ok "Using saved credential from $defaultCredentialPath"
+    }
+}
+
+if (-not $Credential) {
+    try {
+        $securePassword = Read-Host -AsSecureString "Password for SuperAdmin '$SuperAdminUsername'"
+        $Credential = New-Object System.Management.Automation.PSCredential($SuperAdminUsername, $securePassword)
+    } catch {
+        Write-Bad 'Could not prompt for a password - this session has no console handle.'
+        Write-Host '  That happens whenever this script output is piped or redirected.' -ForegroundColor Red
+        Write-Host '  Save the credential once, then re-run:' -ForegroundColor Red
+        Write-Host '' -ForegroundColor Red
+        Write-Host '      Get-Credential | Export-Clixml $env:USERPROFILE\merch-superadmin.xml' -ForegroundColor White
+        Write-Host '' -ForegroundColor Red
+        Write-Host '  Nothing has been changed.' -ForegroundColor Red
+        if ($LogFile) { Stop-Transcript | Out-Null }
+        exit 1
+    }
+}
+
+$plainPassword = $Credential.GetNetworkCredential().Password
 
 # ------------------------------------------------- 1. enter maintenance ----
 Write-Step '1. Entering maintenance mode'
@@ -232,6 +286,7 @@ if ($simulate) {
     Write-Bad 'VERIFICATION FAILED - maintenance mode deliberately LEFT ON.'
     Write-Host '  A half-restored database that is open for business is worse than one that is visibly closed.' -ForegroundColor Red
     Write-Host '  Investigate, restore again, then release manually once you can honestly confirm the data.' -ForegroundColor Red
+    if ($LogFile) { Stop-Transcript | Out-Null }
     exit 1
 } else {
     $login2 = Invoke-RestMethod -Uri "$ApiBaseUrl/api/v1/auth/login" -Method Post -ContentType 'application/json' `
@@ -249,5 +304,9 @@ if ($simulate) {
 }
 
 Write-Host ''
-Write-Host 'Rehearsal complete. Capture this console output to evidence/phase-1/p1-18-restore-log.txt' -ForegroundColor Cyan
+Write-Host 'Rehearsal complete.' -ForegroundColor Cyan
+if ($LogFile) {
+    Stop-Transcript | Out-Null
+    Write-Host "Transcript written to $LogFile" -ForegroundColor Cyan
+}
 Write-Host ''

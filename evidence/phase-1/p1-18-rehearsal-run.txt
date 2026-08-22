@@ -1,0 +1,9 @@
+
+=== 0. Selecting the backup to restore ===
+  [ok]   Restoring from: D:\MerchandisingBackups\merchandising-20260822-054107.sql
+  [ok]   Size: 280,081 bytes, written 8/22/2026 1:41:10 PM
+Read-Host: C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\restore-rehearsal.ps1:127
+Line |
+ 127 |  . ePassword = Read-Host -AsSecureString "Password for SuperAdmin '$Supe .
+     |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | The handle is invalid.
