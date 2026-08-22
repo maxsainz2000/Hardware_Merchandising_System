@@ -145,35 +145,50 @@ Stop and hand back to the user when:
 Point 5 is the one that gets skipped. An orchestrator with idle capacity is not a problem
 to solve.
 
-## Provisioning box2
+## Provisioning a worker box
 
-Two transports, both registered. `ssh` is preferred when the box is on the LAN — headless,
-structured reports, no session to babysit. `rc` is the fallback and works off-LAN.
+**Remote Control is the transport in use** (box2, box3). SSH stays supported and is better
+when it is available — headless, structured reports, no interactive session to babysit —
+but it needs `sshd` on that machine and LAN reachability, neither of which the current
+fleet has.
 
-**SSH.** On box2, elevated PowerShell:
+A box is ready only when **all five** of these hold. Four of the five have bitten already:
 
-> **Folder:** anywhere · **USB:** not required · **Shell:** **elevated** (the capability
-> install and service start both fail quietly without it)
+1. **`claude --remote-control` running there**, signed into the same Anthropic account, and
+   **visibly listed by `ListAgents` here**. A named session that never connected looks
+   exactly like a working one until a brief vanishes into it.
+2. **This session has Remote Control on too.** `--remote-control` is a *startup* flag; a
+   session started without it sees no peers at all. `/rc` retrofits it, and only the user
+   can type that.
+3. **The session's cwd is the repo checkout, not a user-profile or drive root.** From a
+   root, no project `CLAUDE.md` loads — that session does not know VB-only, the MariaDB
+   10.4 dialect limits, or that the ledgers are append-only — and `/worker` does not
+   resolve at all. A root-dir session can bootstrap its machine and nothing more.
+4. **SDK exactly `10.0.301`.** `global.json` sets `rollForward: disable`, so a box with only
+   a newer SDK does not build differently — it refuses to restore. Install side-by-side;
+   never remove the newer one.
+5. **`git config user.name` / `user.email` set on that machine.** Box1 sets these at the
+   *repo* level, so a clone does not inherit them and git refuses to commit without them.
+   Never invent an identity — it lands on every commit; confirm it with the user.
+
+Then run, on that machine:
+
+> **Folder:** anywhere · **USB:** not required · **Shell:** normal
 
 ```powershell
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-Start-Service sshd; Set-Service sshd -StartupType Automatic
+pwsh <repo>/scripts/fleet/bootstrap-worker-machine.ps1 -RepoUrl <url> -RepoPath C:/dev/Hardware_Merchandising_System
 ```
 
-Then from box1, copy your public key to box2's `administrators_authorized_keys`, and record
-`hostname`, `sshTarget`, and box2's `repo` path in `.claude/fleet/machines.json`, set
-`enabled: true`, and confirm with `fleet.ps1 -Action doctor`.
+It clones or fetches, **installs the L4 git pre-commit hook** — `.git/hooks` does not travel
+with a clone, so every new box reopens the exact gap CLAUDE.md §11 says L4 exists to cover —
+runs the guardrails, and prints `READY` or `NOT READY` with the failing rows. Record the
+result in `machines.json`, set `enabled: true`, confirm with `fleet.ps1 -Action doctor`.
 
-**Address box2 by hostname, never by a hand-set static IP** — that is a settled decision on
-this project, and a DHCP lease handing the same address back is exactly the trap that makes
-a static IP look like it works.
+**Address a box by hostname, never by a hand-set static IP** — a settled decision here, and a
+DHCP lease handing the same address back is exactly the trap that makes a static IP look
+like it works. Hostnames also do not indicate form factor: `DESKTOP-F5LK8MA` is physically a
+laptop. Read `formFactor` from the registry rather than guessing from a name.
 
-**Remote Control.** On box2, signed into the same Anthropic account:
-
-```powershell
-claude --remote-control box2
-```
-
-It then appears in `ListAgents` here and takes briefs by `SendMessage`. Verify it actually
-appears before reporting box2 as available — a named session that never connected looks
-identical to a working one until a brief vanishes into it.
+**Driving an `rc` box:** `ListAgents` → `SendMessage`. `dispatch-worker.ps1` refuses `rc` on
+purpose. RC session names change on every restart, so confirm against a live `ListAgents`
+rather than trusting `rcSessionName` in the registry.
