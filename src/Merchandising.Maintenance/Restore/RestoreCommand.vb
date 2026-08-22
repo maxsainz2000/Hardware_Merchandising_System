@@ -55,6 +55,19 @@ Namespace Restore
         }
 
         ''' <summary>
+        ''' Privileges a mysqldump-produced dump needs in order to restore.
+        ''' </summary>
+        ''' <remarks>
+        ''' LOCK TABLES is the one that is easy to miss and expensive to miss.
+        ''' mysqldump emits `LOCK TABLES &lt;t&gt; WRITE;` before each table's data
+        ''' unless --skip-add-locks was used, and merch_migrator was created
+        ''' without it because only merch_backup needed it for dumping.
+        ''' </remarks>
+        Private Shared ReadOnly RequiredPrivileges As String() = {
+            "SELECT", "INSERT", "CREATE", "DROP", "ALTER", "INDEX", "REFERENCES", "LOCK TABLES"
+        }
+
+        ''' <summary>
         ''' Restores <paramref name="dumpPath"/> and verifies the result.
         ''' </summary>
         ''' <param name="targetDatabase">
@@ -95,6 +108,37 @@ Namespace Restore
             ' the restore. "Restored" and "confirmed usable" are different
             ' claims, and PA-005's target is to a VERIFIED state.
             Dim clock As Stopwatch = Stopwatch.StartNew()
+
+            ' PREFLIGHT, AND THE REASON IT EXISTS.
+            ' A dump restores tables alphabetically and mysql.exe executes it
+            ' statement by statement with no transaction around DDL. When the
+            ' restoring identity is missing a privilege that appears midway
+            ' through a table's section, the statements BEFORE it have already
+            ' run. Measured on this system at P1-18: merch_migrator held DROP
+            ' and CREATE but not LOCK TABLES, so `auditlogs` was dropped,
+            ' recreated empty, and then the restore died at
+            '     ERROR 1044: Access denied ... to database 'merchandising'
+            ' with 1007 INSERT statements never executed. The live audit trail
+            ' was destroyed by a restore that then reported failure.
+            '
+            ' A restore that fails is fine. A restore that destroys data before
+            ' failing is not. So the privileges are checked FIRST, and a
+            ' shortfall refuses the run without touching a single table.
+            Dim missingPrivileges As IList(Of String) =
+                Await FindMissingPrivilegesAsync(options, result.TargetDatabase, cancellationToken).ConfigureAwait(False)
+
+            If missingPrivileges.Count > 0 Then
+                clock.Stop()
+                result.CompletedAtUtc = Date.UtcNow
+                result.ElapsedSeconds = clock.Elapsed.TotalSeconds
+                result.Detail =
+                    $"Refused before starting: '{options.UserId}' is missing " &
+                    $"{String.Join(", ", missingPrivileges)} on '{result.TargetDatabase}'. " &
+                    "Nothing was changed. A restore needs these because mysqldump emits them; " &
+                    "see db/grants/0006_restore-grants.sql."
+                WriteMaintenanceLog(logDirectory, result)
+                Return result
+            End If
 
             Dim shellOutcome As RestoreShellOutcome =
                 Await RunMysqlClientAsync(mysqlClientPath, options, dumpPath, targetDatabase, cancellationToken).ConfigureAwait(False)
@@ -225,6 +269,78 @@ Namespace Restore
                         $"WARNING: could not delete temporary credential file '{defaultsFile}': {ex.Message}")
                 End Try
             End Try
+
+        End Function
+
+        ''' <summary>
+        ''' Returns the privileges the restoring identity lacks, or an empty
+        ''' list when it can proceed.
+        ''' </summary>
+        ''' <remarks>
+        ''' Reads SHOW GRANTS FOR CURRENT_USER() rather than information_schema,
+        ''' because it is the one view that reports what the connection actually
+        ''' has, including privileges arriving via *.* and via ALL PRIVILEGES.
+        ''' Only grants scoped to *.* or to the target schema are counted -
+        ''' a grant on some other database is irrelevant and must not be read
+        ''' as coverage.
+        ''' </remarks>
+        Private Shared Async Function FindMissingPrivilegesAsync(
+            options As DatabaseOptions,
+            targetDatabase As String,
+            cancellationToken As CancellationToken) As Task(Of IList(Of String))
+
+            Dim probeOptions As New DatabaseOptions With {
+                .Host = options.Host,
+                .Port = options.Port,
+                .Database = targetDatabase,
+                .UserId = options.UserId,
+                .Password = options.Password
+            }
+
+            Dim held As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+            Dim factory As New ConnectionFactory(probeOptions)
+
+            Using connection As MySqlConnection = Await factory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+                Using command As MySqlCommand = connection.CreateCommand()
+
+                    command.CommandText = "SHOW GRANTS FOR CURRENT_USER();"
+
+                    Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                        While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+
+                            Dim line As String = reader.GetString(0)
+
+                            ' Only lines whose scope covers the target schema.
+                            Dim coversTarget As Boolean =
+                                line.IndexOf(" ON *.*", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+                                line.IndexOf($" ON `{targetDatabase}`.", StringComparison.OrdinalIgnoreCase) >= 0
+
+                            If Not coversTarget Then Continue While
+
+                            If line.IndexOf("ALL PRIVILEGES", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                For Each privilege As String In RequiredPrivileges
+                                    held.Add(privilege)
+                                Next
+                                Continue While
+                            End If
+
+                            For Each privilege As String In RequiredPrivileges
+                                ' Matching the verb anywhere in the grant list is
+                                ' sufficient: the verbs are distinct enough that a
+                                ' false positive would need a privilege named as a
+                                ' substring of another, and none are.
+                                If line.IndexOf(privilege, StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                    held.Add(privilege)
+                                End If
+                            Next
+
+                        End While
+                    End Using
+
+                End Using
+            End Using
+
+            Return RequiredPrivileges.Where(Function(privilege) Not held.Contains(privilege)).ToList()
 
         End Function
 

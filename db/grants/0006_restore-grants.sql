@@ -1,0 +1,56 @@
+-- =============================================================================
+-- 0006_restore-grants.sql
+--
+-- Grants merch_migrator the LOCK TABLES privilege it needs to RESTORE a dump.
+-- Run as root.
+--
+-- WHY THIS EXISTS, AND WHAT IT COST TO FIND OUT.
+--
+-- mysqldump emits `LOCK TABLES <t> WRITE;` before each table's data by
+-- default (--add-locks is on unless disabled). merch_migrator held
+-- SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER -
+-- everything a MIGRATION needs, and nothing a RESTORE needs beyond that. It
+-- did not hold LOCK TABLES, because only merch_backup did (0001), where it
+-- was granted for mysqldump's benefit.
+--
+-- The consequence was not a clean refusal. A dump restores tables in
+-- alphabetical order, so `auditlogs` is first, and mysql.exe executes it
+-- statement by statement with no transaction around DDL:
+--
+--     DROP TABLE IF EXISTS `auditlogs`;      -- merch_migrator HAS DROP.  Ran.
+--     CREATE TABLE `auditlogs` (...);        -- HAS CREATE.               Ran.
+--     LOCK TABLES `auditlogs` WRITE;         -- NO LOCK TABLES.  ERROR 1044.
+--                                            -- mysql.exe exits. 1034 INSERTs
+--                                            -- never run.
+--
+-- The live table was therefore dropped, recreated empty, and left that way,
+-- while every table after it in the alphabet was untouched. A restore that
+-- fails is expected; a restore that DESTROYS DATA BEFORE failing is a defect,
+-- and it is the reason RestoreCommand now checks the restoring identity's
+-- privileges BEFORE executing a single statement.
+--
+-- WHY THE ISOLATED VERIFICATION AT P1-18 DID NOT CATCH THIS. That restore ran
+-- as root, which holds every privilege, into a scratch database. It proved
+-- the DUMP was restorable; it could not prove the RESTORE IDENTITY was
+-- sufficient, because the identity under test was not the one used in
+-- production. Verifying with a more privileged account than the real one is
+-- how a privilege defect stays invisible.
+--
+-- WHY GRANT RATHER THAN STRIP THE LOCKS FROM THE DUMP.
+-- The alternative is `mysqldump --skip-add-locks`, which produces dumps that
+-- need no LOCK TABLES to restore. Rejected: it makes this project's dumps
+-- non-standard, slower to restore, and silently different from every dump the
+-- operator has seen elsewhere - and it would leave merch_migrator unable to
+-- restore an ordinary dump taken by any other tool. Locking tables during a
+-- restore is legitimate and is what the schema owner should be able to do.
+--
+-- WHAT IS STILL WITHHELD. No change to merch_api, which still holds no DDL
+-- and no LOCK TABLES. No GRANT OPTION for anyone. merch_migrator gains
+-- exactly one verb, on one schema.
+--
+-- Re-runnable: GRANT is idempotent.
+-- =============================================================================
+
+GRANT LOCK TABLES ON `merchandising`.* TO `merch_migrator`@`localhost`;
+
+FLUSH PRIVILEGES;

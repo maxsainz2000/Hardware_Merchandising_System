@@ -1,9 +1,65 @@
+**********************
+PowerShell transcript start
+Start time: 20260822135603
+Username: LAPTOP-3HH6OHHE\Admin
+RunAs User: LAPTOP-3HH6OHHE\Admin
+Configuration Name: 
+Machine: LAPTOP-3HH6OHHE (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.5.0_x64__8wekyb3d8bbwe\pwsh.dll .\scripts\restore-rehearsal.ps1 -SuperAdminUsername admin -LogFile .\evidence\phase-1\p1-18-rehearsal-run.txt
+Process ID: 6472
+PSVersion: 7.6.5
+PSEdition: Core
+GitCommitId: 7.6.5
+OS: Microsoft Windows 10.0.26200
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
 
 === 0. Selecting the backup to restore ===
-  [ok]   Restoring from: D:\MerchandisingBackups\merchandising-20260822-054107.sql
-  [ok]   Size: 280,081 bytes, written 8/22/2026 1:41:10 PM
-Read-Host: C:\Users\Admin\Documents\Hardware_Merchandising_System\scripts\restore-rehearsal.ps1:127
-Line |
- 127 |  . ePassword = Read-Host -AsSecureString "Password for SuperAdmin '$Supe .
-     |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | The handle is invalid.
+  [ok]   Restoring from: D:\MerchandisingBackups\merchandising-20260822-055501.sql
+  [ok]   Size: 280,672 bytes, written 8/22/2026 1:55:02 PM
+Confirm
+Are you sure you want to perform this action?
+Performing the operation "REPLACE the live merchandising database with this backup" on target "D:\MerchandisingBackups\merchandising-20260822-055501.sql".
+&Yes  Yes to &All  &No  No to A&ll  &Suspend
+Y
+  [ok]   Using saved credential from C:\Users\Admin\merch-superadmin.xml
+
+=== 1. Entering maintenance mode ===
+  [ok]   Authenticated as admin
+  [ok]   Maintenance mode ON - Restore rehearsal 2026-08-22 13:56
+
+=== 2. Confirming the API refuses ordinary writes ===
+PS>TerminatingError(Invoke-RestMethod): "
+{
+  "errorCode": "MAINTENANCE_MODE",
+  "message": "The system is under maintenance and is not accepting changes. Reason: Restore rehearsal 2026-08-22 13:56",
+  "correlationId": "27f2547a-9bde-40d2-9749-92b6ad2befb3",
+  "errors": null
+}"
+  [ok]   Write correctly refused with 503 MAINTENANCE_MODE
+
+=== 3. Stopping the API service  [RTO CLOCK STARTS] ===
+  [ok]   Service 'MerchandisingApi' stopped
+
+=== 4-5. Restoring and verifying ===
+
+  [FAIL] Restore FAILED verification. The system stays in maintenance.
+
+=== 6. Starting the API service and confirming health ===
+  [ok]   API responding on /health
+
+MEASURED RTO: 0.03 minutes (1.9 seconds) to verified state
+  [ok]   Within the PA-005 demonstrated target of 15 minutes
+
+=== 7. Releasing maintenance mode (only if verification passed) ===
+  [FAIL] VERIFICATION FAILED - maintenance mode deliberately LEFT ON.
+  A half-restored database that is open for business is worse than one that is visibly closed.
+  Investigate, restore again, then release manually once you can honestly confirm the data.
+**********************
+PowerShell transcript end
+End time: 20260822135616
+**********************
