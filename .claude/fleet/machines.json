@@ -1,0 +1,50 @@
+{
+  "$comment": [
+    "Fleet registry for the /orchestrate skill. Committed: the fleet shape is a project fact.",
+    "Secrets never live here. SSH uses key auth resolved by the OS agent; no passwords, no",
+    "connection strings. 'repo' is that machine's checkout path, not this machine's.",
+    "Paths use forward slashes - .NET, pwsh, and git all accept them on Windows, and it keeps",
+    "this file free of backslash-escaping bugs.",
+    "",
+    "transport:",
+    "  local  - same machine as the orchestrator. Bash/pwsh directly.",
+    "  ssh    - headless. `ssh <target> claude -p ...`. Structured JSON back. Needs sshd + key auth.",
+    "  rc     - Remote Control. That box runs `claude --remote-control <name>` signed into the",
+    "           same Anthropic account; drive it with SendMessage, not with a shell.",
+    "",
+    "enabled:false means the transport is declared but not yet provisioned. /orchestrate must",
+    "refuse to dispatch to it and say which setup step is missing - never silently fall back."
+  ],
+  "machines": [
+    {
+      "id": "box1",
+      "hostname": "LAPTOP-3HH6OHHE",
+      "role": "primary",
+      "transport": "local",
+      "repo": "C:/Users/Admin/Documents/Hardware_Merchandising_System",
+      "enabled": true,
+      "owns": ["src/", "tests/", "db/", "docs/"],
+      "notes": "The machine the orchestrator session runs on. XAMPP/MariaDB 10.4.32 lives here, so every task touching the database belongs on box1."
+    },
+    {
+      "id": "box2",
+      "hostname": "",
+      "role": "secondary",
+      "transport": "ssh",
+      "sshTarget": "",
+      "repo": "",
+      "enabled": false,
+      "owns": ["evidence/", "scripts/"],
+      "notes": "Second machine. Fill hostname + sshTarget + repo, confirm key auth, then set enabled:true. See /orchestrate 'Provisioning box2'.",
+      "fallback": { "transport": "rc", "sessionName": "" }
+    }
+  ],
+  "defaults": {
+    "model": "sonnet",
+    "effort": "medium",
+    "permissionMode": "acceptEdits",
+    "maxBudgetUsd": 5,
+    "maxFleet": 3,
+    "timeoutMinutes": 30
+  }
+}

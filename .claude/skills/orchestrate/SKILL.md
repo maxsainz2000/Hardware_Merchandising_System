@@ -1,0 +1,179 @@
+---
+name: orchestrate
+description: Run a fleet of Claude Code workers across this machine and box2 to execute several task cards. Use for "orchestrate", "dispatch workers", "run tasks in parallel", "use the laptop too", or when a phase has independent cards worth splitting.
+argument-hint: "[task-ids or goal]"
+arguments: [goal]
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash(pwsh *), Bash(git *), Bash(ssh *), ListAgents, SendMessage, AskUserQuestion
+---
+
+# Orchestrator — `$0`
+
+You do the thinking. Workers do the typing. Your scarcest resource is **your own context**,
+not their time — protect it deliberately, because an orchestrator that has read three
+transcripts is worse at deciding than one that has read none.
+
+## 0. Before anything: is this even an orchestration?
+
+Dispatching costs a worker startup, a brief, and a report. **If the whole job is under
+roughly two tool calls, just do it yourself.** Orchestrate when:
+
+- there are **≥2 genuinely independent cards** (disjoint file sets), **or**
+- one card is long-running and you have other work to place beside it, **or**
+- the user explicitly asked for the fleet or for box2.
+
+One card, alone, on this machine, is `/task` — not this skill. Say so and switch.
+
+## 1. Plan before you spawn
+
+1. **Read `tasks.md`** and pick the cards. Nothing else — do not read the source tree to
+   "understand context" first. That is the single biggest context leak available to you.
+2. **Prove independence.** Two cards may run in parallel only if their file sets are
+   disjoint. Shared file → sequence them. When unsure, sequence: a merge conflict across
+   two machines costs far more than a serial run.
+3. **Place each card.** `box1` holds XAMPP/MariaDB — **every card touching the database,
+   the API at runtime, or a migration runs on box1.** box2 takes work that needs no
+   database: evidence capture, scripts, docs, client-only XAML, guardrail runs.
+4. **Write the ledger** to `.claude/fleet/mission.md` before dispatching — card, machine,
+   model, scope boundary, one line each. On disk, not in your context. It is what lets you
+   resume after a compaction without re-deriving the plan.
+
+## 2. Choose model and effort per card — deliberately
+
+This is a real decision, not a default to skip past. Starting everything on `opus/high`
+wastes budget; starting everything on `haiku/low` produces work you rewrite.
+
+| Card looks like | Model | Effort |
+|---|---|---|
+| Mechanical, fully specified — boilerplate, evidence capture, a scripted run | `haiku` | `low` |
+| Ordinary implementation of a card that is already well specified | `sonnet` | `medium` |
+| Business rules, transactions, concurrency, money/decimal handling, auth, SQL grants | `opus` | `high` |
+| A card that already came back `blocked` once, or where the design is genuinely open | `opus` | `xhigh` |
+
+**Escalate on evidence, never pre-emptively.** Dispatch at the tier the card deserves; if
+the report comes back `blocked` or `failed` on something real, re-dispatch that card one
+tier up with the blocker written into the brief. Escalation with the failure in hand beats
+starting high and hoping.
+
+## 3. Write the brief
+
+A brief is a **boundary**, not a description. Every brief states, in this order:
+
+1. **Card ID** and the spec sections it cites.
+2. **Exact scope** — the files this worker may touch. Name them.
+3. **Acceptance checks**, copied from the card. Not paraphrased.
+4. **What NOT to do** — the adjacent thing they will be tempted by. Be explicit; this line
+   prevents more damage than the other four combined.
+5. **Evidence path**, if the card names one.
+
+Never inline CLAUDE.md or the worker contract into a brief. Workers load both from disk.
+
+## 4. Dispatch
+
+> **Folder:** repo root · **USB:** not required · **Shell:** normal (elevation not needed)
+
+```powershell
+# check transports before trusting any of them
+pwsh ./scripts/fleet/fleet.ps1 -Action doctor
+
+# dispatch (async; returns immediately with a handle)
+pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -Machine box1 `
+     -Model sonnet -Effort medium -BriefFile .claude/fleet/briefs/P2-03.md
+
+# a visible terminal instead, when the user wants to watch it work
+pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -Mode tty
+
+# collect, stop, survey
+pwsh ./scripts/fleet/fleet.ps1 -Action list
+pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId P2-03
+pwsh ./scripts/fleet/fleet.ps1 -Action stop   -TaskId P2-03      # or -All
+```
+
+Defaults, the fleet cap (3 live), and the per-worker budget live in
+`.claude/fleet/machines.json`. Raise the cap only with a reason.
+
+**Remote Control machines are not dispatched with this script.** An RC session is driven
+by messages: `ListAgents` to find it, then `SendMessage` with the brief. The script refuses
+RC on purpose rather than pretending to have started something.
+
+## 5. Collect — and the rule that protects your context
+
+**Read reports. Never read worker logs.** `fleet.ps1 -Action report` prints the parsed
+digest and a path. The path is for the user, or for a later targeted `grep` when a report
+says something specific is wrong. Opening `raw.json` to "see what happened" imports an
+entire worker session into your context and is the failure this design exists to prevent.
+
+Per report:
+
+- **`done`** → verify the claim is *internally* coherent (status `done` with `tests: fail`
+  is a contradiction — treat it as `failed` and re-dispatch). Then tick the card's boxes in
+  `tasks.md` **yourself**. Workers never edit that file.
+- **`blocked` / `needsDecision`** → this is your job arriving. Decide it. If it is a CLAUDE.md
+  §7 stop condition that is genuinely the user's or the professor's, take it to the user
+  with the worker's exact wording — do not soften it into a guess.
+- **`failed`** → read `failureTail` from the report. That is normally enough. Re-dispatch one
+  tier up with the failure quoted in the brief.
+- **`scopeCreepRefused`** → record it in the ledger. It is usually a real next card.
+
+## 6. Integrate
+
+Workers commit locally and never push. You handle integration, in one place, once:
+
+> **Folder:** repo root · **USB:** not required · **Shell:** normal
+
+```powershell
+git -C . log --oneline -n 10
+git -C . status --short
+```
+
+Then run the guardrails and the tests **once, yourself**, across the merged result. Green
+workers do not imply a green tree — that is precisely what parallel work breaks.
+
+**Pushing is an outward-facing action: confirm with the user before the first `git push`,
+every session.** Do not push on a worker's say-so.
+
+## 7. Stop conditions — for you
+
+Stop and hand back to the user when:
+
+1. A worker reports a CLAUDE.md §7 condition that is genuinely a user or professor call.
+2. Two workers' reports contradict each other about the same file or rule.
+3. The merged tree fails guardrails or tests and the cause is not in a single card.
+4. You are about to raise the fleet cap, switch a worker to `bypassPermissions`, or push.
+5. **You have collected every dispatched report and the ledger has no open cards.** That is
+   done. Say so and stop — do not look for more work to dispatch.
+
+Point 5 is the one that gets skipped. An orchestrator with idle capacity is not a problem
+to solve.
+
+## Provisioning box2
+
+Two transports, both registered. `ssh` is preferred when the box is on the LAN — headless,
+structured reports, no session to babysit. `rc` is the fallback and works off-LAN.
+
+**SSH.** On box2, elevated PowerShell:
+
+> **Folder:** anywhere · **USB:** not required · **Shell:** **elevated** (the capability
+> install and service start both fail quietly without it)
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd; Set-Service sshd -StartupType Automatic
+```
+
+Then from box1, copy your public key to box2's `administrators_authorized_keys`, and record
+`hostname`, `sshTarget`, and box2's `repo` path in `.claude/fleet/machines.json`, set
+`enabled: true`, and confirm with `fleet.ps1 -Action doctor`.
+
+**Address box2 by hostname, never by a hand-set static IP** — that is a settled decision on
+this project, and a DHCP lease handing the same address back is exactly the trap that makes
+a static IP look like it works.
+
+**Remote Control.** On box2, signed into the same Anthropic account:
+
+```powershell
+claude --remote-control box2
+```
+
+It then appears in `ListAgents` here and takes briefs by `SendMessage`. Verify it actually
+appears before reporting box2 as available — a named session that never connected looks
+identical to a working one until a brief vanishes into it.

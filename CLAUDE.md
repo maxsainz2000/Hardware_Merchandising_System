@@ -216,6 +216,12 @@ P4-07: partial receiving accumulates across receipts
 
 **`/phase-gate`** runs the phase exit review and, on a genuine PASS only, regenerates `tasks.md` for the next phase.
 
+**`/orchestrate`** runs several cards in parallel across this machine and `box2` (see
+`.claude/fleet/machines.json`). It dispatches **`/worker`** sessions — one card each, fixed
+scope, structured report back — and does the deciding itself. Workers never edit `tasks.md`,
+never push, and report a blocker rather than guessing. Use it only when there are genuinely
+independent cards; a single card is `/task`.
+
 **Never mark a card done with a failing test, a partial implementation, or an unresolved error.** If blocked, leave it open and say why.
 
 ---

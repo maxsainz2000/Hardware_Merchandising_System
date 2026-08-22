@@ -84,3 +84,7 @@ tmp/
 # telling you something real.
 # ---------------------------------------------------------------------------
 .claude/settings.local.json
+
+# Fleet worker run logs - transcripts and raw JSON, never committed.
+# The registry, briefs, and mission ledger ARE committed; only the run output is noise.
+.claude/fleet/runs/
