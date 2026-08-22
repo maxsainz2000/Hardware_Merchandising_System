@@ -6,8 +6,8 @@
 
 .DESCRIPTION
     This host is a laptop that moves between at least three networks during
-    development - home, school, and office Wi-Fi - and will later move to a
-    fourth, self-provided demo LAN (ADR-012). A rule scoped to one hard-coded
+    development - home, school, and office Wi-Fi - and at the presentation
+    becomes the access point itself (ADR-015). A rule scoped to one hard-coded
     subnet would be wrong on every network except the one it was written for,
     and worse, would either fail closed everywhere else (breaking the lab
     test workstation at home) or need to be re-edited by hand every time the
@@ -26,10 +26,16 @@
                                  tracks the laptop across home/office/demo-LAN
                                  without ever naming an address.
 
-    This is the DEVELOPMENT rule for this laptop. It is not the demo rig's
-    firewall configuration - that is a separate, install-time step performed
-    on the demo host once that hardware exists (ADR-012), and belongs in
-    docs/installation-guide.md as part of that install, not hard-coded here.
+    THE HOTSPOT TRAP - read this before assuming the rule is enough.
+    Under ADR-015 the host runs Windows Mobile Hotspot at the presentation,
+    and Windows classifies a newly created hotspot network as PUBLIC. This
+    rule is Private-only, so on an unclassified hotspot it does not apply:
+    port 8443 stays shut and every client reports a connection timeout that
+    reads exactly like a bug in the API. The fix is to reclassify that one
+    network to Private, which scripts/start-demo-network.ps1 does and then
+    verifies. Widening this rule to the Public profile would also make the
+    demo work, and would quietly open the API on every untrusted network this
+    laptop joins for the rest of its life. Do not do that.
 
     Requires an elevated (Run as Administrator) PowerShell session -
     New-NetFirewallRule fails otherwise. If this session is not elevated,
@@ -70,3 +76,7 @@ New-NetFirewallRule `
 
 Write-Host "Rule '$ruleName' created: TCP 8443 inbound, LocalSubnet, Private profile only."
 Write-Host "Verify with: Get-NetFirewallRule -DisplayName '$ruleName' | Get-NetFirewallPortFilter"
+Write-Host ""
+Write-Host "This rule only applies on networks Windows classifies as Private."
+Write-Host "A Mobile Hotspot starts out Public - run scripts/start-demo-network.ps1"
+Write-Host "before the demo, which reclassifies it and re-checks this rule (ADR-015)."

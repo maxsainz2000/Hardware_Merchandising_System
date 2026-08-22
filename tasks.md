@@ -69,7 +69,7 @@ What can be pointed to at sign-off is stronger than a screenshot: the language c
 
 ---
 
-### 🔴 P0-02 · Capture Windows baseline for the host and every demo workstation — BLOCKED, classmates' machines not surveyed
+### 🟡 P0-02 · Capture Windows baseline for the host and every demo workstation — no longer blocked on information; setup-client.ps1 collects it
 
 **Spec:** §3 · **Closes:** G-30
 
@@ -80,14 +80,18 @@ What can be pointed to at sign-off is stronger than a screenshot: the language c
 **Done when:**
 
 - [x] Host row complete in manifest §2 (Windows edition/build/architecture/machine name only — other host-row fields belong to P0-03/P0-04/P0-05 and are filled by those cards)
-- [ ] One complete block per **demo workstation** in manifest §3.2 — **not satisfied.** These are the three classmates' machines; none has been surveyed
+- [ ] One complete block per **demo workstation** in manifest §3.2 — **not satisfied.** These are the three classmates' machines; none has been surveyed. Each is filled from that machine's own `client-baseline-<MACHINE>.txt`, produced by `scripts/setup-client.ps1` — nobody needs to be interviewed
 - [ ] Resolution and scaling recorded per demo workstation — **not satisfied**
 - [ ] Local administrator rights confirmed per demo workstation — **added 2026-08-18.** Required for the hosts entry and certificate trust. A classmate without admin on their own machine is a blocker best discovered now, not at P1-09
 - [x] Host machine confirmed 64-bit
 
 > **Re-scoped 2026-08-18 by ADR-012.** This card was blocked on "a client laptop existing". A second machine now exists — the author's Windows 10 desktop — but it is **lab equipment, not a deliverable**, and recording it here would be recording the wrong computer. The card is about the machines the system will be demonstrated on. The desktop is captured separately in manifest §3.1.
 
-**Unblocked by:** the three classmates reporting their machine details. Ask for edition, build, architecture, resolution, scaling and admin rights — `scripts/capture-client-baseline.ps1` collects all of it if they can run one command. No agent action can advance this card.
+**Unblocked by:** running `scripts/setup-client.ps1` on each demo workstation — **the dependency is now inverted, 2026-08-22.**
+
+This card was blocked on three classmates reporting Windows edition, build, architecture, resolution, scaling and admin rights. Nobody has to be asked for any of that any more. `setup-client.ps1` is the client setup they have to run regardless, and it collects every one of those fields itself, then writes `client-baseline-<MACHINE>.txt` to the Desktop. **That file is this card's evidence.** Run `-CaptureOnly` to collect the baseline without changing anything, on a machine that is not ready to be set up yet.
+
+What remains is not information-gathering; it is three machines being in front of someone with the package. The admin-rights field is still the one worth knowing early — a classmate without local admin on their own laptop cannot import the certificate or write the hosts entry, and `setup-client.ps1` reports that in stage 1 rather than failing halfway through stage 2.
 
 ---
 
@@ -138,7 +142,7 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 
 ---
 
-### 🔴 P0-05 · Network and host addressing — BLOCKED, demo rig not acquired
+### 🟡 P0-05 · Network and host addressing — nothing left to acquire (ADR-015); one rehearsal owed
 
 **Spec:** §8 · **Closes:** G-25 (begins)
 
@@ -149,13 +153,29 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 **Done when:**
 
 - [x] Host IP reserved; method recorded (static IP on host adapter, not a router DHCP reservation — see manifest §4 for why)
-- [ ] `ping MERCH-HOST` succeeds from **every demo workstation** — **not satisfied.** A lab-to-lab run proves the mechanism and unblocks P1-09/P1-10/P1-15, but does not tick this box (ADR-012)
+- [ ] `ping MERCH-HOST` succeeds from **every demo workstation** — **not satisfied.** A lab-to-lab run proves the mechanism and unblocks P1-09/P1-10/P1-15, but does not tick this box (ADR-012). Under ADR-015 the target address is the constant `192.168.137.1`; `scripts/setup-client.ps1` stage 4 checks this and the HTTPS round trip together
 - [x] Subnet recorded in manifest §4
 - [x] Name choice recorded in ADR-011 (confirmation note; ADR itself resolved ACCEPTED at P1-09)
 
-**Unblocked by:** the demo rig existing (manifest §4.2). **Router admin access is no longer required** — see the re-scope note below.
+**Unblocked by:** one rehearsal. **No hardware remains to acquire** — see the 2026-08-22 re-scope below.
 
-> **Re-scoped 2026-08-18 by ADR-012 — read this before doing anything on this card.**
+> **Re-scoped again 2026-08-22 by ADR-015 — the host is now the access point.**
+>
+> School Wi-Fi is heavily firewalled and cannot carry this demo, and the self-provided travel router of the 2026-08-18 re-scope was never acquired — it stood as the largest un-mitigated presentation risk for four days without moving. Both are resolved by making the API host run Windows Mobile Hotspot and serve the three clients directly.
+>
+> **This does more than substitute one network for another.** AP client isolation — the failure this card has been organised around — *cannot occur*, because every client addresses its own default gateway and that gateway is the host. There is no station-to-station hop to block. And Windows ICS pins the host at `192.168.137.1` on every Windows 10/11 machine, so the host address stops being a per-environment value and becomes a constant: the hosts entry is written once per client by `scripts/setup-client.ps1` and never revisited.
+>
+> **Verified capable on this machine 2026-08-22.** `netsh wlan show drivers` reports `Hosted network supported: No`, which is misleading — that is the legacy SoftAP path Intel dropped. `netsh wlan show wirelesscapabilities` reports `Wi-Fi Direct GO: Supported`, which is what modern Mobile Hotspot actually uses.
+>
+> **New tooling, both written and syntax-checked at this re-scope:** `scripts/start-demo-network.ps1` (host side — starts the hotspot, verifies the address, reclassifies the network Private, checks the firewall rule and the listener, prints the SSID and the hosts line) and `scripts/setup-client.ps1` (client side — one elevated command doing preflight, certificate trust, hosts entry, and a validated HTTPS round trip).
+>
+> **The one trap that will bite if the rehearsal is skipped:** Windows classifies a brand-new hotspot network as **Public**, and the P1-09 firewall rule is `-Profile Private`. On an unclassified hotspot the rule does not apply, 8443 stays shut, and every client reports a connection timeout that reads exactly like an API defect. `start-demo-network.ps1` check 3 exists solely for this.
+>
+> **Two risks that only a dry run can close:** Mobile Hotspot shares an existing connection and may refuse to start with nothing to share (workaround: USB-tether a phone as the shared adapter), and station + Wi-Fi Direct GO concurrency on this adapter is likely but unverified.
+>
+> **Superseded by the above — retained because the reasoning still applies to the phone-hotspot fallback.**
+>
+> **Re-scoped 2026-08-18 by ADR-012.**
 >
 > **What this card is no longer about.** It previously owed a router-side MAC DHCP reservation on the author's home Huawei, plus an audit of that router's DHCP pool. Both are **withdrawn**. They would have stabilised a *lab* address, and no delivered artefact is permitted to contain one. Neither survives contact with the presentation venue, and neither is worth an hour of router administration.
 >
@@ -165,7 +185,7 @@ The dump tool matters more than it looks: the entire backup strategy (P1-17) is 
 >
 > **Already done:** the host's own hosts-file entry, previously recorded here as outstanding, **was applied out of band** and verifies clean — `Resolve-DnsName MERCH-HOST` resolves and replies. The document was wrong, not the machine. It does not close this card: resolution on the host proves only that the host can find itself.
 >
-> **Now the largest un-mitigated risk to the presentation:** venue Wi-Fi commonly enables **AP client isolation**, which blocks station-to-station traffic while leaving internet access intact. A client-server demo dies outright, minutes before presenting, with no fix available without admin rights on someone else's equipment. Acquiring and rehearsing the demo rig is the mitigation, and it is not started.
+> ~~**Now the largest un-mitigated risk to the presentation:** venue Wi-Fi commonly enables **AP client isolation**...~~ — **retired 2026-08-22 by ADR-015.** Client isolation cannot apply when the host is the access point. What remains is the rehearsal, which is a much smaller item than acquiring equipment was.
 
 ---
 

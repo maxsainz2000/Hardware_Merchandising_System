@@ -22,80 +22,98 @@ There is no DNS server on this LAN, so the name is resolved with a **hosts file 
 
 ### 1.1 The values
 
-**The host address is an install-time value, not a constant of this system (ADR-012).** It differs between the development lab and the demo rig, and a value copied from one into the other resolves to the wrong machine instead of failing cleanly — which is far harder to diagnose under time pressure. Fill this table in per installation.
+**Under ADR-015 the host address is now a constant, and that is the whole point of the change.** The API host runs Windows Mobile Hotspot and *is* the access point; Windows Internet Connection Sharing pins the hosting interface at `192.168.137.1` on every Windows 10 and 11 machine. The hosts-file entry is therefore written once per client and never revisited — it is no longer an install-time value to be filled in per environment.
 
 | Item | Value |
 |---|---|
 | Host name | `MERCH-HOST` — **constant.** The certificate SAN is issued for this name, so it never changes between environments |
-| Host IP address | ⬜ **per install.** Lab: currently `192.168.100.165`, a DHCP lease (see below). Demo rig: to be fixed once the equipment exists — environment manifest §4.2 |
+| Host IP address | **`192.168.137.1`** — constant under ADR-015, because the host is the access point. Varies **only** in the phone-hotspot fallback, where the host is an ordinary DHCP client |
 | Hosts file path | `C:\Windows\System32\drivers\etc\hosts` |
-| Required rights | **Administrator.** The file is not writable by a standard user. **Confirm each demo workstation's owner actually has local admin** — without it, neither this step nor certificate trust can be completed on their machine |
+| Required rights | **Administrator.** The file is not writable by a standard user. `setup-client.ps1` checks this first and says so plainly rather than half-completing |
 
-> ⚠️ **Why the host name is constant but the address is not.** `MERCH-HOST` is what the HTTPS certificate is issued for, so clients must always connect by name. The name-to-address mapping is what changes per environment, and the hosts file is where that change is absorbed. This is the whole reason the manual hosts step is worth its inconvenience — it keeps one certificate valid across every network the system runs on. See ADR-011.
+> **Why the name is constant and always was.** `MERCH-HOST` is what the HTTPS certificate is issued for, so clients must always connect by name. Connecting to `https://192.168.137.1:8443` produces a certificate warning even when everything else is correct. The certificate deliberately carries **no IP SAN** (ADR-011) so that it stays valid across every network the system runs on; the hosts file is where the mapping lives.
 
-> ⚠️ **The lab address is a DHCP lease and may move without warning.** On 2026-08-17 a manual static was reverted after it followed the laptop onto another network and broke it; on 2026-08-18 the router happened to lease back the very same `192.168.100.165`, with about 24 hours of lifetime. **That coincidence is a trap, not a convenience** — it will keep working right up until a lease expiry or a router reboot moves it, and the resulting failure presents as a certificate or firewall problem rather than an addressing one. Re-check the address before relying on it; never copy it onto a demo machine.
+> ⚠️ **Never configure the host by manual static IP.** A Windows static IPv4 is a property of the *adapter*, not of a network profile, so it follows the machine onto every network it joins and breaks all of them. Proven on 2026-08-17. Evidence: `evidence/phase-0/host-ip-reservation.txt` §2. **ADR-015 retires this risk rather than managing it:** `192.168.137.1` is assigned by ICS to the hotspot interface only, and exists only while the hotspot is running — it is not a static address on a roaming adapter.
 
-> ⚠️ **Never configure the host by manual static IP.** A Windows static IPv4 is a property of the *adapter*, not of a network profile, so it follows the machine onto every network it joins and breaks all of them. On the demo rig, set the address on the *router* — equipment we control — and leave every adapter on DHCP. Evidence: `evidence/phase-0/host-ip-reservation.txt` §2.
+> **Historical, and no longer load-bearing.** The lab host previously sat at `192.168.100.165`, a ~24-hour DHCP lease that the router happened to hand back after a static address was reverted. That coincidence was a trap: it worked until a lease expiry moved it, and the resulting failure presented as a certificate or firewall problem rather than an addressing one. Recorded because the reasoning still applies to the fallback topology.
 
-### 1.2 Procedure — run once per machine, host and every client
+### 1.2 Procedure — one command per client
 
-Open **PowerShell as Administrator** (right-click → *Run as administrator*). Set `$HostIp` to **this installation's** host address from §1.1 — do not paste an address carried over from another environment:
+On each **client** laptop, elevated:
 
 ```powershell
-$HostIp = "<the API host's address on THIS network>"
-Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n# Merchandising System - API host (P0-05)`n$HostIp`tMERCH-HOST"
+powershell -ExecutionPolicy Bypass -File .\setup-client.ps1
 ```
 
-If you prefer to edit by hand: open `C:\Windows\System32\drivers\etc\hosts` in Notepad **started as administrator**, and append this line — the separator must be a tab or spaces, not a comma:
+That single command does the whole client side: preflight (Windows edition, build, architecture, admin rights, .NET desktop runtime, resolution and DPI scaling), imports `merch-host.cer` into Trusted Root, writes the hosts entry, verifies a real HTTPS round trip **with certificate validation on**, and writes `client-baseline-<MACHINE>.txt` to the Desktop.
 
+**That report file is also the P0-02 evidence for that machine.** The baseline stops being something to collect from three classmates in advance and becomes an output of the setup that had to happen anyway. Nobody needs to be asked for their Windows build.
+
+For the phone-hotspot fallback, pass the host's address explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-client.ps1 -HostIPv4 192.168.43.137
 ```
-<host-ip>	MERCH-HOST
+
+To check whether a laptop is suitable **without changing anything** — no Administrator needed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-client.ps1 -CaptureOnly
 ```
+
+On the **host**, before any client connects, elevated:
+
+```powershell
+pwsh ./scripts/start-demo-network.ps1
+```
+
+It starts the hotspot, confirms the interface really holds `192.168.137.1`, **reclassifies that network from Public to Private** (see §1.4 — this is the failure most likely to bite), verifies the firewall rule and that the API is listening, and prints the Wi-Fi name and password to read out.
 
 ### 1.3 Verify — do not skip this
 
+`setup-client.ps1` stage 4 does all of this and interprets the results. To check by hand:
+
 ```powershell
 ping MERCH-HOST
-```
-
-Expected: replies from the address you entered. Then confirm the name resolves through the hosts file rather than by luck — and **check the address in the output matches what you intended**, because a stale entry higher up the file resolves silently to the wrong machine:
-
-```powershell
 Resolve-DnsName MERCH-HOST
 ```
 
-Capture the `ping` output to `evidence/phase-0/ping-<machine-name>.txt`. **Running this on the host proves only that the host can talk to itself.** P0-05 needs it to succeed from each *demo workstation*; a run between two lab machines is worth doing earlier, since it unblocks P1-09/P1-10/P1-15, but it does not close the card (ADR-012).
+Expected: replies from `192.168.137.1`. **Check the address in the output matches** — a stale entry higher up the file resolves silently to the wrong machine.
 
-### 1.4 If it does not resolve
+**Running this on the host proves only that the host can talk to itself.** P0-05 needs it to succeed from each *demo workstation*.
+
+### 1.4 If it does not resolve or does not connect
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Ping request could not find host MERCH-HOST` | The entry was written to a copy, or Notepad was not elevated and silently saved elsewhere | Re-open elevated; confirm the line is really in `C:\Windows\System32\drivers\etc\hosts` |
-| Resolves but no reply | Host firewall, or the two machines cannot reach each other at layer 2 | Confirm both are on the **same** network and subnet — by network profile name, not by address, since two different networks can share a subnet (it has already happened once on this project) |
-| Resolves, no reply, and both machines are demonstrably on the same subnet | **AP client isolation** on the access point — common on school, campus and guest Wi-Fi. Each station reaches the internet; none can reach another | Not fixable without admin access to that equipment. **Use the self-provided demo rig** — environment manifest §4.2. This is the failure this project expects to meet at the venue |
-| Resolves to a different address | A stale entry already exists further up the file | Remove the older `MERCH-HOST` line — the first match wins |
+| `Ping request could not find host MERCH-HOST` | The entry was written to a copy, or Notepad was not elevated and silently saved elsewhere | Re-run `setup-client.ps1` elevated; it rewrites the entry idempotently |
+| Resolves but no reply | Client is not actually joined to the host's hotspot | Check the Wi-Fi network name on the client matches the SSID `start-demo-network.ps1` printed |
+| **Resolves and pings, but every client times out on port 8443** | **The hotspot network is classified Public, and the firewall rule is Private-only.** This is the single most likely failure and it reads exactly like a bug in the API | On the host: `pwsh ./scripts/start-demo-network.ps1` — check 3 reclassifies it and re-verifies. Do **not** widen the firewall rule to the Public profile; that would open the API on every untrusted network the laptop ever joins |
+| Certificate warning or TLS failure | `merch-host.cer` was never imported, or the client connected by IP instead of by name | Re-run `setup-client.ps1`; connect to `https://MERCH-HOST:8443`, never to the address |
+| Resolves to a different address | A stale entry already exists further up the file | `setup-client.ps1` strips prior `MERCH-HOST` lines before writing; re-run it |
+| ~~AP client isolation~~ | **Cannot occur under ADR-015.** Clients talk to their own default gateway, which *is* the host — there is no station-to-station hop for an access point to block | Applies only in the phone-hotspot fallback. If it appears there, switch to host-as-access-point |
 
 ### 1.5 Current status
 
 **Lab** — development and integration testing only, not part of the deliverable:
 
-| Machine | Entry added | `ping MERCH-HOST` verified |
+| Machine | Entry added | Verified |
 |---|---|---|
-| Lab host `LAPTOP-3HH6OHHE` | ✅ **yes** — `192.168.100.165  MERCH-HOST` at line 25 of the hosts file | ✅ resolves and replies, verified 2026-08-18 |
-| Lab test workstation `DESKTOP-OUU3M8J` | ❌ not yet — machine not yet on the LAN | ❌ |
+| Lab host `LAPTOP-3HH6OHHE` | ✅ `192.168.100.165  MERCH-HOST`, hosts line 25 | ✅ resolves and replies, 2026-08-18. **Lab address — superseded for demo use by ADR-015** |
+| Lab test workstation `DESKTOP-OUU3M8J` | ❌ not yet | ❌ |
 
-**Demo environment** — the deliverable. Nothing here can be done until the demo rig exists (manifest §4.2):
+**Demo environment** — the deliverable. No longer blocked on acquiring hardware; blocked on one rehearsal:
 
-| Machine | Entry added | `ping MERCH-HOST` verified |
+| Machine | Entry added | Verified |
 |---|---|---|
-| Demo host | ❌ — rig not yet acquired | ❌ |
-| Demo workstation 1 | ❌ | ❌ |
-| Demo workstation 2 | ❌ | ❌ |
-| Demo workstation 3 | ❌ | ❌ |
+| Demo host (= access point) | n/a — the host *is* `192.168.137.1` | ⬜ owed at rehearsal |
+| Demo workstation 1 | ⬜ via `setup-client.ps1` | ⬜ |
+| Demo workstation 2 | ⬜ via `setup-client.ps1` | ⬜ |
+| Demo workstation 3 | ⬜ via `setup-client.ps1` | ⬜ |
 
-> **Correction, 2026-08-18.** This table previously recorded the host entry as *not applied*, on the basis that the P0-07 agent session could not elevate. It had in fact been applied out of band. Found by running `scripts/capture-client-baseline.ps1` on the host as a smoke test — `Resolve-DnsName MERCH-HOST` returned `192.168.100.165` and ping replied. The document was wrong, not the machine.
+> **What changed, 2026-08-22 (ADR-015).** This section previously required the host address to be filled in per installation, and listed AP client isolation as the failure the project expected to meet at the venue. Both are retired by making the host the access point: the address becomes a constant, and client isolation cannot apply to traffic addressed to the client's own gateway. The school Wi-Fi — heavily firewalled — is not used at all.
 >
-> **This still does not close P0-05.** Resolution on the host proves only that the host can find itself. Under ADR-012 the card closes when each **demo workstation** resolves `MERCH-HOST` on the demo LAN — not when a lab machine does.
+> **This still does not close P0-05.** It closes on a rehearsal: hotspot up, three clients joined and set up by someone other than the author, a real round trip from each.
 
 ---
 

@@ -193,23 +193,24 @@ Copy the block below once per classmate. Do not fill any of it from assumption.
 
 ---
 
-### 4.2 Demo network — self-provided equipment — **the deliverable runs here**
+### 4.2 Demo network — the host is the access point — **the deliverable runs here**
 
-**Status: ⬜ not yet specified or acquired.** This is the single largest un-mitigated risk to the presentation.
+**Status: ✅ specified (ADR-015, 2026-08-22). ⬜ rehearsal owed.** No longer a risk awaiting a purchase; a configuration awaiting one dry run.
 
-**The rule: do not demonstrate on the venue's network.** School, campus and office Wi-Fi commonly enable **AP client isolation**, which permits each station to reach the internet but blocks station-to-station traffic. Every workstation would appear online, and none could reach the API host. The symptom arrives as a connection or certificate error minutes before presenting, and cannot be fixed without administrative access to equipment belonging to someone else.
+**The rule: do not demonstrate on the venue's network.** School Wi-Fi here is heavily firewalled and unusable for this, and campus or office Wi-Fi commonly enables **AP client isolation** — each station reaches the internet, none can reach another. Every workstation would appear online while none could reach the API host, minutes before presenting, unfixable without admin rights on someone else's equipment.
 
-Bringing the network removes that entire failure class and turns the demo LAN into a constant that can be rehearsed identically every time.
+**How ADR-015 removes that failure class rather than mitigating it.** The API host runs Windows Mobile Hotspot and *is* the access point. Every client addresses its own default gateway, so there is no station-to-station hop for an access point to block. Nothing is bought, carried or powered, and the previous plan's travel router is retired.
 
 | Item | Decision |
 |---|---|
-| Equipment | ⬜ **to choose** — a travel router, or an unmanaged switch with short Ethernet runs. A phone hotspot works as fallback but is the weakest option: no wired ports, and isolation behaviour varies by handset |
-| Wired vs wireless | **Prefer wired.** No isolation, no roaming, no interference from a room full of phones, and one less variable when something fails during setup |
-| Subnet | ⬜ to choose. **Deliberately avoid `192.168.100.0/24`** — it collides with the lab network, and a machine carrying a stale lab config would appear to work while talking to the wrong thing |
-| Host address | ⬜ to fix on the demo rig. On self-provided equipment this is set once and stays set; no router-admin negotiation with anyone |
-| `MERCH-HOST` resolution | hosts file on the host and all three workstations, per `docs/installation-guide.md` §1, using the §4.2 address — never a lab address |
-| Internet access required | **No.** The system is LAN-only. The demo rig needs no uplink at all, which is itself a robustness feature |
-| Rehearsal | ⬜ owed before the presentation: full setup from cold on the demo rig, by someone other than the author, timed |
+| Equipment | **None.** The host laptop is the access point via Windows Mobile Hotspot. Verified capable on `LAPTOP-3HH6OHHE` 2026-08-22: `Wi-Fi Direct GO: Supported` (`Soft AP: Not supported` refers to the legacy path Windows no longer uses — see ADR-015) |
+| Subnet | `192.168.137.0/24`, assigned by Windows ICS. **Does not collide with the lab's `192.168.100.0/24`**, so a machine carrying stale lab config fails cleanly instead of talking to the wrong thing |
+| Host address | **`192.168.137.1` — a constant**, pinned by ICS on every Windows 10 and 11 machine. Not a static address on a roaming adapter; it exists only while the hotspot runs |
+| `MERCH-HOST` resolution | `scripts/setup-client.ps1`, one elevated command per client. Writes the hosts entry, imports the certificate, and verifies a real HTTPS round trip |
+| Network profile | **Must be Private.** Windows classifies a new hotspot as Public, which silently defeats the Private-only firewall rule. `scripts/start-demo-network.ps1` check 3 reclassifies and re-verifies |
+| Internet access required | **No.** The system is LAN-only. *But* Mobile Hotspot shares an existing connection, so Windows may refuse to start it with nothing to share — fallback is a USB-tethered phone as the shared adapter |
+| Fallback topology | Phone hotspot, all four machines joined as clients. Host address becomes DHCP and varies; `setup-client.ps1 -HostIPv4 <addr>` covers it with no code change. AP isolation becomes possible again in this mode |
+| Rehearsal | ⬜ **owed, and now the only thing gating P0-05:** hotspot up from cold, three clients joined and set up by someone other than the author, a real round trip from each, timed |
 ---
 
 ## 5. Verification checklist
@@ -229,7 +230,7 @@ Phase 0 is not complete until every box is ticked. A box is ticked only when the
 
 - [x] `sql_mode` includes `STRICT_TRANS_TABLES`, server-side **and** per connection → **both halves done.** Server-side at P1-04 (`my.ini` line 157, restarted, re-verified — `evidence/phase-1/p1-04-grants.txt`); per-connection at P1-05 (`ConnectionFactory`, asserted live by `ConnectionFactoryTests` — `evidence/phase-1/p1-05-connection-test.log`). **Ticked 2026-08-18**, having been left unticked after P1-05 shipped.
 - ⊘ ~~Host address made stable via a router-side MAC DHCP reservation~~ → **WITHDRAWN 2026-08-18 by ADR-012 — not done, and no longer required.** Deliberately not ticked: this requirement was removed, not satisfied, and a `[x]` here would misreport the gate. It would have stabilised a *lab* address that no delivered artefact is permitted to contain, and it depended on administering a router that will not be at the presentation. Replaced by §4.2: fix the address on self-provided demo equipment. **The underlying lesson stands** — never configure a host by manual static; the 2026-08-17 failure is recorded in `evidence/phase-0/host-ip-reservation.txt` §2.
-- [ ] **Demo network chosen, acquired and rehearsed** (§4.2) → **not started — currently the largest un-mitigated risk to the presentation.** Venue Wi-Fi commonly isolates stations from each other, which breaks a client-server demo in a way that cannot be fixed on the day.
+- [ ] **Demo network rehearsed** (§4.2) → **chosen and specified 2026-08-22 (ADR-015); rehearsal not yet run.** Nothing remains to acquire: the host laptop is the access point, which removes the AP-isolation failure class entirely rather than mitigating it. Two risks stay open until the dry run — whether Windows will start Mobile Hotspot with no internet connection to share, and whether this adapter sustains station + Wi-Fi Direct GO concurrently. Neither is resolvable by reasoning.
 
 ---
 

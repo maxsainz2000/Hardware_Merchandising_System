@@ -687,6 +687,44 @@ Rules 1 and 2 are the general case. Rule 3 alone would have fixed this bug and l
 ## Template for new entries
 
 ```markdown
+## ADR-015 · Demo network topology — the host is the access point
+
+**Status:** ACCEPTED
+**Date:** 2026-08-22
+**Supersedes:** ADR-012's §4.2 requirement for self-provided demo network equipment.
+**Decides:** what network the three clients and the API host are on during the presentation.
+
+**Context.** Two facts closed off the previous plan. The school Wi-Fi is heavily firewalled and cannot carry a client-server demo. And the self-provided travel router ADR-012 called for was never acquired — it stood as the largest un-mitigated risk to the presentation for four days without moving. The risk it existed to mitigate was **AP client isolation**: venue Wi-Fi commonly blocks station-to-station traffic while leaving internet access intact, which kills a client-server demo minutes before presenting with no fix available on someone else's equipment.
+
+**Decision.** **The API host laptop is itself the access point**, via Windows Mobile Hotspot. The three client laptops join it directly. No router, no venue network, no purchase.
+
+**Why this is not merely cheaper but strictly better than the router it replaces.**
+
+1. **Client isolation cannot apply.** Every client talks to its own default gateway, which *is* the host. There is no station-to-station hop for an AP to block. The entire risk class the demo rig existed to mitigate is removed rather than mitigated.
+2. **The host address stops being a variable.** Windows Internet Connection Sharing pins the hotspot interface at **`192.168.137.1`**, deterministically, on every Windows 10 and 11 machine. The `MERCH-HOST` hosts-file entry stops being a per-network value that must be rewritten on four machines each time the network changes, and becomes a fixed line written once per client and never touched again.
+3. **Nothing to buy, carry, power, or configure** under time pressure on the day.
+4. **No uplink required.** The system is LAN-only; the hotspot needs no working internet for the demo itself to function.
+
+**Measured on this machine, 2026-08-22.** The Intel Wi-Fi 6 AX101 reports `Soft AP: Not supported` — and `netsh wlan show drivers` correspondingly reports `Hosted network supported: No`. **That is not the blocker it appears to be.** It describes the legacy `netsh wlan set hostednetwork` SoftAP path, which Intel dropped. Modern Windows Mobile Hotspot runs over **Wi-Fi Direct GO**, which the same adapter reports as `Supported` (along with `P2P GO on 5 GHz`). `netsh wlan show wirelesscapabilities` is the check that matters; `show drivers` is the one that misleads.
+
+**Fallback, and it is a real one.** If Mobile Hotspot cannot be started on the host, all four machines join a **phone hotspot** instead. The host is then an ordinary DHCP client and its address varies per session, so the constant in consequence 2 is lost — but nothing else is. `scripts/setup-client.ps1` accepts `-HostIPv4` precisely so the fallback needs no code change, only a different argument.
+
+**Consequences.**
+
+- **`setup-client.ps1` defaults `-HostIPv4` to `192.168.137.1`.** This is a deliberate reversal of the rule stated in `capture-client-baseline.ps1`, which refuses to default a host address on the grounds that "a wrong-but-plausible address does not fail cleanly." That reasoning was correct while the address was a *lab fact*. Under this ADR it is a *design constant*, and defaulting to it is what makes the client setup a single command with no value to communicate. The fallback topology is the case where the default is wrong, and there it is overridden explicitly.
+- **The firewall rule needs attention it did not previously need.** Windows classifies a newly created hotspot network as **Public**. The P1-09 rule is scoped `-Profile Private`, so on an unclassified hotspot the API is unreachable — presenting as a connection timeout that reads like a code defect. Reclassifying the hotspot network to Private is now part of host-side demo setup, and is deliberately preferred over widening the rule to the Public profile, which would weaken the posture on every network the laptop ever joins.
+- **P0-05 is no longer blocked on hardware acquisition.** It is blocked on one rehearsal.
+- The manifest's §4.2 stops describing equipment to buy and starts describing a configuration to verify.
+
+**Risks accepted, both closing at the rehearsal.**
+
+- **Mobile Hotspot may refuse to start without an internet connection to share.** Windows asks which connection to share, and with the school Wi-Fi blocked there may be nothing to select. Mitigation if it bites: tether a phone over USB and share *that* adapter — the tether supplies the shareable connection while the Wi-Fi radio serves the hotspot.
+- **Concurrent station + Wi-Fi Direct GO on a single radio** is supported by Intel adapters in general but is unverified on this one. If it fails, the host cannot stay on another Wi-Fi network while hosting — which costs nothing for the demo, since no uplink is needed.
+
+**Neither risk is resolvable by reasoning.** The rehearsal is the evidence, and it is now the gating item for P0-05.
+
+---
+
 ## ADR-NNN · Short title
 
 **Status:** PENDING | ACCEPTED | SUPERSEDED by ADR-MMM
