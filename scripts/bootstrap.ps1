@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Takes a fresh clone of this repository to a running system: database
@@ -140,7 +141,16 @@ function Invoke-RootSql {
 function New-InstallationPassword {
     $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     $bytes = [byte[]]::new(24)
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    # RandomNumberGenerator::Fill is .NET Core only and does NOT exist on
+    # the .NET Framework that Windows PowerShell 5.1 runs on. This script
+    # previously used it with no #Requires line, so a classmate who
+    # right-clicked "Run with PowerShell" - which uses 5.1, not pwsh -
+    # got a MethodNotFound crash partway through, after preflight and
+    # before anything was written. Create()+GetBytes() exists on both, so
+    # the bootstrap no longer requires PowerShell 7 to be installed first.
+    # Found at P1-17 while reusing this function.
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
 
     -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
 }
@@ -229,6 +239,7 @@ Write-Ok 'Grant scripts present'
 
 $databaseConfigPath = Join-Path $ConfigRoot 'database.json'
 $migratorConfigPath = Join-Path $ConfigRoot 'database.migrator.json'
+$backupConfigPath   = Join-Path $ConfigRoot 'database.backup.json'
 $credentialRecordPath = Join-Path $ConfigRoot 'installation-credentials.txt'
 
 if ((Test-Path $databaseConfigPath) -and -not $Force) {
@@ -332,7 +343,20 @@ function Write-DatabaseConfig {
 
 Write-DatabaseConfig -Path $databaseConfigPath -UserId 'merch_api'      -Password $apiPassword
 Write-DatabaseConfig -Path $migratorConfigPath -UserId 'merch_migrator' -Password $migratorPassword
-Write-Ok 'database.json and database.migrator.json written'
+Write-DatabaseConfig -Path $backupConfigPath   -UserId 'merch_backup'   -Password $backupPassword
+Write-Ok 'database.json, database.migrator.json and database.backup.json written'
+
+# The API service account must NOT be able to read the backup credential.
+# merch_backup can SELECT every row in the schema, including every password
+# hash, and the process most exposed to the network has no reason to hold
+# that. The config directory grants MerchandisingApi read access because
+# the API genuinely needs database.json; this one file is carved out of
+# that inheritance deliberately (P1-17).
+if (Test-Path $backupConfigPath) {
+    & icacls $backupConfigPath '/inheritance:d' | Out-Null
+    & icacls $backupConfigPath '/remove:g' 'NT SERVICE\MerchandisingApi' | Out-Null
+    Write-Ok 'database.backup.json ACL: API service account removed'
+}
 
 @"
 Merchandising System - installation credentials
@@ -348,8 +372,9 @@ and are not known to the author of the system (ADR-012 requirement 6).
 merch_migrator and merch_api are also in database.migrator.json and
 database.json beside this file; the applications read those, never this.
 
-merch_backup has no configuration file yet - it is used by mysqldump, which
-task P1-17 wires up. Until then this is the only record of it.
+All three accounts now have configuration files beside this one; the
+applications read those, never this. database.backup.json is additionally
+ACL'd so the API service account cannot read it (P1-17).
 
 This file is inside the ACL-protected config directory. Do not copy it into
 the repository, an email, or a chat message.

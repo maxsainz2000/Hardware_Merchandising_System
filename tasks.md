@@ -1034,7 +1034,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-17 · Backup via the maintenance utility
+### 🟡 P1-17 · Backup via the maintenance utility — implemented and proven; scheduled-task registration owed
 
 **Spec:** §15 · **Closes:** G-15
 
@@ -1046,13 +1046,43 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Scheduled run produces a valid dump + off-host copy + `BackupLogs` row
-- [ ] Checksum recorded and verifiable
-- [ ] A deliberately broken run (wrong credentials) **records failure and warns** rather than failing silently
-- [ ] Backup directory is not reachable through any API endpoint
-- [ ] Retention count configurable via `SystemSettings`
+- [ ] Scheduled run produces a valid dump + off-host copy + `BackupLogs` row — **the run is proven, the *scheduling* is not.** A manual run produced all three (dump 249,569 bytes, byte-identical off-host copy, `BackupLogs` row 16). `scripts/register-backup-task.ps1` is written and parse-checked but **not registered**: it requires an elevated session, and this session could not elevate — the same boundary that stopped P0-03. One command from the operator closes it, see below
+- [x] Checksum recorded and verifiable — SHA-256 recomputed from the bytes on disk by an independent tool, matching the recorded value on **both** the local and off-host copies
+- [x] A deliberately broken run (wrong credentials) **records failure and warns** rather than failing silently — exit 1, MariaDB error 1045 carried through verbatim, no dump file left behind, and the failure written to a local log because the database was unreachable too
+- [x] Backup directory is not reachable through any API endpoint — no static-file middleware registered anywhere in the API, and four live probes against the running service (including a path-traversal attempt) all return 404
+- [x] Retention count configurable via `SystemSettings` — seeded by `0003_backup.sql`, proven by a test that runs three backups at a retention of 2 and finds two files left
 
 **Evidence:** `p1-17-backup-success.log`, `p1-17-backup-failure.log`
+
+> **What the operator owes, exactly one elevated command:**
+>
+> ```powershell
+> pwsh ./scripts/register-backup-task.ps1
+> Start-ScheduledTask -TaskName 'Merchandising Nightly Backup'
+> Get-ScheduledTaskInfo -TaskName 'Merchandising Nightly Backup' | Select-Object LastRunTime, LastTaskResult
+> ```
+>
+> The second and third lines matter as much as the first: registration proves nothing about execution, and a scheduled task pointing at a path that does not resolve fails every night while looking registered.
+
+> **Result.** `Merchandising.Maintenance.exe backup` (`Backup/BackupCommand.vb`) dumps via `mysqldump.exe` as `merch_backup`, verifies, copies off-host, prunes, and records. Run end to end on this host: 249,569-byte dump, SHA-256 `1918ffa0…`, off-host copy on the `MERCHBACKUP` volume, `BackupLogs` row 16, exit 0.
+>
+> **New schema:** `db/migrations/0003_backup.sql` creates `BackupLogs` — spec §12 listed it, nothing had built it. `db/grants/0004_backup-grants.sql` gives `merch_backup` `INSERT` on that one table, **amending ADR-013** (recorded as ADR-013.1, not left to be found in `mysql.tables_priv`). Append-only proven three ways: `UPDATE backuplogs`, `DELETE backuplogs`, and `INSERT auditlogs` all `ERROR 1142`. The third proves the grant did not quietly widen across the schema.
+>
+> **Three outcomes, not two.** `Succeeded` / `Partial` / `Failed`. "The dump worked but the USB stick was not plugged in" is a likely nightly result and is neither: reporting success hides a degraded backup, reporting failure throws away a good dump and trains the operator to ignore alerts. `Partial` still exits non-zero so Task Scheduler shows red.
+>
+> **The credential never touches the command line.** `--password=` is readable in the process list by any user on the box for as long as the dump runs. `MysqlDumpRunner` writes a `--defaults-extra-file` and deletes it in a `Finally`.
+>
+> **Found by running it, not by reading it — three bugs.** `AppendLine("..." -f $a, $b)` silently passed one argument to `-f`, because inside a method call the comma binds to the call rather than the format operator. `Win32_VideoController` returns null resolutions on hybrid-graphics laptops, which dropped a P0-02 field entirely. And a test asserted the dump header said `MySQL dump` when this build writes `MariaDB dump 10.19`.
+>
+> **That third one improved the production code.** Fixing the assertion raised the question of what would actually prove a dump was whole. Exit code 0 plus a non-empty file does not — a full disk, a killed process, or a connection dropped mid-table all leave a large, plausible, useless file. `IsUsableDump` now checks for mysqldump's trailing `-- Dump completed` marker by reading the last 512 bytes.
+>
+> **VB gotcha, new one:** `Partial` is a reserved keyword (the `Partial Class` modifier), so `BackupOutcome.[Partial]` needs brackets at the declaration *and* every use site. C# has no such collision. Renaming the member would have avoided it, but `0003_backup.sql` was already applied with its checksum recorded (ADR-008, stop condition 6), so the vocabulary that migration documents is fixed — the code bends, not the migration.
+>
+> **Two things fixed in passing, both handover defects.** `bootstrap.ps1` called `[RandomNumberGenerator]::Fill`, which does not exist on the .NET Framework behind Windows PowerShell 5.1, and carried no `#Requires` line — so a classmate right-clicking "Run with PowerShell" got a `MethodNotFound` crash partway through. It now uses `Create()`+`GetBytes()` and no longer needs `pwsh` installed first, which is exactly what ADR-012 asks for. It also now writes `database.backup.json` and strips the API service account from that one file's ACL.
+>
+> **ACL verified rather than changed.** The card asked to revisit `C:\MerchandisingBackups` once P1-16 defined the service identity. Checked: SYSTEM and Administrators hold full control, inheritance is disabled, and `NT SERVICE\MerchandisingApi` is absent — the API cannot read the dumps. The scheduled task runs as SYSTEM, which already has what it needs. No change was required; recording that it was checked rather than skipped.
+>
+> **Not proven here:** that the dump RESTORES. Spec §15's "Verification" control is P1-18's.
 
 ---
 

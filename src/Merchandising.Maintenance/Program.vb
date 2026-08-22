@@ -11,6 +11,7 @@ Imports System.Globalization
 Imports System.IO
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
+Imports Merchandising.Maintenance.Backup
 Imports Merchandising.Maintenance.Demo
 Imports Merchandising.Maintenance.Migrations
 Imports Merchandising.Maintenance.Users
@@ -19,6 +20,19 @@ Imports MySqlConnector
 Module Program
 
     Private Const MigratorConfigFileName As String = "database.migrator.json"
+
+    ' P1-17. The backup job runs as merch_backup - the third ADR-013 identity,
+    ' provisioned at P1-04 and unused until now. It is NOT merch_api: the
+    ' account that serves requests has no business dumping the database, and
+    ' the account that dumps the database holds INSERT on exactly one table
+    ' (db/grants/0004_backup-grants.sql).
+    Private Const BackupConfigFileName As String = "database.backup.json"
+
+    ' P0-04: mariadb-dump.exe does not exist in this XAMPP distribution, and
+    ' neither does mariadb.exe. Spec section 15's "preferably mariadb-dump
+    ' when available" therefore resolves to mysqldump here. Overridable so a
+    ' different XAMPP layout does not need a rebuild.
+    Private Const DefaultMysqlDumpPath As String = "C:\xampp\mysql\bin\mysqldump.exe"
 
     ' vbc does not accept an Async Function as an entry point at all (tried
     ' both "As Task" and "As Task(Of Integer)" - both fail BC30737 "No
@@ -52,6 +66,9 @@ Module Program
             Case "seed-demo"
                 Await RunSeedDemoAsync(args)
 
+            Case "backup"
+                Await RunBackupAsync(args)
+
             Case Else
                 PrintUsage()
                 Environment.ExitCode = 1
@@ -64,6 +81,7 @@ Module Program
         Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe seed-demo <actor-username> [--sku <sku>] [--quantity <n>] [--config <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe backup [--config <path>] [--mysqldump <path>] [--directory <path>] [--retention <n>]")
     End Sub
 
     Private Async Function RunMigrateAsync(args As String()) As Task
@@ -330,5 +348,155 @@ Module Program
         End Try
 
     End Function
+
+    ''' <summary>
+    ''' P1-17. Spec section 15: dump, verify, copy off-host, prune, record.
+    ''' </summary>
+    ''' <remarks>
+    ''' Exits non-zero for BOTH a failed run and a partial one. A partial
+    ''' run - dump good, off-host copy missing because the USB stick was
+    ''' not plugged in - is a degraded backup, and a scheduled task that
+    ''' reports success for it is how a system ends up with months of
+    ''' backups that only ever existed on the machine that died.
+    ''' </remarks>
+    Private Async Function RunBackupAsync(args As String()) As Task
+
+        Dim configPath As String = Nothing
+        Dim mysqlDumpPath As String = DefaultMysqlDumpPath
+        Dim directoryOverride As String = Nothing
+        Dim retentionOverride As Integer? = Nothing
+
+        Dim i As Integer = 1
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config", "--mysqldump", "--directory", "--retention"
+
+                    Dim switchName As String = args(i)
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine($"{switchName} requires an argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+
+                    Select Case switchName
+                        Case "--config"
+                            configPath = args(i)
+                        Case "--mysqldump"
+                            mysqlDumpPath = args(i)
+                        Case "--directory"
+                            directoryOverride = args(i)
+                        Case "--retention"
+                            Dim parsed As Integer
+                            If Not Integer.TryParse(args(i), NumberStyles.Integer, CultureInfo.InvariantCulture, parsed) Then
+                                Console.Error.WriteLine($"--retention requires a whole number, got '{args(i)}'.")
+                                Environment.ExitCode = 1
+                                Return
+                            End If
+                            retentionOverride = parsed
+                    End Select
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), BackupConfigFileName))
+
+        Dim correlationId As String = Guid.NewGuid().ToString("d")
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+
+            Dim settings As BackupSettings = Await ResolveBackupSettingsAsync(options)
+
+            If directoryOverride IsNot Nothing Then settings.Directory = directoryOverride
+            If retentionOverride.HasValue Then settings.RetentionCount = retentionOverride.Value
+
+            Dim result As BackupResult = Await BackupCommand.ExecuteAsync(
+                options, settings, mysqlDumpPath, correlationId)
+
+            PrintBackupResult(result)
+            Environment.ExitCode = result.ExitCode
+
+        Catch ex As FileNotFoundException
+
+            ' Missing config or missing mysqldump.exe. Both are setup faults
+            ' rather than backup failures, and neither can be recorded in
+            ' BackupLogs because there is no usable connection to record with.
+            Console.Error.WriteLine($"backup could not start: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    ''' <summary>
+    ''' Reads backup settings from SystemSettings, falling back to the
+    ''' compiled defaults when the database cannot be reached.
+    ''' </summary>
+    ''' <remarks>
+    ''' A database that will not answer is exactly the case where the backup
+    ''' matters most, so it must not stop the attempt. The run proceeds on
+    ''' defaults, fails at the dump, and is recorded by BackupCommand as a
+    ''' failure with the real reason attached - which is far more useful than
+    ''' aborting here with a settings-load error.
+    ''' </remarks>
+    Private Async Function ResolveBackupSettingsAsync(options As DatabaseOptions) As Task(Of BackupSettings)
+
+        Try
+            Dim factory As New ConnectionFactory(options)
+            Using connection As MySqlConnection = Await factory.CreateOpenConnectionAsync()
+                Return Await BackupCommand.LoadSettingsAsync(connection)
+            End Using
+
+        Catch ex As MySqlException
+            Console.Error.WriteLine(
+                $"WARNING: could not read backup settings from SystemSettings ({ex.Message}). " &
+                "Falling back to built-in defaults and attempting the backup anyway.")
+            Return New BackupSettings()
+        End Try
+
+    End Function
+
+    Private Sub PrintBackupResult(result As BackupResult)
+
+        Console.WriteLine($"Backup {result.Outcome} (correlation {result.CorrelationId})")
+
+        If result.FilePath IsNot Nothing Then
+            Console.WriteLine($"  file        {result.FilePath}")
+            Console.WriteLine($"  size        {result.SizeBytes} bytes")
+            Console.WriteLine($"  sha256      {result.Sha256}")
+        End If
+
+        If result.OffHostPath IsNot Nothing Then
+            Console.WriteLine($"  off-host    {result.OffHostPath}")
+        End If
+
+        If result.SourceDbVersion IsNot Nothing Then
+            Console.WriteLine($"  server      {result.SourceDbVersion}")
+        End If
+
+        Console.WriteLine($"  retention   {result.RetentionCount} (pruned {result.PrunedFileCount})")
+        Console.WriteLine($"  logged      {If(result.LoggedToDatabase, "BackupLogs", "LOCAL FILE ONLY - database unreachable")}")
+
+        If Not String.IsNullOrWhiteSpace(result.Detail) Then
+            ' Warnings and errors both go to stderr so a scheduled task's
+            ' error stream carries them even when stdout is discarded.
+            Console.Error.WriteLine($"  ** {result.Detail}")
+        End If
+
+    End Sub
 
 End Module

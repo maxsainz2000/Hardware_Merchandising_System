@@ -1,0 +1,179 @@
+===============================================================================
+P1-17 · Backup via the maintenance utility — SUCCESS PATH
+Captured 2026-08-22 on LAPTOP-3HH6OHHE against the real pinned MariaDB
+10.4.32 (ADR-002) and the real C:\xampp\mysql\bin\mysqldump.exe.
+
+Spec section 15. Nothing here is simulated: the dump is a real dump of the
+real schema, the off-host copy is on the real USB volume, and the checksum
+is verified by a tool other than the one that wrote it.
+===============================================================================
+
+SECTION 1 — END-TO-END RUN THROUGH THE CLI
+-------------------------------------------------------------------------------
+$ dotnet run --project src/Merchandising.Maintenance -- backup
+
+Backup Succeeded (correlation 860bed54-b0ac-4a19-b208-b74b9374aebf)
+  file        C:\MerchandisingBackups\merchandising-20260822-040750.sql
+  size        249569 bytes
+  sha256      1918ffa0ff5eb714da7815689931c1dfb414a6c83fe2e8ef79ff717be83b8558
+  off-host    D:\MerchandisingBackups\merchandising-20260822-040750.sql
+  server      10.4.32-MariaDB
+  retention   7 (pruned 0)
+  logged      BackupLogs
+
+EXIT CODE: 0
+
+Settings came from SystemSettings, not from code: retention 7 and volume
+label MERCHBACKUP were read from the rows seeded by 0003_backup.sql.
+
+
+SECTION 2 — INTEGRITY (spec section 15, "Integrity")
+-------------------------------------------------------------------------------
+Recorded in BackupLogs row 16:
+
+         Id: 16
+     Result: Succeeded
+  SizeBytes: 249569
+     Sha256: 1918ffa0ff5eb714da7815689931c1dfb414a6c83fe2e8ef79ff717be83b8558
+OffHostPath: D:\MerchandisingBackups\merchandising-20260822-040750.sql
+
+Independently recomputed from the bytes on disk, by Python's hashlib rather
+than by the code under test — a checksum verified by the tool that wrote it
+proves only that the tool is self-consistent:
+
+merchandising-20260822-040750.sql
+  1918ffa0ff5eb714da7815689931c1dfb414a6c83fe2e8ef79ff717be83b8558
+  249569 bytes   [C:/MerchandisingBackups]
+
+merchandising-20260822-040750.sql
+  1918ffa0ff5eb714da7815689931c1dfb414a6c83fe2e8ef79ff717be83b8558
+  249569 bytes   [D:/MerchandisingBackups]
+
+Local copy, off-host copy, and the recorded checksum all agree, and the size
+matches the recorded SizeBytes. The off-host copy is byte-identical, not
+merely present.
+
+
+SECTION 3 — OFF-HOST COPY FOUND BY VOLUME LABEL, NOT DRIVE LETTER
+-------------------------------------------------------------------------------
+DriveLetter     : D
+FileSystemLabel : MERCHBACKUP
+FileSystem      : exFAT
+DriveType       : Removable
+SizeGB          : 7.45
+
+The configured value is the LABEL "MERCHBACKUP". The drive letter never
+appears in configuration or code. A stick that mounts as E: or F: on a
+classmate's machine is still found — which matters because the demo runs on
+three machines nobody has surveyed (ADR-012, ADR-015).
+
+ACCEPTED LIMITATION: exFAT carries no ACLs, so the dump on the stick is
+readable by anyone who plugs it in, and a dump contains every password hash.
+Reformatting to NTFS was considered and rejected: ACLs on removable media are
+defeated by taking ownership on any machine with admin, so NTFS would buy the
+appearance of protection rather than protection. The honest control is
+physical custody of the stick, and that is what docs/installation-guide.md
+now says. Encrypting the dump is the real answer if confidentiality ever
+matters; for demo accounts with no real personnel data it is over-engineering.
+
+
+SECTION 4 — APPEND-ONLY, ENFORCED BY GRANT (ADR-013, amended)
+-------------------------------------------------------------------------------
+merch_backup holds INSERT on exactly one table and no other write privilege
+anywhere in the schema. Proven by attempting each forbidden operation as that
+account against the real server:
+
+--- UPDATE BackupLogs ---
+ERROR 1142 (42000) at line 1: UPDATE command denied to user
+'merch_backup'@'localhost' for table `merchandising`.`backuplogs`
+
+--- DELETE BackupLogs ---
+ERROR 1142 (42000) at line 1: DELETE command denied to user
+'merch_backup'@'localhost' for table `merchandising`.`backuplogs`
+
+--- INSERT into a DIFFERENT table (AuditLogs) ---
+ERROR 1142 (42000) at line 1: INSERT command denied to user
+'merch_backup'@'localhost' for table `merchandising`.`auditlogs`
+
+The third one is the one worth reading twice: it proves the INSERT grant is
+scoped to backuplogs alone, not widened across the schema. A failed backup
+run therefore cannot be edited into a successful one, and the backup account
+cannot write anywhere else even if the utility were compromised.
+
+Grants as they now stand:
+
+GRANT USAGE ON *.* TO `merch_backup`@`localhost`
+GRANT SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER ON `merchandising`.*
+      TO `merch_backup`@`localhost`
+GRANT INSERT ON `merchandising`.`backuplogs` TO `merch_backup`@`localhost`
+
+
+SECTION 5 — BACKUP DIRECTORY IS NOT REACHABLE THROUGH THE API
+-------------------------------------------------------------------------------
+Spec section 15, "Security": never expose backup files through ordinary API
+endpoints.
+
+Static-file middleware search across the whole API project —
+UseStaticFiles, UseFileServer, UseDirectoryBrowser, PhysicalFileProvider,
+MapFallbackToFile:
+
+  (no matches — none is registered)
+
+Live probes against the RUNNING Windows Service over HTTPS, not against a
+test host:
+
+  404  GET /MerchandisingBackups/merchandising-20260822-040750.sql
+  404  GET /backups
+  404  GET /api/v1/backups
+  404  GET /..%2f..%2fMerchandisingBackups
+
+404 on the traversal attempt as well as on the direct path. Note these
+requests also succeeded at the TLS layer against MERCH-HOST, so the
+certificate trust from P1-09 is incidentally re-proven here.
+
+
+SECTION 6 — RETENTION (spec section 15, "Retention")
+-------------------------------------------------------------------------------
+Configured in SystemSettings, not in code:
+
+  backup.retentionCount       7
+  backup.offHostVolumeLabel   MERCHBACKUP
+  backup.directory            C:\MerchandisingBackups
+
+Proven by integration test Backup_PrunesOldestDumpsBeyondRetentionCount:
+three runs at a retention count of 2 leave exactly two dumps.
+
+A retention count below 1 is treated as "prune nothing" rather than "delete
+everything". A misconfigured settings row must not be able to destroy the
+backups — spec section 15 asks for a configurable count, not a configurable
+self-destruct.
+
+
+SECTION 7 — TEST RUN
+-------------------------------------------------------------------------------
+Passed!  - Failed: 0, Passed: 4, Skipped: 0, Total: 4 - Merchandising.Tests.Integration.dll (net10.0)
+
+  Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+  Backup_WithWrongCredentials_ReportsFailureAndNeverClaimsSuccess
+  Backup_PrunesOldestDumpsBeyondRetentionCount
+  Backup_WhenOffHostVolumeAbsent_ReportsPartialNotSucceeded
+
+Build: 0 errors, 0 warnings.
+
+The tests write to their own temporary directory and to a per-run folder on
+the USB volume, never to C:\MerchandisingBackups or the operational off-host
+folder. The retention test exists to prove deletion works, so pointing it at
+the real backup directory would have made it capable of deleting real backups.
+
+
+SECTION 8 — WHAT THIS DOES NOT PROVE
+-------------------------------------------------------------------------------
+That the dump RESTORES. Spec section 15's "Verification" control requires a
+restore against an isolated database or a controlled maintenance window, and
+that is P1-18, not this card. What is proven here is that the dump is
+complete: mysqldump's trailing "-- Dump completed" marker is checked in
+production code, not only in the test, because exit code 0 plus a non-empty
+file does not rule out a truncated dump from a full disk or a killed process.
+
+The Task Scheduler job was triggered manually rather than waited on for a
+day. See p1-17-scheduled-task.log.

@@ -1,0 +1,137 @@
+===============================================================================
+P1-17 · Backup via the maintenance utility — FAILURE PATHS
+Captured 2026-08-22 on LAPTOP-3HH6OHHE.
+
+Spec section 15, "Failure handling": record error details, display an
+operational warning, and require follow-up before acceptance.
+
+WHY THIS FILE IS THE IMPORTANT ONE. A backup system that fails silently is
+worse than having none, because it manufactures confidence. The dangerous
+behaviour is not an error — it is a run that exits zero, writes a zero-byte
+file, and lets a scheduled task report success every night until the day
+someone actually needs the backup. Both failure modes below were produced
+deliberately and their handling is what this card is really about.
+===============================================================================
+
+FAILURE MODE 1 — WRONG CREDENTIALS
+-------------------------------------------------------------------------------
+The hardest case to handle, because the credential that is wrong for the dump
+is the same credential that would be used to RECORD the failure. There is no
+database row to write; a database-only record would be no record at all.
+
+$ ... backup --config <config with deliberately wrong password> \
+             --directory <scratch>\badrun
+
+WARNING: could not read backup settings from SystemSettings (Access denied
+for user 'merch_backup'@'localhost' (using password: YES)). Falling back to
+built-in defaults and attempting the backup anyway.
+
+Backup Failed (correlation 01dffc6f-de96-471b-8757-f718860f12c5)
+  retention   7 (pruned 0)
+  logged      LOCAL FILE ONLY - database unreachable
+  ** mysqldump failed (exit code 2). mysqldump.exe: Got error: 1045:
+     "Access denied for user 'merch_backup'@'localhost' (using password: YES)"
+     when trying to connect
+
+EXIT CODE: 1
+
+Four things to check in that output, each a separate requirement:
+
+  1. EXIT CODE IS NON-ZERO. Task Scheduler shows the job as failed. This is
+     the difference between a monitored backup and a decorative one.
+
+  2. THE REAL ERROR IS CARRIED THROUGH VERBATIM — MariaDB error 1045, named
+     account, "using password: YES". Not a generic "backup failed". The
+     operator can act on this without reproducing it.
+
+  3. NO DUMP FILE IS LEFT BEHIND. Directory listing after the failed run:
+
+        backup-failures.log      334 bytes
+        (no .sql file)
+
+     mysqldump creates its --result-file before it authenticates, so a failed
+     run leaves an empty file behind. BackupCommand deletes it. This matters
+     more than it looks: a zero-byte .sql sitting in the backup directory
+     looks like a backup to anyone glancing at the folder, and retention would
+     have counted it as one — so a week of failures could have pruned away the
+     last good dump while looking healthy.
+
+  4. THE FAILURE IS RECORDED ANYWAY, in the local log, because the database
+     was unreachable:
+
+2026-08-22 04:08:06Z [Failed] correlation=01dffc6f-de96-471b-8757-f718860f12c5
+detail=mysqldump failed (exit code 2). mysqldump.exe: Got error: 1045:
+"Access denied for user 'merch_backup'@'localhost' (using password: YES)" when
+trying to connect logWriteError=Access denied for user
+'merch_backup'@'localhost' (using password: YES)
+
+     The correlation ID ties the log line to the console output. Both the
+     backup failure AND the reason the database record was impossible are
+     recorded — the second one is the part that would otherwise vanish.
+
+     No credential appears anywhere in the log line. The defaults-extra-file
+     that holds the password is never echoed into the detail text.
+
+
+FAILURE MODE 2 — OFF-HOST VOLUME NOT ATTACHED
+-------------------------------------------------------------------------------
+The USB stick will not be plugged in some nights. This is the common case,
+not the exotic one, and it is neither a success nor a failure: the dump is
+good and worth keeping, but the off-host copy that protects against losing
+the host did not happen.
+
+Proven by integration test Backup_WhenOffHostVolumeAbsent_ReportsPartialNotSucceeded,
+and visible in BackupLogs row 2 from the test run:
+
+         Id: 2
+     Result: Partial
+  SizeBytes: 243446
+OffHostPath: NULL
+
+Behaviour:
+
+  - Result is "Partial", never "Succeeded". Reporting success here would hide
+    a degraded backup for as long as nobody checked.
+  - Result is not "Failed" either. Failing would throw away a perfectly good
+    dump and train the operator to ignore the alert.
+  - The local dump is KEPT.
+  - OffHostPath is NULL rather than a path that does not exist.
+  - EXIT CODE IS 1, so the scheduled task still shows red. A partial backup
+    that reports success is how a system ends up with months of dumps that
+    only ever existed on the machine that died.
+  - The warning names the cause: "no ready volume labelled 'MERCHBACKUP' is
+    attached. The local dump is the only copy."
+
+
+FAILURE MODE 3 — DUMP SUCCEEDS BUT CANNOT BE RECORDED
+-------------------------------------------------------------------------------
+Handled in code and worth stating even though it is not separately staged: if
+the dump works but the BackupLogs insert fails, the outcome is downgraded from
+Succeeded to Partial. A dump nothing can prove happened is not a clean
+success — nothing downstream can report on it, and the next restore has no
+record of what it is restoring.
+
+
+FAILURE MODE 4 — TRUNCATED DUMP
+-------------------------------------------------------------------------------
+Not staged; guarded in production code rather than only in tests. Exit code 0
+and a non-empty file together still do not prove the dump ran to the end — a
+disk that fills, a killed process, or a connection dropped mid-table all leave
+a large, plausible-looking, useless file. mysqldump writes
+"-- Dump completed on <timestamp>" as its final line and only reaches it after
+every table is out, so BackupCommand.IsUsableDump checks for that marker by
+reading the last 512 bytes.
+
+This check was added because a test assertion was wrong: it asserted the
+header said "MySQL dump" when this build writes "MariaDB dump 10.19, Distrib
+10.4.32-MariaDB". Fixing the assertion prompted the question of what would
+actually prove a dump was whole, and the completion marker is the answer.
+
+
+WHAT REMAINS OWED
+-------------------------------------------------------------------------------
+Spec section 15 requires failures to "require follow-up before acceptance".
+The mechanism here is the non-zero exit code surfacing in Task Scheduler plus
+the recorded row or log line. There is no alerting beyond that — no email, no
+dashboard — and for a system with no operations team that is the honest
+scope. An operator who never opens Task Scheduler will not learn of a failure.

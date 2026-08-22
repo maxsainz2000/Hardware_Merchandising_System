@@ -649,6 +649,36 @@ Adding `DROP` to `merch_api` would have solved that by making the runtime accoun
 
 ---
 
+### ADR-013.1 · `merch_backup` gains `INSERT` on one table
+
+**Status:** ACCEPTED
+**Date:** 2026-08-22
+**Amends:** the ADR-013 table above, which describes `merch_backup` as holding `SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER` and owning *nothing*.
+
+**What changed.** `merch_backup` now also holds `INSERT` on `merchandising.backuplogs`, granted by `db/grants/0004_backup-grants.sql`. This is a real widening of a least-privilege account and is recorded here rather than left to be discovered in `mysql.tables_priv` by whoever next audits the grants.
+
+**Why it was necessary.** P1-17 gives the backup job a ledger (spec §15, "Integrity": record size, checksum, timestamp, source database version, result). The job runs as `merch_backup` from Task Scheduler, entirely outside the API process. With no write privilege anywhere it could not record its own run — and a backup that cannot say whether it worked is the failure mode the whole card exists to prevent.
+
+**Why not the obvious alternatives.**
+
+- **Write the row as `merch_api`.** Rejected. It would mean one job carrying two identities, and the audit trail would say `merch_api` performed a backup it had no part in. ADR-013's value is that each job maps to exactly one account; blurring that to avoid a one-table grant trades a clear model for a smaller number.
+- **Write the row as `merch_migrator`.** Worse. That account exists solely to own the schema during a migration run, and reaching for it during ordinary operations is how a DDL-capable credential ends up in a nightly scheduled task.
+- **Log only to a file.** Rejected as the *primary* record — spec §12 lists `BackupLogs` as a table — but adopted as the fallback when the database is unreachable, which is precisely the case where a database-only record would be no record at all.
+
+**What is deliberately still withheld.** No `UPDATE` and no `DELETE`, so `BackupLogs` is append-only on the same footing as `StockMovements` and `AuditLogs`: a failed run cannot be edited into a successful one, it gets a second row. No privilege on any other table — proven, not asserted:
+
+```
+UPDATE backuplogs  -> ERROR 1142  (denied)
+DELETE backuplogs  -> ERROR 1142  (denied)
+INSERT auditlogs   -> ERROR 1142  (denied)
+```
+
+That third denial is the one worth reading twice. It proves the grant is scoped to `backuplogs` alone rather than quietly widened across the schema, so the backup utility could not write elsewhere even if it were compromised.
+
+**Retention needs no privilege here.** Pruning deletes *files* on disk, not rows, so no `DELETE` is required for it — and the ledger keeps a permanent record of dumps whose files are long gone, which is the right asymmetry.
+
+**Evidence:** `evidence/phase-1/p1-17-backup-success.log` §4.
+
 ---
 
 ## ADR-014 · Error envelope and the correlation-ID contract

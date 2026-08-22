@@ -126,7 +126,7 @@ These sections are owned by later tasks and are deliberately absent rather than 
 | MariaDB accounts, grants, and `sql_mode` hardening | P1-04 — **accounts and grants now scripted, see §3.2** |
 | Certificate installation and client trust procedure | P1-09 — **written, see §4. Cross-machine confirmation still open** |
 | Windows Service registration and recovery settings | P1-16 |
-| Backup schedule, retention, and off-host destination | P1-17 |
+| Backup schedule, retention, and off-host destination | P1-17 — **written, see §6** |
 | Restore procedure and maintenance mode | P1-18 |
 | Client prerequisites (.NET 10 Desktop Runtime) and client install | Phase 6 |
 
@@ -351,3 +351,70 @@ P0-05). Run `scripts/configure-firewall-dev.ps1` from an elevated session and ve
 ```powershell
 Get-NetFirewallRule -DisplayName "Merchandising API HTTPS (dev, private networks only)" | Get-NetFirewallPortFilter
 ```
+
+---
+
+## 6. Backup (P1-17, spec §15)
+
+### 6.1 What runs, as whom
+
+| | |
+|---|---|
+| Command | `Merchandising.Maintenance.exe backup` |
+| Database identity | `merch_backup` — reads everything, writes only `BackupLogs` (ADR-013.1) |
+| Credentials | `%ProgramData%\MerchandisingSystem\config\database.backup.json`, written by `bootstrap.ps1` |
+| Dump tool | `C:\xampp\mysql\bin\mysqldump.exe` — **`mariadb-dump.exe` does not exist in this XAMPP build** (P0-04) |
+| Local destination | `C:\MerchandisingBackups` — outside the binaries, outside the repo, not served by the API |
+| Scheduled task identity | `NT AUTHORITY\SYSTEM`, **not** the API service account |
+
+**Why SYSTEM and not `NT SERVICE\MerchandisingApi`.** A dump contains every password hash in the system. The process most exposed to the network must not be able to read it. `C:\MerchandisingBackups` has inheritance disabled (P0-07) and grants SYSTEM and Administrators only — the API service account is absent from that ACL, and `database.backup.json` has it explicitly removed as well.
+
+### 6.2 Configuration lives in `SystemSettings`, not in code
+
+Seeded by `db/migrations/0003_backup.sql`; change them with an `UPDATE` and the next run picks them up.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `backup.retentionCount` | `7` | How many dumps to keep. Below 1 means *prune nothing* — a misconfigured row must not be able to delete every backup |
+| `backup.offHostVolumeLabel` | `MERCHBACKUP` | Volume **label** of the off-host drive, never a drive letter |
+| `backup.directory` | `C:\MerchandisingBackups` | Local destination |
+
+**Label, not letter.** A USB stick mounts as D: here and F: on a classmate's laptop. Matching on the label is what makes one configuration correct on all three demo machines (ADR-012, ADR-015).
+
+### 6.3 Register the nightly job — once per installation, elevated
+
+```powershell
+pwsh ./scripts/register-backup-task.ps1
+```
+
+Then **prove it runs**, because registration proves nothing about execution:
+
+```powershell
+Start-ScheduledTask -TaskName 'Merchandising Nightly Backup'
+Get-ScheduledTaskInfo -TaskName 'Merchandising Nightly Backup' | Select-Object LastRunTime, LastTaskResult
+```
+
+### 6.4 Reading the result
+
+| `LastTaskResult` | `BackupLogs.Result` | Meaning |
+|---|---|---|
+| `0` | `Succeeded` | Dump written, checksum verified, off-host copy made |
+| `1` | `Partial` | Dump is good and kept, but the off-host copy did not happen — usually the USB stick was not plugged in. **Not a failure, but not a success either** |
+| `1` | `Failed` | No usable dump. The reason is in `BackupLogs.Detail`, or in `C:\MerchandisingBackups\backup-failures.log` if the database itself was unreachable |
+
+**A partial run deliberately exits non-zero.** A degraded backup that reports success is how a system ends up with months of dumps that only ever existed on the machine that died.
+
+### 6.5 The USB stick is sensitive — treat it that way
+
+exFAT carries no ACLs, so the dump on the stick is readable by anyone who plugs it in, and it contains every password hash.
+
+Reformatting to NTFS was **considered and rejected**: ACLs on removable media are defeated by taking ownership on any machine with administrator rights, so NTFS would buy the *appearance* of protection rather than protection. The honest control is physical custody of the stick. If confidentiality ever genuinely matters, encrypt the dump — do not change the filesystem and call it solved.
+
+### 6.6 Current status
+
+- ✅ Backup command implemented, tested, and run end to end on this host
+- ✅ `merch_backup` credential and `database.backup.json` in place, API service account excluded
+- ✅ Off-host copy proven byte-identical on the `MERCHBACKUP` volume
+- ⬜ **Scheduled task not yet registered** — needs one elevated command (§6.3). The agent session could not elevate; this is owed to the operator
+- ⬜ Restore is P1-18
+
