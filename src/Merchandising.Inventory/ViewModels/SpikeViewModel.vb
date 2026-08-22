@@ -182,6 +182,41 @@ Namespace ViewModels
             End Get
         End Property
 
+        ''' <summary>
+        ''' Error code the API returns while the maintenance lock is held
+        ''' (P1-18). Matched with an ORDINAL comparison: this is a protocol
+        ''' token, not display text, and Option Compare Binary is set globally
+        ''' (CLAUDE.md section 3).
+        ''' </summary>
+        Private Const MaintenanceErrorCode As String = "MAINTENANCE_MODE"
+
+        Private _isInMaintenance As Boolean
+        Private _maintenanceMessage As String = String.Empty
+
+        ''' <summary>
+        ''' True once the API has refused a write because the system is in
+        ''' maintenance. Drives the banner (spec section 16: the client shows
+        ''' the operator what state the system is in, truthfully).
+        ''' </summary>
+        Public Property IsInMaintenance As Boolean
+            Get
+                Return _isInMaintenance
+            End Get
+            Private Set(value As Boolean)
+                SetProperty(_isInMaintenance, value)
+            End Set
+        End Property
+
+        ''' <summary>The API's own maintenance message, including the operator's reason.</summary>
+        Public Property MaintenanceMessage As String
+            Get
+                Return _maintenanceMessage
+            End Get
+            Private Set(value As String)
+                SetProperty(_maintenanceMessage, value)
+            End Set
+        End Property
+
         ''' <summary>True when the last call failed, so the result reads as a failure.</summary>
         Public Property LastCallFailed As Boolean
             Get
@@ -361,6 +396,11 @@ Namespace ViewModels
             ResultText = detail
             CorrelationId = callCorrelationId
 
+            ' A successful call is proof the window has closed. Clearing it
+            ' here rather than polling is what keeps the banner honest without
+            ' the client having to ask repeatedly.
+            IsInMaintenance = False
+
         End Sub
 
         ''' <summary>
@@ -384,6 +424,25 @@ Namespace ViewModels
             End If
 
             Dim envelope As ApiErrorResponse = result.[Error]
+
+            ' P1-18, spec section 15 step 2: the API "displays a warning to
+            ' connected clients". The client learns of maintenance from the
+            ' refusal itself rather than by polling a status endpoint - the
+            ' moment it needs to know is the moment it is refused, and a poll
+            ' would either be too slow or too chatty.
+            If String.Equals(envelope.ErrorCode, MaintenanceErrorCode, StringComparison.Ordinal) Then
+
+                IsInMaintenance = True
+                MaintenanceMessage = envelope.Message
+
+                StatusMessage = "The system is under maintenance. Your change was not saved."
+                ResultText = envelope.Message & Environment.NewLine & Environment.NewLine &
+                             "Nothing was written. Wait for maintenance to finish and try again - " &
+                             "this client does not queue or retry."
+                CorrelationId = result.CorrelationId
+                Return
+
+            End If
 
             StatusMessage = String.Format(CultureInfo.CurrentCulture,
                                           "The API refused the request ({0}).",

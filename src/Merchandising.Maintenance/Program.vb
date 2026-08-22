@@ -14,6 +14,7 @@ Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Backup
 Imports Merchandising.Maintenance.Demo
 Imports Merchandising.Maintenance.Migrations
+Imports Merchandising.Maintenance.Restore
 Imports Merchandising.Maintenance.Users
 Imports MySqlConnector
 
@@ -33,6 +34,9 @@ Module Program
     ' when available" therefore resolves to mysqldump here. Overridable so a
     ' different XAMPP layout does not need a rebuild.
     Private Const DefaultMysqlDumpPath As String = "C:\xampp\mysql\bin\mysqldump.exe"
+
+    ' P0-04 again: mariadb.exe does not exist in this distribution either.
+    Private Const DefaultMysqlClientPath As String = "C:\xampp\mysql\bin\mysql.exe"
 
     ' vbc does not accept an Async Function as an entry point at all (tried
     ' both "As Task" and "As Task(Of Integer)" - both fail BC30737 "No
@@ -69,6 +73,9 @@ Module Program
             Case "backup"
                 Await RunBackupAsync(args)
 
+            Case "restore"
+                Await RunRestoreAsync(args)
+
             Case Else
                 PrintUsage()
                 Environment.ExitCode = 1
@@ -82,6 +89,7 @@ Module Program
         Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe seed-demo <actor-username> [--sku <sku>] [--quantity <n>] [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe backup [--config <path>] [--mysqldump <path>] [--directory <path>] [--retention <n>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe restore --file <dump.sql> [--target <database>] [--config <path>] [--mysql <path>]")
     End Sub
 
     Private Async Function RunMigrateAsync(args As String()) As Task
@@ -494,6 +502,122 @@ Module Program
         If Not String.IsNullOrWhiteSpace(result.Detail) Then
             ' Warnings and errors both go to stderr so a scheduled task's
             ' error stream carries them even when stdout is discarded.
+            Console.Error.WriteLine($"  ** {result.Detail}")
+        End If
+
+    End Sub
+
+    ''' <summary>
+    ''' P1-18. Spec section 15 steps 4-6, run by the operator with the API
+    ''' service STOPPED.
+    ''' </summary>
+    ''' <remarks>
+    ''' Runs as merch_migrator, the only identity with DDL (ADR-013).
+    ''' merch_api has none and could not recreate a table if it tried, which
+    ''' is exactly why the identities are split.
+    '''
+    ''' There is no confirmation prompt. This command is invoked by a
+    ''' scheduled or scripted maintenance procedure with the service already
+    ''' stopped, and a prompt would hang that unattended. The safeguard is
+    ''' that it cannot be reached over HTTP at all, not that it asks nicely.
+    ''' </remarks>
+    Private Async Function RunRestoreAsync(args As String()) As Task
+
+        Dim configPath As String = Nothing
+        Dim mysqlClientPath As String = DefaultMysqlClientPath
+        Dim dumpPath As String = Nothing
+        Dim targetDatabase As String = Nothing
+
+        Dim i As Integer = 1
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--file", "--target", "--config", "--mysql"
+
+                    Dim switchName As String = args(i)
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine($"{switchName} requires an argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+
+                    Select Case switchName
+                        Case "--file"
+                            dumpPath = args(i)
+                        Case "--target"
+                            targetDatabase = args(i)
+                        Case "--config"
+                            configPath = args(i)
+                        Case "--mysql"
+                            mysqlClientPath = args(i)
+                    End Select
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        If String.IsNullOrWhiteSpace(dumpPath) Then
+            Console.Error.WriteLine("restore requires --file <dump.sql>.")
+            PrintUsage()
+            Environment.ExitCode = 1
+            Return
+        End If
+
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+
+            Console.WriteLine($"Restoring '{dumpPath}' into '{If(targetDatabase, options.Database)}' as '{options.UserId}'...")
+
+            Dim result As RestoreResult = Await RestoreCommand.ExecuteAsync(
+                mysqlClientPath, options, dumpPath, targetDatabase)
+
+            PrintRestoreResult(result)
+            Environment.ExitCode = If(result.Succeeded, 0, 1)
+
+        Catch ex As FileNotFoundException
+
+            Console.Error.WriteLine($"restore could not start: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    Private Sub PrintRestoreResult(result As RestoreResult)
+
+        Console.WriteLine($"Restore {If(result.Succeeded, "SUCCEEDED", "FAILED")}")
+        Console.WriteLine($"  target      {result.TargetDatabase}")
+        Console.WriteLine($"  dump        {result.DumpPath}")
+
+        ' Reported in both units on purpose: seconds is the measurement,
+        ' minutes is what PA-005's 15-minute target is stated in, and making
+        ' the reader convert is how a missed target goes unnoticed.
+        Console.WriteLine($"  elapsed     {result.ElapsedSeconds:F1}s ({result.ElapsedSeconds / 60D:F2} min) to VERIFIED state")
+        Console.WriteLine($"  users       {result.UserCount}")
+        Console.WriteLine($"  products    {result.ProductCount}")
+        Console.WriteLine($"  balances    {result.StockBalanceCount}")
+        Console.WriteLine($"  movements   {result.StockMovementCount}")
+        Console.WriteLine($"  audit rows  {result.AuditLogCount}")
+
+        If result.MissingTables.Count > 0 Then
+            Console.Error.WriteLine($"  ** MISSING TABLES: {String.Join(", ", result.MissingTables)}")
+        End If
+
+        If Not String.IsNullOrWhiteSpace(result.Detail) Then
             Console.Error.WriteLine($"  ** {result.Detail}")
         End If
 

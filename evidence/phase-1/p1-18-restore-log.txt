@@ -1,0 +1,227 @@
+===============================================================================
+P1-18 · Restore rehearsal with maintenance mode — RESTORE LOG
+Captured 2026-08-22 on LAPTOP-3HH6OHHE against the real pinned MariaDB
+10.4.32 and the real C:\xampp\mysql\bin\mysql.exe.
+
+READ THE SCOPE LINE FIRST. This file records an ISOLATED verification
+restore, permitted explicitly by spec §15's "Verification" control ("test
+restore against an isolated database OR a controlled maintenance window").
+The in-place seven-step rehearsal is NOT in this file — it requires stopping
+the Windows Service, which needs an elevated session this agent session could
+not obtain, the same boundary that stopped P0-03 and P1-17's Task Scheduler
+registration. See "WHAT IS STILL OWED" at the end.
+===============================================================================
+
+SECTION 1 — THE TRAP THAT MAKES AN "ISOLATED" RESTORE NOT ISOLATED
+-------------------------------------------------------------------------------
+The backups are taken with `mysqldump --databases merchandising`, so every
+dump begins:
+
+    CREATE DATABASE /*!32312 IF NOT EXISTS*/ `merchandising` ...
+    USE `merchandising`;
+
+Those two lines OVERRIDE `mysql --database=<other>`. Restoring such a dump
+"into an isolated database" would silently restore it over the LIVE one
+instead. The redirect argument is accepted, appears to work, and does the
+opposite of what was asked.
+
+Handled by filtering a COPY of the dump before restoring it:
+
+    source (OFF-HOST, USB): D:/MerchandisingBackups\merchandising-20260822-044039.sql
+    database-selection lines removed: 2
+    confirm none survived: 0 matches for ^(USE |CREATE DATABASE)
+
+The original dump on the USB is untouched. Only the filtered copy is fed to
+mysql.exe.
+
+
+SECTION 2 — FIRST ATTEMPT: A CORRECT FAILURE WORTH KEEPING
+-------------------------------------------------------------------------------
+The first isolated restore used the dump taken at P1-17 and FAILED
+verification:
+
+    Restore FAILED
+      target      merchandising_restoretest
+      elapsed     0.9s (0.02 min) to VERIFIED state
+      users       8
+      products    3
+      balances    3
+      movements   212
+      audit rows  934
+      ** MISSING TABLES: maintenancelocks
+      ** Restore completed but the schema is incomplete. Missing: maintenancelocks
+
+This is the verification doing its job, not a defect. That dump was taken
+BEFORE migration 0004 created MaintenanceLocks, so the table legitimately
+does not exist in it. Every row of data restored correctly; the SCHEMA was
+one table short of what this system now requires.
+
+Kept in the evidence deliberately. A restore that reported success here —
+because mysql.exe exited 0 and rows appeared — is exactly the failure mode
+this card exists to prevent, and it is the same claim P1-17 was careful not
+to make about backups. It also demonstrates a real operational hazard: a
+backup taken before a migration cannot fully restore a system that has since
+migrated.
+
+
+SECTION 3 — SECOND ATTEMPT: RESTORE FROM THE OFF-HOST COPY, VERIFIED
+-------------------------------------------------------------------------------
+A fresh backup was taken (now including MaintenanceLocks), and the restore
+was run from the copy ON THE USB VOLUME — not from the local copy. Restoring
+from the off-host copy is the point: a local-only restore never exercises the
+copy that survives losing the host.
+
+    Backup Succeeded
+      file        C:\MerchandisingBackups\merchandising-20260822-044039.sql
+      size        264774 bytes
+      sha256      c1b6b80753aff0f1332a85113e0d52fdf64d14650998e1b75cfaac3190832b8a
+      off-host    D:\MerchandisingBackups\merchandising-20260822-044039.sql
+
+    Restore SUCCEEDED
+      target      merchandising_restoretest
+      dump        (filtered copy of the USB dump)
+      elapsed     0.9s (0.02 min) to VERIFIED state
+      users       8
+      products    3
+      balances    3
+      movements   221
+      audit rows  966
+
+All 13 expected tables present: users, roles, userroles, products,
+stockbalances, stockmovements, auditlogs, idempotencykeys, systemsettings,
+schemamigrations, sessions, backuplogs, maintenancelocks.
+
+The isolated database was dropped afterwards.
+
+
+SECTION 4 — MEASURED TIMING, AND WHAT IT DOES AND DOES NOT COVER
+-------------------------------------------------------------------------------
+    Restore + verification of a 264,774-byte dump:  0.9 seconds
+
+WHAT THAT NUMBER COVERS: streaming the dump into mysql.exe, and then
+verifying — counting rows in five tables and checking all 13 expected tables
+exist against information_schema. The clock deliberately stops AFTER
+verification, not after the data lands, because "restored" and "confirmed
+usable" are different claims and PA-005's target is to a VERIFIED state.
+
+WHAT IT DOES NOT COVER, and this is the honest caveat: stopping the API
+Windows Service, starting it again, waiting for /health to answer, and the
+operator steps around them. Those are the bulk of a real recovery window and
+they need elevation. The full-procedure RTO is therefore NOT recorded yet and
+the card's box for it stays unticked.
+
+Against PA-005's demonstrated target of ≤ 15 minutes to verified state, the
+database portion consumes 0.9 seconds of the budget — 0.1% of it. The
+remaining risk to that target lives entirely in service restart time and
+operator hesitation, which is what the rehearsal is for.
+
+
+SECTION 5 — MAINTENANCE MODE, PROVEN THROUGH THE HTTP PIPELINE
+-------------------------------------------------------------------------------
+Eight integration tests, all against the real database through
+WebApplicationFactory rather than by calling services directly:
+
+  MaintenanceLock_Held_OrdinaryWriteIsRejected
+      POST /api/v1/inventory/stock/decrement -> 503, errorCode
+      MAINTENANCE_MODE, correlation ID present, message names the reason.
+
+  MaintenanceLock_Held_ReadsStillSucceed
+      GET /health -> 200. Spec §15 says "ordinary writes", not "all traffic".
+
+  NoMaintenanceLock_OrdinaryWriteReachesTheBusinessRule
+      The control. Without it the enforcement test would pass just as happily
+      against an endpoint broken for every request.
+
+  Release_WithoutPassingVerification_IsRefusedAndLockStaysHeld
+      verificationPassed=false -> 409 VERIFICATION_NOT_CONFIRMED, and the
+      lock is confirmed STILL HELD afterwards. Then a verified release
+      succeeds and the lock is confirmed gone.
+
+  Status_IsReadableDuringMaintenance_AndCarriesTheReason
+      A status endpoint blocked by the state it reports would be useless.
+
+  SecondConcurrentLock_IsRefusedByTheDatabase
+      ERROR 1062. See section 6.
+
+  Api_ExposesNoRestoreEndpoint
+      Five candidate paths, GET and POST each -> 404.
+
+  Repository_ReadsBackTheActiveLock
+      Repository layer independent of the pipeline.
+
+Plus two client unit tests:
+  MaintenanceRefusal_RaisesTheBannerAndCarriesTheReason
+  SuccessfulCallAfterMaintenance_ClearsTheBanner
+
+Full suite: 23 unit, 62 integration, 0 failures, 0 warnings.
+
+
+SECTION 6 — ONE ACTIVE LOCK, ENFORCED BY THE DATABASE
+-------------------------------------------------------------------------------
+MariaDB 10.4 has no partial or filtered unique index, so "unique among
+unreleased rows only" cannot be expressed directly. Measured on the real
+server before the design was committed to:
+
+    CREATE TABLE ... IsActive TINYINT GENERATED ALWAYS AS
+        (CASE WHEN ReleasedAtUtc IS NULL THEN 1 ELSE NULL END) PERSISTENT,
+        UNIQUE KEY UQ_zz_active (IsActive)
+
+    INSERT a second unreleased row
+        -> ERROR 1062 (23000) Duplicate entry '1' for key 'UQ_zz_active'
+    UPDATE the first to set ReleasedAtUtc, then INSERT again
+        -> accepted; released rows carry IsActive = NULL and do not collide
+
+Why it matters: checking "is a lock already held?" in application code before
+inserting is a read-then-write race — two Super Admins acting at the same
+moment both read "no lock" and both insert. This is the same reasoning ADR-006
+applies to stock balances, and the fix has the same shape: never
+read-then-write, let the database refuse it.
+
+
+SECTION 7 — NO RESTORE ENDPOINT, PROVEN NOT ASSERTED
+-------------------------------------------------------------------------------
+Spec §15: restore "is not executed as a normal request inside a live API
+process that depends on the database". Structural, not stylistic — a restore
+replaces the schema the API is mid-query against, and it runs with the
+service STOPPED, which an API endpoint cannot arrange for itself.
+
+    404  GET  /api/v1/admin/restore              404  POST same
+    404  GET  /api/v1/maintenance/restore        404  POST same
+    404  GET  /api/v1/restore                    404  POST same
+    404  GET  /restore                           404  POST same
+    404  GET  /api/v1/admin/maintenance/restore  404  POST same
+
+
+SECTION 8 — TWO DEFECTS FOUND BY RUNNING IT
+-------------------------------------------------------------------------------
+1. MySqlConnector maps CHAR(36) to System.Guid, not String. reader.GetString()
+   on CorrelationId threw InvalidCastException, and because it surfaced inside
+   middleware it presented as a bare HTTP 500 with a correctly sanitised
+   envelope — no hint as to the cause. GetGuid() is the right accessor. Every
+   CHAR(36) column in this schema is affected; nothing had READ one back
+   before P1-18, which is why it surfaced here first.
+
+2. When mysql.exe rejects an early statement it exits immediately, and the
+   rest of the dump streams into a closed pipe. Unhandled, that surfaced as
+   "System.IO.IOException: The pipe has been ended" — an unhandled crash that
+   told the operator nothing about what mysql actually objected to. The pipe
+   error is now caught narrowly, because the real diagnosis is waiting on
+   stderr, which the code goes on to read.
+
+
+WHAT IS STILL OWED
+-------------------------------------------------------------------------------
+The in-place seven-step rehearsal: enter maintenance -> confirm writes
+refused -> STOP THE SERVICE -> restore -> verify -> START THE SERVICE ->
+release. Steps 3 and 6 need elevation.
+
+    pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin> -WhatIf
+    pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin>
+
+The script times the window, compares it against PA-005's 15-minute target,
+and — if verification fails — deliberately LEAVES the system in maintenance
+mode. A half-restored database that is open for business is worse than one
+that is visibly closed.
+
+It is DESTRUCTIVE: it replaces the live database. -WhatIf walks every step
+without executing the destructive ones.

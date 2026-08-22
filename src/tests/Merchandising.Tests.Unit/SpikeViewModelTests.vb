@@ -191,6 +191,105 @@ Public Class SpikeViewModelTests
 
     ' ---------------------------------------------------------------- helpers
 
+    ''' <summary>
+    ''' P1-18, spec section 15 step 2: connected clients must be warned while
+    ''' the maintenance lock is held. The client learns of it from the refusal
+    ''' itself, so a 503 carrying MAINTENANCE_MODE has to raise the banner.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function MaintenanceRefusal_RaisesTheBannerAndCarriesTheReason() As Task
+
+        Using handler As New StubHttpMessageHandler(AddressOf RespondMaintenance)
+            Using client As New MerchandisingApiClient(ApiRoot, handler, TimeSpan.FromSeconds(5))
+
+                Dim viewModel As New SpikeViewModel(client)
+                viewModel.Username = "clerk"
+                Await viewModel.SignInAsync("password")
+
+                viewModel.ProductId = "1"
+                viewModel.Quantity = "1"
+                Await viewModel.DecrementStockAsync()
+
+                Assert.IsTrue(viewModel.IsInMaintenance,
+                              "A MAINTENANCE_MODE refusal did not raise the maintenance banner. " &
+                              "The operator would see a generic rejection and have no idea the " &
+                              "system was deliberately closed.")
+
+                StringAssert.Contains(viewModel.MaintenanceMessage, "Nightly restore rehearsal",
+                                      "The operator's own reason did not reach the client, so the " &
+                                      "banner cannot say WHY the system is closed.")
+
+                Assert.IsTrue(viewModel.LastCallFailed,
+                              "A refused write must still read as a failure.")
+
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' The banner must clear once the system accepts work again. A warning
+    ''' that never goes away is one the operator learns to ignore.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SuccessfulCallAfterMaintenance_ClearsTheBanner() As Task
+
+        Dim inMaintenance As Boolean = True
+
+        Dim responder As Func(Of HttpRequestMessage, HttpResponseMessage) =
+            Function(request)
+                If request.RequestUri.AbsolutePath.EndsWith("login", StringComparison.Ordinal) Then
+                    Return Json(HttpStatusCode.OK, LoginPayload())
+                End If
+                If inMaintenance Then
+                    Return Json(HttpStatusCode.ServiceUnavailable, MaintenancePayload())
+                End If
+                Return Json(HttpStatusCode.OK, MePayload())
+            End Function
+
+        Using handler As New StubHttpMessageHandler(responder)
+            Using client As New MerchandisingApiClient(ApiRoot, handler, TimeSpan.FromSeconds(5))
+
+                Dim viewModel As New SpikeViewModel(client)
+                viewModel.Username = "clerk"
+                Await viewModel.SignInAsync("password")
+
+                Await viewModel.CallProtectedEndpointAsync()
+                Assert.IsTrue(viewModel.IsInMaintenance, "Precondition: the banner should be up.")
+
+                inMaintenance = False
+                Await viewModel.CallProtectedEndpointAsync()
+
+                Assert.IsFalse(viewModel.IsInMaintenance,
+                               "The maintenance banner stayed up after the API accepted a call again.")
+
+            End Using
+        End Using
+
+    End Function
+
+    Private Shared Function RespondMaintenance(request As HttpRequestMessage) As HttpResponseMessage
+
+        If request.RequestUri.AbsolutePath.EndsWith("login", StringComparison.Ordinal) Then
+            Return Json(HttpStatusCode.OK, LoginPayload())
+        End If
+
+        Return Json(HttpStatusCode.ServiceUnavailable, MaintenancePayload())
+
+    End Function
+
+    ''' <summary>The exact envelope MaintenanceModeMiddleware writes.</summary>
+    Private Shared Function MaintenancePayload() As Object
+
+        Return New With {
+            .errorCode = "MAINTENANCE_MODE",
+            .message = "The system is under maintenance and is not accepting changes. Reason: Nightly restore rehearsal",
+            .correlationId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+            .errors = CType(Nothing, Object)
+        }
+
+    End Function
+
     Private Shared Function RespondOk(request As HttpRequestMessage) As HttpResponseMessage
 
         If request.RequestUri.AbsolutePath.EndsWith("login", StringComparison.Ordinal) Then

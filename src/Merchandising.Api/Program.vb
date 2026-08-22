@@ -245,6 +245,10 @@ Public Module Program
         ' P1-11 / ADR-006: the atomic stock decrement.
         builder.Services.AddScoped(Of StockService)()
 
+        ' P1-18. Scoped rather than singleton: it takes a connection per call
+        ' and holds no state between them.
+        builder.Services.AddScoped(Of MaintenanceLockRepository)()
+
         ' P1-08 / ADR-005: opaque server-side session token, not JWT bearer -
         ' see Merchandising.Infrastructure.vbproj's comment for why. The
         ' scheme name is also what every [Authorize(AuthenticationSchemes:=...)]
@@ -289,6 +293,24 @@ Public Module Program
         ' is never mistaken for the HTTPS demo one. A no-op on every HTTPS
         ' request, so it is harmless to leave registered unconditionally.
         app.UseMiddleware(Of NonProductionWarningMiddleware)()
+
+        ' P1-18: maintenance mode. Placement is deliberate and was arrived at
+        ' by a failing test rather than by preference.
+        '
+        ' BEFORE UseAuthentication, not after. The natural instinct is to
+        ' authenticate first so only known callers learn the system is down,
+        ' but that produces exactly the wrong answer at the worst time: a
+        ' client whose session expired during the maintenance window would be
+        ' told "unauthorized" when the truth is "we are mid-restore", sending
+        ' whoever is holding the pager to debug the wrong thing. Spec section
+        ' 15 step 2 requires the maintenance state be DISPLAYED to connected
+        ' clients, so it is not a secret being protected. It is also cheaper:
+        ' a request that will be refused should not first cost a session
+        ' lookup against the database that is about to be replaced.
+        '
+        ' AFTER CorrelationIdMiddleware, so the 503 envelope carries a
+        ' correlation Id like every other error response (CLAUDE.md section 5).
+        app.UseMiddleware(Of MaintenanceModeMiddleware)()
 
         If builder.Environment.IsDevelopment() Then
             app.Logger.LogWarning(

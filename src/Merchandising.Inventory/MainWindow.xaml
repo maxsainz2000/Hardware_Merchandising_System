@@ -96,8 +96,34 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+
+        <!--
+            P1-18 maintenance warning. Spec section 15 step 2 requires
+            connected clients be warned while the lock is held.
+
+            Collapsed until the API actually refuses a write with
+            MAINTENANCE_MODE - the client does not poll for this. The moment
+            it needs to know is the moment it is refused, and a poll would be
+            either too slow to matter or chatty enough to notice.
+
+            Amber, not red: this is a planned state the operator was told
+            about, not a fault. The red treatment belongs to "API unreachable",
+            which is a genuinely different situation and already has it.
+        -->
+        <Border Grid.Row="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,14"
+                Background="#FFF6E5" BorderBrush="#E8C37A" BorderThickness="1"
+                Visibility="{Binding IsInMaintenance, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <TextBlock Text="System under maintenance" FontWeight="SemiBold" Foreground="#8A5B00" />
+                <TextBlock Text="{Binding MaintenanceMessage}" TextWrapping="Wrap"
+                           Foreground="#7A5410" Margin="0,3,0,0" />
+                <TextBlock Text="Changes are refused until maintenance finishes. Nothing you submitted was saved."
+                           TextWrapping="Wrap" Foreground="#7A5410" Margin="0,3,0,0" />
+            </StackPanel>
+        </Border>
 
         <!-- Header: what this is, and where it is pointed. -->
         <Grid Grid.Row="0" Margin="0,0,0,16">
@@ -156,7 +182,7 @@
         </Grid>
 
         <!-- Sign in -->
-        <Border Grid.Row="1" Style="{StaticResource SectionCard}">
+        <Border Grid.Row="2" Style="{StaticResource SectionCard}">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -189,7 +215,7 @@
         </Border>
 
         <!-- Actions -->
-        <Border Grid.Row="2" Style="{StaticResource SectionCard}">
+        <Border Grid.Row="3" Style="{StaticResource SectionCard}">
             <StackPanel>
 
                 <TextBlock Text="Round trip" FontWeight="SemiBold" Foreground="#1B2430" Margin="0,0,0,12" />
@@ -230,7 +256,7 @@
         </Border>
 
         <!-- Result -->
-        <Border Grid.Row="3" Style="{StaticResource SectionCard}" Margin="0">
+        <Border Grid.Row="4" Style="{StaticResource SectionCard}" Margin="0">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

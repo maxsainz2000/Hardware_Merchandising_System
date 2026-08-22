@@ -1086,7 +1086,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-18 · Restore rehearsal with maintenance mode
+### 🟡 P1-18 · Restore rehearsal with maintenance mode — maintenance mode done and proven; in-place rehearsal owed
 
 **Spec:** §15 · **Closes:** G-14, G-08 (begins)
 
@@ -1094,15 +1094,44 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Maintenance lock rejects ordinary writes while held
-- [ ] Connected clients display the maintenance warning
-- [ ] Restore completes from the **off-host** copy
-- [ ] Expected users, products, balances present afterwards
-- [ ] **Measured RTO recorded** — an actual number, not the target
-- [ ] Lock releases only after verification succeeds
-- [ ] No API endpoint can trigger a restore
+- [x] Maintenance lock rejects ordinary writes while held — 503 `MAINTENANCE_MODE` through the real HTTP pipeline, with a control test proving the same write is *not* refused when no lock is held
+- [x] Connected clients display the maintenance warning — amber banner on the spike window, driven by the refusal itself rather than by polling; two client unit tests cover raising it and clearing it
+- [x] Restore completes from the **off-host** copy — restored from the USB dump, all 13 tables, verified
+- [x] Expected users, products, balances present afterwards — 8 users, 3 products, 3 balances, 221 movements, 966 audit rows, checked by the restore itself rather than by eye
+- [ ] **Measured RTO recorded** — **partial, so left open.** The database portion is measured at **0.9 s to verified state** (0.1% of PA-005's 15-minute budget), but that excludes stopping and starting the Windows Service, which is the bulk of a real window and needs elevation. The full-procedure number is owed
+- [x] Lock releases only after verification succeeds — `verificationPassed: false` → 409 `VERIFICATION_NOT_CONFIRMED`, and the lock is asserted **still held** afterwards
+- [x] No API endpoint can trigger a restore — five candidate paths, GET and POST each, all 404
 
 **Evidence:** `p1-18-restore-log.txt`, `p1-18-verification-checklist.md`
+
+> **What the operator owes — the in-place seven-step rehearsal:**
+>
+> ```powershell
+> pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin> -WhatIf   # walk it first
+> pwsh ./scripts/restore-rehearsal.ps1 -SuperAdminUsername <admin>           # DESTRUCTIVE
+> ```
+>
+> Steps 3 and 6 stop and start the Windows Service, which needs elevation — the same boundary that stopped P0-03 and P1-17's Task Scheduler registration. The script times the window, compares it against PA-005's 15-minute target, and on a failed verification **deliberately leaves the system in maintenance mode**.
+
+> **Result.** Maintenance mode is built, proven through the HTTP pipeline, and the restore utility works end to end from the off-host copy.
+>
+> **New schema:** `db/migrations/0004_maintenance.sql` creates `MaintenanceLocks` — spec §12 listed it, nothing had built it, same situation `BackupLogs` was in at P1-17. `db/grants/0005` gives `merch_api` INSERT+UPDATE and **no DELETE**: there is no legitimate reason to erase the record that the system was in maintenance.
+>
+> **One active lock, enforced by the database rather than by application discipline.** MariaDB 10.4 has no partial unique index, so "unique among unreleased rows only" uses a persistent generated column that is 1 while held and NULL once released, with a plain UNIQUE index over it — NULLs do not collide. Measured on the real server before the design was committed: a second active lock returns `ERROR 1062`. Checking "is a lock held?" in code first would be a read-then-write race, two Super Admins both reading "no lock" — the same reasoning ADR-006 applies to stock balances.
+>
+> **The middleware sits BEFORE authentication, and a failing test is what decided that.** The instinct is to authenticate first so only known callers learn the system is down. That returns 401 to a client whose session expired mid-window — "your login is bad" when the truth is "we are mid-restore" — sending whoever is holding the pager to debug the wrong thing. Maintenance state is not a secret; spec §15 step 2 requires it be *displayed*. It is also cheaper: a request about to be refused should not first cost a session lookup against the database being replaced.
+>
+> **Release is gated on verification, and that is the rule worth arguing about.** A release admitting `verificationPassed: false` is refused and the lock stays held. An operator who genuinely cannot verify has to be refused rather than quietly reopening a system whose data they do not trust. The escape hatch is a second restore, not a shrug.
+>
+> **A correct failure worth keeping.** The first isolated restore FAILED: `maintenancelocks` missing, because that dump predated migration 0004. Every row restored fine; the schema was one table short. A restore that only counted rows would have called it a success — and it demonstrates a real hazard, that a backup taken before a migration cannot fully restore a system that has since migrated.
+>
+> **The trap that makes an "isolated" restore not isolated.** Dumps taken with `--databases` carry their own `CREATE DATABASE` and `USE merchandising`, which **override** `mysql --database=<other>`. Restoring one "into an isolated database" silently restores it over the live one. The redirect is accepted, looks like it worked, and does the opposite. Handled by filtering a copy of the dump; the original on the USB is never touched.
+>
+> **Two defects found by running it.** MySqlConnector maps `CHAR(36)` to `System.Guid`, not `String`, so `reader.GetString()` on a correlation ID throws — and because it surfaced inside middleware it presented as a bare 500 with a correctly sanitised envelope and no hint of the cause. `GetGuid()` is the right accessor; every `CHAR(36)` column in the schema is affected, and nothing had *read* one back before now. Separately, when `mysql.exe` rejects an early statement it exits immediately and the rest of the dump streams into a closed pipe — unhandled, that crashed the utility with "The pipe has been ended" and told the operator nothing. Caught narrowly now, because the real diagnosis is waiting on stderr.
+>
+> **Client scope held to Phase 1.** A banner on the one existing spike window, not a maintenance screen. Amber rather than red on purpose: this is a planned state the operator was told about, not a fault — red belongs to "API unreachable", which is genuinely different and already has it.
+>
+> **Tests:** 23 unit, 62 integration, 0 warnings. Guardrails pass.
 
 > **What the measured number is compared against (PA-005, decided 2026-08-22):** the demonstrated RTO target is **≤ 15 minutes** to a verified state — chosen because it is a claim that can actually be made and defended inside a presentation, which ≤ 120 minutes cannot. The 120-minute figure survives only as the documented worst case for rebuilding a host from bare Windows. Record the real number either way; a miss is information, not a failure to hide.
 
