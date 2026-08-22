@@ -217,6 +217,22 @@ Copy the block below once per classmate. Do not fill any of it from assumption.
 
 Phase 0 is not complete until every box is ticked. A box is ticked only when the check was actually executed and its output exists on disk.
 
+> **P1-20 completeness audit — 2026-08-22.** This manifest was audited against P1-20's "environment manifest fully populated" box and **does not pass it.** Recorded here rather than only in `tasks.md`, so that a reader who opens the manifest on its own is told the same thing.
+>
+> **Populated and evidenced:** §1 development machine, §2 reference host, §3.1 both lab test workstations, §4.1 lab network, §4.2 demo network *specification* (ADR-015), and the whole of §6.
+>
+> **Outstanding — all three are field work rather than engineering:**
+>
+> | Gap | Section | Owning card |
+> |---|---|---|
+> | All three demo workstations unsurveyed — `Status: none captured` | §3.2 | **P0-02** 🟡 |
+> | `ping MERCH-HOST` from each demo workstation | §3.2, §5 | **P0-02 / P0-05** 🟡 |
+> | Demo network never rehearsed — topology chosen, hotspot never brought up from cold | §4.2, §5 | **P0-05** 🟡 |
+>
+> **Why this blocks more than it looks like it should.** Under ADR-012 the deliverable is three classmates demonstrating this system on their own hardware without the author present. Every cross-machine proof in `evidence/phase-1/` was captured on `DESKTOP-G83CCSH` and `DESKTOP-F5LK8MA` — the author's lab machines, which §3.1 already states are **not deliverables**. The mechanisms are proven; the machines they will run on are unmeasured. `evidence/phase-1/INDEX.md` §4 marks the three spec §24 rows this affects as ⚠ rather than ✅ for exactly this reason.
+>
+> **The cheapest item is also the one that fails latest if skipped:** whether each classmate holds **local administrator rights on their own laptop**. Without it the hosts entry and the certificate import both fail, and `scripts/setup-client.ps1` cannot complete. It costs one message to ask now, and costs the demonstration to discover on the day.
+
 - [x] Dev machine captured, with `dotnet --info` attached — `evidence/phase-0/dotnet-info-dev.txt`; Visual Studio 2026 and both required workloads independently confirmed via `vswhere -requires` at `evidence/phase-0/p0-07-visual-studio-workloads.txt`
 - [x] Reference lab host captured, with MariaDB version and dump tool confirmed — `evidence/phase-0/p0-07-mariadb-10.4-constraints.txt`
 - [ ] **Every demo workstation captured** — no "same as above" shortcuts → **not started.** These are the classmates' three machines (§3.2), none of which has been surveyed. The author's test desktop does **not** satisfy this (P0-02, ADR-012). Ask each classmate for edition, build, architecture, resolution, scaling **and whether they hold local administrator rights** — the last one blocks certificate trust and is cheapest to discover now

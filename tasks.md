@@ -211,6 +211,8 @@ Also delivers the session automation: `.claude/skills/task/`, `.claude/skills/ph
 > **Post-P1-19 progress — the handover gap is closed.** `README.md` and `scripts/bootstrap.ps1` now exist. This was not a numbered card; it was the item `tasks.md`'s own preamble and ADR-012 both called the highest-value non-architectural work in the project, on the grounds that **a classmate cloning this repository could not start it**. They now can: one elevated command creates the database, the three ADR-013 identities with per-installation passwords, the ACL-protected config files, the schema, the per-table grants in the only order MariaDB 10.4 accepts, and the certificate — then *proves* the append-only guarantee by watching `UPDATE auditlogs` and `DELETE stockmovements` be refused. `README.md` is not in `plan.md` §2's list and arguably should be; it is not counted against the structure box below.
 >
 > **P1-03 progress:** `scripts/publish-release.ps1` now exists — created there because `Directory.Build.props` already referenced it. **Box still unticked:** the seven `docs/*.md` documents remain. They are written as their subject matter lands (`api-specification` after P1-08, `database-design` after P1-07, and so on), so this box realistically ticks at P1-20, not before.
+>
+> **Correction at P1-20 — that last sentence was wrong, and this note is why it matters.** ~~"this box realistically ticks at P1-20"~~. It does not. `plan.md` §7 assigns every one of the seven to a **later phase**: `role-permission-matrix` + `database-design` (first draft) → Phase 2, `api-specification` → Phase 3, `database-design` finalised → Phase 4, `ui-specification` → Phase 5, `backup-restore-guide` + `user-guide` → Phase 6, `test-plan` → Phase 7. `plan.md` outranks `tasks.md` (CLAUDE.md §1), so the higher document wins and this one gets corrected — which is the rule working as designed, not an exception to it. The reasoning behind the original sentence was sound in itself: a document is written when its subject matter lands. It just drew the wrong conclusion, because P1-20 is the *last card of Phase 1*, not the last card before the documents are due. **P0-07's structure box therefore stays open past the Phase 1 gate and closes in Phase 7**, when the last of the seven is written. Left unticked rather than reworded away, because a box that spans phases is real information about this project's shape.
 
 > **P0-07 close-out — what this session added to the scaffold.**
 >
@@ -1233,7 +1235,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### ⬜ P1-20 · Phase 1 closure pack
+### 🟡 P1-20 · Phase 1 closure pack — index built 2026-08-22; four boxes of five, and the fifth is field work this project cannot do alone
 
 **Spec:** §24
 
@@ -1241,13 +1243,27 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Done when:**
 
-- [ ] Every ADR entry is ACCEPTED — none left PENDING
-- [ ] Every spec §24 row has a linked artifact
-- [ ] **No row says "verified informally"**
-- [ ] Environment manifest fully populated
-- [ ] A clean clone builds and tests green from scratch
+- [x] Every ADR entry is ACCEPTED — none left PENDING. All twenty verified by status line; the only `PENDING` string remaining is the placeholder in the blank template
+- [x] Every spec §24 row has a linked artifact — all nineteen rows (twelve steps, seven criteria) mapped in `INDEX.md`, and **every path was checked to exist on disk**, not merely written down
+- [x] **No row says "verified informally"** — and three rows that could have been waved through say instead exactly what narrower thing they prove (⚠ §24 steps 6 and 12, and *Recovery viability*)
+- [ ] Environment manifest fully populated — **not done, and not tickable here.** See the Result
+- [x] A clean clone builds and tests green from scratch — `p1-20-clean-clone.log`: fresh clone of `98ef732`, guardrails G-A–G-D pass, build 0 warnings / 0 errors, **23 unit / 62 integration green** against the real pinned MariaDB
 
-**Evidence:** `evidence/phase-1/INDEX.md`
+**Evidence:** `evidence/phase-1/INDEX.md`, `evidence/phase-1/p1-20-clean-clone.log`
+
+> **Result.** The closure pack exists and is honest. `INDEX.md` maps all nineteen §24 rows to artifacts, adds the §23 gap-register rows Phase 1 owned, itemises the twenty ADRs against the evidence that proved each, and carries a §4 whose entire job is to state what the index does **not** claim.
+>
+> **The card cannot close green, and the reason is worth stating precisely.** Eighteen of nineteen §24 rows are proven by executed evidence. The nineteenth — *Planning baseline* — is complete on its decision half and incomplete on its environment half: `docs/environment-manifest.md` §3.2 still reads `Status: none captured` for all three demo workstations, and §4.2's demo-network rehearsal is unrun. Those are **P0-02** and **P0-05**, both still 🟡, and neither is engineering — one is asking three classmates for their Windows build, architecture, scaling **and whether they hold local admin**, the other is switching the hotspot on once and timing it. Ticking "fully populated" over that would be exactly the misreporting the manifest's own withdrawn-DHCP-reservation entry refuses to do.
+>
+> **Three rows are marked ⚠ rather than ✅, and the distinction is the point of the file.** §24 step 6 (WPF over HTTPS) and step 12 (client cannot reach MariaDB) are both proven across a real network boundary from two machines — and both of those machines are the author's lab hardware, not the three the system will be demonstrated on. The mechanism is proven; the population it was proven on is not the delivery population, and ADR-012 makes that difference the whole deliverable. *Recovery viability* is the third: backup, restore and verification are proven with a measured RTO of 3.0 s, but "off-host copy" is proven as a copy, not as unattended rotation with retention — that is Phase 6's half of G-15, and P1-17 closed Phase 1's half deliberately.
+>
+> **One stale ADR cross-reference fixed.** `ADR-013`'s Consequences list still read "the mechanism half of **ADR-008 remains PENDING** and is still P1-06's to resolve". ADR-008 has been ACCEPTED since 2026-08-18. The sentence was true when written and became a live-sounding obligation afterwards — precisely the class of thing a closure pack exists to catch, since a reader auditing this repository for open decisions would have found it and had to go looking. Corrected in place with the resolution date rather than deleted, because the tense error is more instructive than a clean line.
+>
+> **The test counts moved and the index says so rather than letting them look like a discrepancy.** 17/44 at P1-19, 21/48 at P1-21, 23/62 now. That is growth from the P1-17 and P1-18 backup and restore work, all green at every point. `INDEX.md` §6 tabulates it, because three different numbers in three task cards is otherwise something a reader has to reconcile themselves and may reconcile wrongly.
+>
+> **What "clean clone" was allowed to mean.** The run cloned the repository to a scratchpad outside the tree and built it with no artefacts and no local edits. It reused this host's `%ProgramData%` config, its XAMPP instance, and its installed SDK — so it proves a clean **clone**, not a clean **machine**. The evidence file says so in its own header, unprompted, because the two phrases are one word apart and only the weaker one is supported. Proving the stronger claim is what `scripts/bootstrap.ps1` and the Phase 6 exit criterion are for.
+>
+> **This card does not declare the gate passed.** `/phase-gate` does, against these rows.
 
 ---
 

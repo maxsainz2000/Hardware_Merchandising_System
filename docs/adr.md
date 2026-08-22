@@ -635,7 +635,7 @@ Adding `DROP` to `merch_api` would have solved that by making the runtime accoun
 
 - `db/grants/0001_accounts-and-grants.sql` and `0002_post-migration-grants.sql` are the reproducible source of truth. The account setup is no longer recorded only as prose, which is a direct down-payment on ADR-012's handover requirement.
 - Migration files themselves must never contain `GRANT`. Privilege changes are numbered grant scripts.
-- P1-06 must load `database.migrator.json`, not `database.json`. The mechanism half of **ADR-008 remains PENDING** and is still P1-06's to resolve — this ADR settles only *which identity* runs it.
+- P1-06 must load `database.migrator.json`, not `database.json`. The mechanism half of **ADR-008 was PENDING when this was written** and was P1-06's to resolve — this ADR settles only *which identity* runs it. *(Resolved 2026-08-18: ADR-008 is **ACCEPTED**. Tense corrected at P1-20 because this line was still reading as a live obligation — the closure pack's job is to leave no entry that a reader can mistake for outstanding work.)*
 - P1-07 gains a step: run `0002` after the migration, then prove the two denials.
 - Passwords are generated per installation and never committed (ADR-012 requirement 6). The `{{...}}` placeholders in `0001` are substituted at install time.
 

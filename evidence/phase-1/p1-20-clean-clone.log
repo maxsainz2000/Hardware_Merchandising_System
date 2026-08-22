@@ -1,0 +1,95 @@
+===============================================================================
+P1-20 - CLEAN CLONE BUILDS AND TESTS GREEN FROM SCRATCH
+Captured 2026-08-22 15:57:54 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P1-20  |  Spec: section 24 exit criteria (All-Visual-Basic
+source, API viability, Database viability)
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds every one
+of the eleven projects at zero warnings, and passes the guardrails and both
+test suites - including the integration suite, which runs against the real
+pinned MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. A clone that had to create
+those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
+on a machine the author has never configured is a Phase 6 exit criterion
+(plan.md section 7, promoted by ADR-012) - not this one. Recording the
+distinction here because 'clean clone' and 'clean machine' are one word apart
+and the weaker claim is the one this run supports.
+
+Source commit    : 98ef7329e2f326f983be6e4d2c9aba79e0b3bc4b
+                   (98ef732)
+Clone target     : C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone
+                   (scratchpad - outside the repository, deleted after capture)
+dotnet SDK       : 10.0.301
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1 -RepoRoot <clone>
+
+-------------------------------------------------------------------------------
+TRANSCRIPT
+-------------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Domain\Merchandising.Domain.vbproj (in 397 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Inventory\Merchandising.Inventory.vbproj (in 397 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Contracts\Merchandising.Contracts.vbproj (in 397 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj (in 398 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.POS\Merchandising.POS.vbproj (in 397 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Procurement\Merchandising.Procurement.vbproj (in 7 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj (in 830 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Api\Merchandising.Api.vbproj (in 839 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Maintenance\Merchandising.Maintenance.vbproj (in 347 ms).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Unit\Merchandising.Tests.Unit.vbproj (in 1.55 sec).
+  Restored C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Integration\Merchandising.Tests.Integration.vbproj (in 1.01 sec).
+  Merchandising.Domain -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Maintenance -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Procurement -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.POS -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Api -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  Merchandising.Inventory -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Unit -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Tests.Integration -> C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:32.52
+
+=== Unit tests ===
+Test run for C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    23, Skipped:     0, Total:    23, Duration: 434 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Hardware-Merchandising-System\b1a5c317-e151-4973-8b6b-3ab4366ee969\scratchpad\cleanclone\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    62, Skipped:     0, Total:    62, Duration: 12 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+=== EXIT CODE: 0 ===
