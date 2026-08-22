@@ -207,3 +207,39 @@ that can be handed over.
 
 **This index does not declare the Phase 1 gate passed.** That is `/phase-gate`'s call, made
 against these rows.
+
+---
+
+## 8. Gate outcome — 2026-08-22, against commit `41ee833`
+
+`/phase-gate` ran against the rows above and returned **FAIL**: one card open (P1-20) and two
+criteria with no artifact — the demo-workstation survey and the demo-network rehearsal, both
+Phase 0 carry-forwards rather than Phase 1 engineering.
+
+**The gate was then closed on its engineering criteria by amendment, recorded as ADR-016**,
+with **P0-02** and **P0-05** carried to the **Phase 6** gate. `plan.md` §5 and §6.2 were amended
+to say so, and Phase 6's exit criteria now name both.
+
+**Nothing in §4 above was withdrawn, softened, or re-marked.** The three ⚠ rows are still ⚠.
+§4.4 still says the manifest is not fully populated, because it is not. What changed is the
+gate those rows are owed to — not what the evidence proves. An index that quietly upgraded
+itself the moment a gate needed to pass would be worth nothing, and this one was built
+specifically to be readable by someone auditing that suspicion.
+
+**Verification performed at the gate, rather than read from this file:** every evidence path
+referenced by `tasks.md`, `plan.md` and this index was checked to exist and be non-empty;
+`docs/adr.md` was scanned for `PENDING` (none, other than the blank template's placeholder);
+and the clean-clone run was **reproduced independently at `41ee833`** — fresh clone outside
+the tree, guardrails G-A–G-D pass, build 0 warnings / 0 errors, **23 unit / 62 integration**
+green against the real pinned MariaDB 10.4.32.
+
+**P1-20 closes ✅ with its fifth box unticked and carried**, not ticked. "Environment manifest
+fully populated" remains false and is now owed at Phase 6. The card's own Result said it
+could not be ticked here; that judgement stands and the box moved instead.
+
+**One item was argued at the gate and deferred anyway, deliberately.** The P0-05 rehearsal
+needs no classmate and no hardware the author lacks — it is the host laptop plus one lab
+client, about fifteen minutes — and it can still invalidate ADR-015, which was accepted on a
+capability reading rather than a cold start. It was carried with P0-02 by the author's
+decision. ADR-016 records the cost rather than the convenience, and Phase 6 cannot pass
+without exercising it.

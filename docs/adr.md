@@ -775,6 +775,49 @@ Rules 1 and 2 are the general case. Rule 3 alone would have fixed this bug and l
 
 ---
 
+## ADR-016 · P0-02 and P0-05 carry past the Phase 1 gate to the Phase 6 gate
+
+**Status:** ACCEPTED
+**Date:** 2026-08-22
+**Decides:** where the two remaining machine-dependent Phase 0 criteria are owed, now that `plan.md` §5's carry-forward rule has been exhausted by Phase 1 arriving with them still open.
+
+**Decision.** The Phase 1 gate closes on its **engineering** criteria. Two criteria carry forward to the **Phase 6** gate, which is where `plan.md` §7 already puts installation, packaging and handover:
+
+| Carried criterion | Owning card | Lands at |
+|---|---|---|
+| Every demo workstation captured — edition, build, architecture, resolution, scaling, local administrator rights | **P0-02** | Phase 6 gate |
+| `ping MERCH-HOST` + validated HTTPS round trip from every demo workstation; demo network rehearsed from cold | **P0-05** | Phase 6 gate |
+
+Neither may be closed with lab hardware. `DESKTOP-G83CCSH` and `DESKTOP-F5LK8MA` remain explicitly **not** substitutes (ADR-012, manifest §3.1).
+
+**Reasoning.** Phase 1 exists to retire technical uncertainty about the VB toolchain, the connector, the transaction pattern, the security seam, the hosting model and recovery. Every one of those is retired with executed evidence, reproduced from a clean clone at commit `41ee833`: guardrails G-A–G-D pass, build 0 warnings / 0 errors, 23 unit and 62 integration tests green against the real pinned MariaDB 10.4.32. Eighteen of spec §24's nineteen rows are proven by artifacts on disk.
+
+The nineteenth — *Planning baseline* — is complete on its decision half (all twenty ADRs ACCEPTED) and incomplete only on its environment half. What is missing is not a proof; it is a **population**. The mechanisms were proven across a real network boundary on two machines that are not the three the system will be demonstrated on.
+
+Phase 6's exit criterion — *"a clean installation on a fresh machine succeeds from the guide alone"*, which ADR-012 already promoted to the measure of whether the deliverable exists at all — **cannot be satisfied without both carried items**. That makes Phase 6 their natural home rather than a convenient one: a clean install on a classmate's laptop *is* the demo-workstation survey and *is* the network rehearsal, performed for real instead of recorded in advance.
+
+**What this costs, recorded because it was argued at the gate and overruled deliberately.** The two items are not the same kind of risk, and bundling them understates one of them:
+
+- **P0-02 is field work.** Information about hardware this project does not own, zero design risk, genuinely deferrable.
+- **P0-05 is an unretired assumption.** ADR-015 chose the demo topology on 2026-08-22 and was accepted on `netsh wlan show wirelesscapabilities` reporting `Wi-Fi Direct GO: Supported` — a capability reading, not a cold start. Two questions stay open that no reasoning settles: whether Windows Mobile Hotspot starts with **no connection to share**, and whether this Intel adapter sustains station + Wi-Fi Direct GO **concurrently**. Both are answerable on the author's own laptop plus one lab client, in about fifteen minutes, with no classmate involved. If either answer is no, **ADR-015 is wrong** and the demo network needs re-planning — which is exactly the class of finding Phase 1 exists to surface early.
+
+Deferring it is the author's call and is recorded as such. The consequence is that a topology decision now rides to Phase 6 unverified, and the mitigation is that Phase 6's gate cannot pass without exercising it.
+
+**One risk is worth pulling forward at no cost:** whether each classmate holds **local administrator rights** on their own laptop. It is one message today, it needs no machine in the room, and without it neither the certificate import nor the hosts entry completes — `scripts/setup-client.ps1` reports it in stage 1 rather than failing halfway through stage 2. It is the only carried item that fails late and unfixably.
+
+**Rejected.**
+
+- *Ticking the boxes and declaring PASS.* The manifest's own withdrawn-DHCP-reservation entry refuses exactly this, and `evidence/phase-1/INDEX.md` §4 was written to prevent it. An index that overstates is worse than no index.
+- *Starting Phase 2 with the gate left at FAIL.* The gate's authority comes from being enforced. Moving a criterion by amendment preserves it; ignoring a FAIL spends it.
+- *Inventing a PARTIAL.* `plan.md` §6.2 defines PARTIAL solely as "descended to rung B, everything else passes". Rung A built clean on the first attempt with zero friction (`evidence/phase-0/p0-07-rung-a-preflight.txt`), so no partial outcome exists to claim.
+- *Carrying to Phase 7 instead.* Phase 7 is the demo rehearsal and UAT. Arriving there with unsurveyed machines means discovering an admin-rights or adapter problem during rehearsal, with no phase left to absorb it.
+
+**Precedent.** This is the second application of the same principle, not a new one. `plan.md` §5 already carried these criteria from the Phase 0 gate into Phase 1 on the grounds that behaviour is proved by any second machine while facts are proved only by the machine they are facts about. That distinction is unchanged; only the destination moves.
+
+**Evidence.** `evidence/phase-1/INDEX.md` §4.4 · `evidence/phase-1/p1-20-clean-clone.log` · `docs/environment-manifest.md` §5.
+
+---
+
 ## ADR-NNN · Short title
 
 **Status:** PENDING | ACCEPTED | SUPERSEDED by ADR-MMM
