@@ -33,20 +33,18 @@ No application code is written in this phase.
 
 ---
 
-### 🟡 P0-06 · Professor approvals — decision resolved, evidence outstanding
+### ✅ P0-06 · Course constraints recorded
 
-Manual VB ASP.NET Core API approved; XAMPP confirmed mandatory. **The decision is settled and ADR-000 is ACCEPTED on the strength of it.**
+Visual Basic .NET only; MariaDB via XAMPP only. Both recorded as binding constraints in `docs/professor-approvals.md` (PA-001, PA-002) and as ADR-000.
 
-**Marker corrected at P0-07:** this card was ✅ while both of its `Done when` boxes were unticked. The *decision* is resolved; the *card* is not. An approval you cannot point to at sign-off is an approval you do not have.
+**Closed 2026-08-22 — the screenshot requirement was dropped, deliberately.** This card previously demanded two approval screenshots on the principle that "an approval you cannot point to is an approval you do not have." That principle applies to an *exception you were granted*. Neither of these is one. VB-only and XAMPP-only are constraints handed down to the class, and a hand-authored VB API never needed permission because it does not violate either. There is no exception being claimed, so there is nothing to evidence.
 
-**Remaining:** capture the original messages into `docs/professor-approvals.md` (PA-001, PA-002) and attach screenshots.
-
-**Unblocked by:** Max locating the original message thread and saving two screenshots. No agent action possible — the agent cannot access the conversation.
+What can be pointed to at sign-off is stronger than a screenshot: the language constraint is machine-checked on every write and every commit by guardrail G-A and hooks L1–L4, and the database constraint is pinned by measurement in ADR-002.
 
 **Done when:**
 
-- [ ] PA-001 and PA-002 dated, with evidence attached
-- [ ] `evidence/phase-0/pa-001-approval.png` and `pa-002-approval.png` exist
+- [x] PA-001 and PA-002 recorded as binding constraints in `docs/professor-approvals.md`
+- [x] Both cited by ADR-000
 
 ---
 
@@ -450,7 +448,7 @@ One session, no application code, no project created under `src/`. Full account 
 >
 > **Phase 1 gate implication:** the "Partial — descended to rung B" branch does **not** apply. Nothing here needs telling the professor.
 >
-> **If a future SDK update breaks rung A, this card comes back.** Rung B is still the next step and PA-001 grants no C# escape hatch — ADR-000 records rung C as effectively closed.
+> **If a future SDK update breaks rung A, this card comes back.** Rung B is still the next step. There is no C# escape hatch to fall back to — PA-001 is a constraint, not a permission, so rung C is closed by the rule itself rather than by a refusal.
 
 **Run only if P1-02 showed friction** (a workaround, a suppressed warning, a non-standard property). If rung A built cleanly first try, **skip this** — proving a fallback you have no reason to need is busywork.
 
@@ -458,7 +456,7 @@ One session, no application code, no project created under `src/`. Full account 
 >
 > That is advance information, not a result for P1-02. Run P1-02 properly in-repo. **If it behaves differently from the probe, that difference is itself the friction and this card triggers on it.** Evidence: `evidence/phase-0/p0-07-rung-a-preflight.txt`, ADR-001 pre-flight note.
 
-If it did show friction, the calculus changes: friction now suggests a future SDK update could break rung A outright, and PA-001 granted no C# escape hatch, so rung B is the last self-service option.
+If it did show friction, the calculus changes: friction now suggests a future SDK update could break rung A outright, and PA-001 is a constraint rather than a permission — there is no C# escape hatch to request — so rung B is the last option, full stop.
 
 **Do:** On a scratch branch, build the same `/health` endpoint with `Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`.
 
@@ -671,7 +669,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 ---
 
-### 🟡 P1-07 · Migration 0001 — POC schema slice
+### ✅ P1-07 · Migration 0001 — POC schema slice
 
 **Spec:** §12 · **Closes:** G-20, G-21 (begins) · **Decides:** ADR-004
 
@@ -695,7 +693,6 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 - [x] `0.001` and `12345678901234.5678` round-trip exactly
 - [x] `IdempotencyKeys` has a unique constraint on `(Scope, KeyValue)`
 - [x] **Integration test:** an over-scale value (money with >4 dp, quantity with >3 dp) is either **rejected** by the API or **explicitly rounded** by it before the parameter is bound — asserted at the API boundary, not by reading the stored value back. Per ADR-004.1, `STRICT_TRANS_TABLES` rounds over-scale decimals silently (`Note 1265`), so a correctly-scaled stored value proves nothing on its own.
-- [ ] PA-003 raised with the professor
 
 > **P0-07 pre-checks — these were proven on the real server, so 0001 should not surprise you.** A table with two `VARCHAR(255)` utf8mb4 **unique** indexes (SKU and barcode) created without error: `innodb_default_row_format=dynamic`, 16 KB pages, 3072-byte key prefix limit, 255×4 = 1020 bytes used — roughly 3× headroom. `DECIMAL(19,4)` and `DECIMAL(19,3)` round-tripped `12345678901234.5678` and `0.001` exactly alongside a `DATETIME(6)`.
 >
@@ -711,7 +708,7 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 >
 > **A real design conflict with P1-06, caught before it could do damage.** `MigrationRunnerTests` (P1-06) DROP+CREATEd the whole `merchandising` database in `TestInitialize`/`TestCleanup` — safe only because no permanent schema existed yet. Running that suite after this task landed would have destroyed the schema captured above on every single test run, forever. Rewritten to isolate itself with `migtest_<guid>`-prefixed tables and migration identifiers, cleaned up by name pattern via `information_schema` instead of a whole-database `DROP` — never touches the real tables or the real `0001_foundation` row. Re-verified: `run-tests.ps1` green (8/8 unit, 7/7 integration), and the real schema confirmed byte-for-byte unchanged by direct query immediately afterward.
 >
-> **PA-003 box stays unticked** — like PA-001/PA-002 at P0-06, raising it with the professor is Max's action, not the agent's.
+> **PA-003 closed 2026-08-22, and this card with it.** The precision box was never a technical dependency — it was an approval request the spec had volunteered for a decision that violates neither course constraint. `DECIMAL(19,4)` / `DECIMAL(19,3)` is decided on the round-trip evidence above and recorded as ADR-004 / PA-003. Every technical box on this card was already ticked with its evidence captured; the card was held at 🟡 by paperwork alone.
 >
 > Also hit and fixed: none this time — no new VB-compiler surprises at P1-07, everything already documented at P1-05/P1-06 held.
 
@@ -1057,6 +1054,8 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Evidence:** `p1-18-restore-log.txt`, `p1-18-verification-checklist.md`
 
+> **What the measured number is compared against (PA-005, decided 2026-08-22):** the demonstrated RTO target is **≤ 15 minutes** to a verified state — chosen because it is a claim that can actually be made and defended inside a presentation, which ≤ 120 minutes cannot. The 120-minute figure survives only as the documented worst case for rebuilding a host from bare Windows. Record the real number either way; a miss is information, not a failure to hide.
+
 ---
 
 ## Track G — Test harness and closure
@@ -1166,6 +1165,6 @@ If it did show friction, the calculus changes: friction now suggests a future SD
 
 **Pass** — all tasks complete with evidence; every spec §24 exit criterion has an artifact. → Regenerate `tasks.md` for Phase 2.
 
-**Partial** — descended to rung B, everything else passes. → Proceed; update ADR-001; inform the professor.
+**Partial** — descended to rung B, everything else passes. → Proceed; update ADR-001. Rung B is still Visual Basic, so it needs no approval; inform the professor as a courtesy, not as a request.
 
-**Fail** — rungs A and B both fail. → **Stop. Do not start Phase 2.** Take the recorded errors to the professor and request an exception under PA-001. The evidence you captured is what makes that conversation go well.
+**Fail** — rungs A and B both fail. → **Stop. Do not start Phase 2.** Rung C is not available: a non-VB shim violates PA-001, which is a constraint and not a permission that can be waived. Take the recorded errors to the professor as a report that the constraint may be unsatisfiable on this toolchain — a different conversation from requesting an exception, and one the evidence is what makes go well.

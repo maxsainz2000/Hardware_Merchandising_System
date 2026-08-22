@@ -227,7 +227,7 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 
 **Status:** ACCEPTED
 **Date:** 2026-08-18
-**Decides:** storage precision for money, quantity, and timestamps. Proven live at task P1-07. **PA-003 (formal professor confirmation) is still outstanding — see the note below; the decision itself is not blocked on it.**
+**Decides:** storage precision for money, quantity, and timestamps. Proven live at task P1-07. **PA-003 is closed — see the note below.**
 
 | Kind | Type | Rationale |
 |---|---|---|
@@ -239,7 +239,7 @@ Column widths and decimal **ranges** are then enforced by the database, which is
 
 **Consequence.** `Double` and `Single` are forbidden for money and quantity everywhere — storage, calculation, and transport. Use `Decimal` in VB.
 
-**Resolved like ADR-000 at P0-06: the decision is settled on its own evidence, the professor-approval paperwork is separate and still open.** `p1-07-precision-check.txt` demonstrates why the decision cannot simply wait on the database to enforce it: `UPDATE ... SET Cost = 0.19995` against `DECIMAL(19,4)` under `STRICT_TRANS_TABLES` silently stores `0.2000` (`Note 1265`, not an error) — exactly the ADR-004.1 hole. **PA-003 has not been raised with the professor yet** — that is Max's action, tracked the same way PA-001/PA-002 were at P0-06, and `tasks.md`'s P1-07 card stays 🟡 until it happens.
+**PA-003 closed 2026-08-22 — there was never an approval to wait for.** The spec had volunteered this decision as "subject to professor approval," but storage precision violates neither course constraint, so it is this project's decision to make on evidence. It is made: the table above, confirmed by measurement. `p1-07-precision-check.txt` also demonstrates why the decision cannot wait on the database to enforce it: `UPDATE ... SET Cost = 0.19995` against `DECIMAL(19,4)` under `STRICT_TRANS_TABLES` silently stores `0.2000` (`Note 1265`, not an error) — exactly the ADR-004.1 hole. P1-07 is closed with it; the card had been held at 🟡 by that paperwork alone while every technical box was ticked and evidenced.
 
 ---
 
@@ -563,7 +563,7 @@ This is the same argument that put `STRICT_TRANS_TABLES` in `ConnectionFactory` 
 **Rejected.**
 
 - **Treating the author's laptop as the host.** Recommended earlier on 2026-08-18 and withdrawn the same day. The grounds were that the laptop already carried XAMPP, the accounts and the evidence, and that a laptop travels well. Both assume the deliverable runs on the author's hardware, which requirement 2 forbids.
-- **Escalating XAMPP to the professor as unfit for a paying client (draft PA-004).** Drafted and withdrawn once it was established that the business receives nothing. ADR-000 stands unaltered, and XAMPP is a positive here: three classmates can install the entire database stack from one download. The "academic prototype" wording throughout the documents remains accurate and stays.
+- **Escalating XAMPP to the professor as unfit for a paying client.** Drafted and withdrawn once it was established that the business receives nothing. (An earlier revision of this line called the draft "PA-004"; the number was never issued to it and belongs to the performance-targets entry.) ADR-000 stands unaltered, and XAMPP is a positive here: three classmates can install the entire database stack from one download. The "academic prototype" wording throughout the documents remains accurate and stays.
 - **Per-site commissioning records, multi-tenancy, per-site licensing, Data Privacy Act obligations, and Windows 10 end-of-support as a security liability.** All scoped to a business running the software against real personnel and sales records. No business runs it. All dropped.
 - **Rewriting git history to remove the author's personal data.** Deferred, not rejected. The repository carries home network topology, a MAC address, hostnames, tailnet addresses and the author's email on every commit. Scrubbing forward and curating the handover is likely cheaper than a rewrite, but the decision is the author's and is not yet made.
 

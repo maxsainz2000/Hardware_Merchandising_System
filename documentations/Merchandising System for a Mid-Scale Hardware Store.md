@@ -57,9 +57,9 @@ The host laptop, client laptops, local network, Windows configuration, XAMPP ins
 |---|---|
 | Classroom computers run a supported 64-bit Windows version | Record the exact Windows edition/build for host and clients during Phase 1. |
 | Visual Studio 2026 and the .NET desktop workload are available | Install and verify the required workload and .NET 10 components on the development machine.[5] |
-| The classroom permits a manually authored Visual Basic ASP.NET Core API project | Obtain professor confirmation and pass the API proof-of-concept. |
+| A manually authored Visual Basic ASP.NET Core API project is workable | Pass the API proof-of-concept. No permission is required: a hand-authored VB API does not violate the Visual Basic constraint, and Visual Studio template coverage is a tooling gap, not a course rule (PA-001). |
 | XAMPP is mandatory | Use XAMPP/MariaDB for the prototype and document that it is a classroom constraint, not a production recommendation.[3] |
-| One host laptop can serve approximately 5–10 concurrent sessions | Treat this as a provisional test target, not a capacity guarantee. Validate with representative load tests. |
+| One host laptop can serve approximately 5–10 concurrent sessions | Treat this as a test target, not a capacity guarantee. Validate against the contention profile defined in PA-004 — concurrent commands against a single product row, not idle sessions. |
 | Clients are online while operating | Show a clear connection-unavailable state and document that offline transactions are not supported. |
 | The store can provide a private LAN and a reserved host address | Verify addressing, firewall, name resolution, and client reachability before UAT. |
 
@@ -82,8 +82,8 @@ The MVP will be considered successful when store personnel can perform the core 
 | Prevent inconsistent stock | Concurrent sale tests cannot create negative stock or duplicate movement records. |
 | Protect operational data | Clients cannot connect to MariaDB; protected API operations require authentication and authorization; sensitive actions create audit records. |
 | Provide recoverability | A scheduled backup is created, copied to a separate location, and restored successfully in a documented maintenance procedure. |
-| Maintain acceptable pilot performance | Under the approved 5–10 session test profile, ordinary reads target a p95 response of 2 seconds or less and stock-changing commands target a p95 response of 4 seconds or less, excluding deliberate maintenance operations. These are provisional targets to be validated and adjusted by the professor if necessary. |
-| Define recovery expectations | The academic prototype targets an RPO of no more than 24 hours with a daily backup and an RTO of no more than 120 minutes after a tested restore procedure. Actual measured results must be recorded. |
+| Maintain acceptable pilot performance | Per PA-004, measured against the 5–10 session contention profile and excluding deliberate maintenance operations: ordinary reads target a p95 of **300 ms or less** and stock-changing commands a p95 of **800 ms or less**. The original 2-second and 4-second figures are retained as the hard-fail ceiling — exceeding either is a failure, not a near-miss. |
+| Define recovery expectations | The academic prototype targets an RPO of no more than 24 hours with a daily backup. Per PA-005 the demonstrated RTO target is a restore to verified state within 15 minutes, performed live on the demo host; 120 minutes is retained as the documented worst case for a full host rebuild. Actual measured results must be recorded. |
 | Provide maintainable code | All authored application code is Visual Basic, shared rules are not duplicated across clients, migrations are versioned, and every release has a reproducible build procedure. |
 | Provide a consistent user experience | The three clients use the same navigation conventions, validation language, connection-status behavior, focus states, and visual resources. |
 
@@ -285,7 +285,7 @@ The following entities represent the MVP database foundation. Exact columns, nam
 | POS | `Sales`, `SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`, `CashierClosings` | Sale line captures effective price/cost; payment totals reconcile; return quantities bounded; completed sale immutable. |
 | Configuration/operations | `SystemSettings`, `SchemaMigrations`, `BackupLogs`, `ApplicationEvents`, `MaintenanceLocks` | Configuration changes audited; migrations checksummed; backup/restore recorded; maintenance mode prevents normal writes. |
 
-The database will use primary keys, foreign keys, unique constraints, and indexes for SKU, barcode, product name, supplier name, status, dates, and transaction references. Transactional monetary values use fixed-precision decimal storage rather than floating-point types. The baseline is `DECIMAL(19,4)` for money and `DECIMAL(19,3)` for quantities, subject to professor approval and hardware-store unit requirements. Display rounding is defined separately from storage precision.
+The database will use primary keys, foreign keys, unique constraints, and indexes for SKU, barcode, product name, supplier name, status, dates, and transaction references. Transactional monetary values use fixed-precision decimal storage rather than floating-point types. Money is `DECIMAL(19,4)` and quantities are `DECIMAL(19,3)`, decided on measured round-trip evidence and recorded as ADR-004 / PA-003. Display rounding is defined separately from storage precision.
 
 All timestamps are stored in UTC and displayed in the configured store time zone. The system stores a configurable currency code and uses one defined rounding policy. The MVP does not calculate tax, file tax returns, produce statutory accounting statements, or integrate with accounting software. Gross-margin displays are informational estimates using recorded cost and selling price, not accounting profit statements.
 
@@ -356,7 +356,7 @@ Restore is a disruptive maintenance operation. It is not executed as a normal re
 6. The operator restarts services, runs health and data-integrity checks, and confirms that the expected users, products, balances, and recent transactions are present.
 7. The API records the completed restore event after service recovery and releases maintenance mode only after verification succeeds.
 
-The project must measure and document the actual recovery time. The prototype targets an RPO of no more than 24 hours and an RTO of no more than 120 minutes, subject to professor approval and test evidence.
+The project must measure and document the actual recovery time. Per PA-005 the prototype targets an RPO of no more than 24 hours and a demonstrated RTO of no more than 15 minutes for a restore to verified state on the demo host, with 120 minutes retained as the documented worst case for a full host rebuild. Both are validated by test evidence.
 
 ## 16. User Interface and Experience
 

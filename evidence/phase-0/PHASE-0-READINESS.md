@@ -176,10 +176,13 @@ A literal to-do list. Each item: what, the exact action, why the agent could not
 - **Note:** does **not** close P0-05, which needs resolution *from a client*. Procedure for clients is in `docs/installation-guide.md` §1.
 - **Card:** P0-05.
 
-**4. Attach the professor approval screenshots.**
-- **Action:** save the original messages as `evidence/phase-0/pa-001-approval.png` and `pa-002-approval.png`; date PA-001/PA-002 in `docs/professor-approvals.md`.
-- **Why not me:** I cannot access the conversation.
-- **Card:** P0-06 (marker corrected to 🟡 this session).
+**4. ~~Attach the professor approval screenshots.~~ — SUPERSEDED 2026-08-22, no action required.**
+- ~~**Action:** save the original messages as `evidence/phase-0/pa-001-approval.png` and `pa-002-approval.png`; date PA-001/PA-002 in `docs/professor-approvals.md`.~~
+- ~~**Why not me:** I cannot access the conversation.~~
+- **Why it was dropped:** PA-001 and PA-002 are *constraints handed down*, not exceptions granted on request. Evidence proves an exception you were given; there is no exception here to prove. The language rule is machine-checked by G-A and hooks L1–L4, and the database pin is measured in ADR-002 — both stronger citations at sign-off than a screenshot. See `docs/professor-approvals.md` Part 1.
+- **Card:** P0-06, now ✅ closed.
+
+> This item is left struck through rather than deleted: this file is a dated readiness snapshot, and removing an action it genuinely listed would misrepresent what was outstanding on the day it was written.
 
 **5. Choose the off-host backup destination.**
 - **Action:** pick a physical drive (USB/external), confirm writable, record the path in manifest §2.

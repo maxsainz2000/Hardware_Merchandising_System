@@ -46,13 +46,13 @@ Research confirms the primary approach is sound but not template-supported. Micr
 |---|---|---|
 | **A (primary)** | `.vbproj` with `Sdk="Microsoft.NET.Sdk.Web"`, `OutputType=Exe`, controller-based API, `Module Program` / `Sub Main`. | — |
 | **B** | Plain `Sdk="Microsoft.NET.Sdk"` + `<FrameworkReference Include="Microsoft.AspNetCore.App" />`, self-hosted Kestrel via `WebApplication.CreateBuilder`. Loses some Web SDK conveniences (static assets, publish profiles) — none of which this project needs. | A fails on an SDK target that assumes C# and cannot be worked around. |
-| **C** | Documented professor-approved exception: a thin non-VB API shim, or a different transport. | A and B both fail with evidence. |
+| **C** | ~~A thin non-VB API shim, or a different transport.~~ **Closed** — violates PA-001, which is a constraint and not a permission that can be waived. | Not available. |
 
-Descending a rung is an ADR entry, not a quiet decision. Rung C requires written approval before any code is written against it.
+Descending a rung is an ADR entry, not a quiet decision.
 
-> **Confirmed by the professor:** the manually authored VB API is acceptable, and XAMPP is genuinely mandatory. This is the constrained answer, not the relaxed one — **no C# escape hatch has been granted and no alternative database is available.** Two consequences follow, and they shape the rest of this plan:
+> **The constraints, restated:** Visual Basic .NET only, MariaDB via XAMPP only (PA-001, PA-002). **There is no C# escape hatch and no alternative database** — not because either was requested and refused, but because both are ruled out by the constraints themselves. A hand-authored VB API needs no permission; it does not violate either rule. Two consequences follow, and they shape the rest of this plan:
 >
-> 1. **Rung B is now the real fallback, not rung C.** Rung C would require going *back* to the professor to reverse a decision already made — a much harder conversation than the pre-emptive one. Treat rung B as the last self-service option and prove it works early (see P1-02a) rather than discovering under pressure that it doesn't.
+> 1. **Rung B is the real fallback, and rung C does not exist.** A non-VB shim violates PA-001 outright, so there is nothing to escalate. Treat rung B as the last option and prove it works early (see P1-02a) rather than discovering under pressure that it doesn't.
 > 2. **The Phase 1 gate keeps its full weight.** Nothing about this answer shrinks Phase 1. Every one of the twenty tasks still earns its place.
 
 ### 1.2 VB-specific gotchas to encode up front
@@ -180,7 +180,7 @@ No application code is written in Phase 0.
 | P0-03 | Install XAMPP on host. Stop and disable Apache, FileZilla, Mercury, Tomcat. Keep MariaDB only. | Services list screenshot; only MariaDB running. |
 | P0-04 | Record exact MariaDB version, data directory, config file path, and which dump tool ships with it. **Resolved: 10.4.32, `mysqldump.exe` only — no `mariadb.exe` or `mariadb-dump.exe` in this build, so capture the version via `mysqld.exe --version`.** | Environment manifest + first ADR entry. |
 | P0-05 | Fix the host address **on the self-provided demo rig** (§4.2), not by manual static on a lab adapter; choose and record the host name `MERCH-HOST`; confirm resolution from each demo workstation via hosts file. | `ping MERCH-HOST` succeeds from every demo workstation; output captured. **The router-side DHCP reservation this row used to require was withdrawn by ADR-012.** |
-| ~~P0-06~~ | ~~Obtain professor confirmation~~ — **RESOLVED.** Manual VB ASP.NET Core API is acceptable; XAMPP/MariaDB is mandatory, not merely permitted. | Capture the confirmation (email/message//written note) into `docs/professor-approvals.md` so it can be cited at acceptance. Do this even though the answer is known — an undocumented approval is one you cannot point to during sign-off. |
+| ~~P0-06~~ | ~~Obtain professor confirmation~~ — **CLOSED.** Visual Basic only; MariaDB via XAMPP only. Both recorded as binding constraints in `docs/professor-approvals.md` (PA-001, PA-002). | Nothing further. These are constraints, not exceptions granted, so there is no approval artifact to attach — the language rule is machine-checked by G-A and hooks L1–L4, and the database pin is measured in ADR-002. |
 | P0-07 | Initialise repo: folder structure (§2), `.gitignore`, `.editorconfig`, `Directory.Build.props`, `CLAUDE.md` (§4), empty `docs/adr.md`. | `git log` shows initial commit; agent session reads CLAUDE.md correctly. |
 | P0-08 | Write `scripts/check-no-csharp.ps1` with guardrails G-A…G-D. | Script passes on empty repo; deliberately drop a `.cs` file and confirm it fails. |
 
@@ -512,20 +512,20 @@ These are deliberately unresolved now and must be pinned in `docs/adr.md` before
 
 | # | Decision | Resolve by | Default lean |
 |---|---|---|---|
-| D-1 | Web SDK rung A vs B | P1-02 | A. Rung C is effectively closed — the professor has already ruled, so reversing it is a much harder ask than the original question would have been. |
+| D-1 | Web SDK rung A vs B | P1-02 | A. Rung C does not exist — a non-VB shim violates PA-001, which is a constraint rather than a permission that could be waived. |
 | D-2 | Exact MariaDB + MySqlConnector versions | P1-05 | Whatever XAMPP ships; pin exactly |
 | D-3 | Token scheme: JWT bearer vs opaque server-side session | P1-08 | JWT, host-held signing key, expiry matched to a work shift |
 | D-4 | Test framework: MSTest / NUnit / xUnit | P1-19 | Any — all have official VB guidance; pick and stop debating |
 | D-5 | API deployment: framework-dependent vs self-contained | P1-03 | Self-contained if host runtime installation proves fragile |
 | D-6 | Certificate: self-signed with manual trust vs internal CA | P1-09 | Self-signed + documented trust procedure, given classroom scale |
 | D-7 | Transaction isolation level | P1-11 | `READ COMMITTED` + conditional update (do not rely on isolation alone) |
-| D-8 | Money/quantity precision confirmation with professor | P1-07 | `DECIMAL(19,4)` / `DECIMAL(19,3)` as specified |
+| ~~D-8~~ | ~~Money/quantity precision confirmation with professor~~ — **DECIDED at P1-07.** Never needed confirmation: it violates neither constraint. | — | `DECIMAL(19,4)` / `DECIMAL(19,3)`, on measured round-trip evidence. ADR-004 / PA-003. |
 
 ---
 
 ## 12. What I would do first, concretely
 
-P0-06 is answered: manual VB API acceptable, XAMPP mandatory. Both constraints bind, so the plan proceeds at full weight. The next three actions in order:
+P0-06 is closed: Visual Basic only, MariaDB via XAMPP only. Both constraints bind, so the plan proceeds at full weight. The next three actions in order:
 
 1. **P0-01 → P0-05 — establish the environment baseline.** Install the VS 2026 workloads, strip XAMPP down to MariaDB only, and record exact versions for the host and every client. Cheap, unglamorous, and it prevents the "works on my machine" failure that surfaces during UAT when it is expensive.
 2. **P0-07/P0-08 — scaffold the repo**, write `CLAUDE.md` and the guardrail script. Roughly one session. Everything afterwards is safer because of it, and the no-C# guardrail matters more now that C# is definitively off the table.
