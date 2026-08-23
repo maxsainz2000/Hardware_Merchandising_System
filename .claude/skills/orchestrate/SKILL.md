@@ -212,6 +212,15 @@ enforces. Four things bite, in this order:
    `C:\ProgramData\ssh\administrators_authorized_keys` and ignores `~/.ssh/authorized_keys`
    entirely.** ASCII, no BOM, ACLs `/inheritance:r` granting only `Administrators` and `SYSTEM`.
    The obvious placement produces a setup that looks correct and rejects every login.
+5. **`sshd` failing to start says nothing useful through the SCM.** Error 1053 ("did not
+   respond in a timely fashion") is what Windows says for almost any startup failure. Run
+   `sshd.exe -t` directly to get the real one, and compare against `ssh.exe -V` from the same
+   folder: if the client runs and the server dies at `0xC0000135` (STATUS_DLL_NOT_FOUND), the
+   payload is fine and the machine is not. **Stop there.** A box whose loader, signature
+   validation, and servicing cmdlets are all failing needs a Windows repair, and that repair is
+   not a fleet task — it is open-ended, it may not fix the thing you wanted, and the box doing
+   the repairing is the broken one. Report it to the user as a machine problem, not a setup step.
+
 4. **Lock the private key's NTFS ACLs on the orchestrator box, not just its `chmod`.**
    `dispatch-worker.ps1` runs `ssh` from pwsh — the System32 client, which refuses an
    over-permissive key. Git Bash `chmod` does not touch NTFS ACLs, so the key works from Bash

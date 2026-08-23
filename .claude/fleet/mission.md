@@ -37,7 +37,7 @@ RC session names change on every restart. The names below are hints — confirm 
 `ListAgents` before dispatching. As of 2026-08-23: box2 `desktop-g83ccsh-joyful-bubble`,
 box3 `desktop-f5lk8ma-rosy-flute`.
 
-## SSH transport pilot — box2 · PAUSED, needs a reboot
+## SSH transport pilot — box2 · BLOCKED on OS corruption; Windows repair underway
 
 Why: `rc` gives the orchestrator only **prompt**. It cannot start a session, set its model or
 effort, or stop one — so on box2/box3 the model/effort table in `/orchestrate` §2 is advice
@@ -71,6 +71,36 @@ Resume, in order, after the reboot:
    SSH login. If it fails, the fix is a full path in the dispatch invocation, not the transport.
 7. Then `transport: "ssh"`, `sshTarget: "box2"` in `machines.json`, and prove it end to end with
    a throwaway card at `-Model haiku -Effort low` — model/effort selection is the whole point.
+
+### Outcome of the box2 attempt — 2026-08-23
+
+Two reboots in, `sshd` finally registered as a service and **still cannot start**. SCM reports
+1053 ("did not respond in a timely fashion"), which is noise; running `sshd.exe -t` directly
+gives the real error: exit `0xC0000135` = **STATUS_DLL_NOT_FOUND**. The binary fails at the
+Windows loader before any config is read. Config and host keys were regenerated (the box had a
+stale empty `C:\ProgramData\ssh` dated 2020) and it changed nothing, as expected.
+
+It is not a broken OpenSSH payload: `ssh.exe -V` from the same folder runs fine
+(OpenSSH_for_Windows_9.5p1). Three symptoms now point at one cause on this box —
+`Get-WindowsCapability` → `Class not registered`, `Get-AuthenticodeSignature` on sshd.exe →
+`UnknownError`, and sshd.exe → DLL-not-found. That is OS-level corruption, and it will affect
+Windows Update and future installs on box2 well beyond anything the fleet needs.
+
+The user was told plainly that repairing it is open-ended, may not fix sshd, and is not fleet
+work. They chose to repair. Stage 1 (`DISM /Online /Cleanup-Image /ScanHealth`, read-only) is
+running. Stage 2 (`/RestoreHealth`) downloads from Windows Update over the hotspot — check
+whether metered data makes a local `/Source` install.wim the better option before starting it.
+
+**Never applied on box2, deliberately, because locking down a server that cannot start is
+pointless:** the `fleet-sshd-tailnet` firewall rule, the key in `administrators_authorized_keys`,
+and `PasswordAuthentication no`. box2's sshd service is registered but Stopped/Manual. Nothing
+needs reverting.
+
+**Reordering worth keeping:** the SSH proof never needed Tailscale. Scoping the firewall rule to
+box1's LAN address on the shared hotspot would have proven the transport just as well, with
+Tailscale as a later upgrade — one config line and one rule. Making the network path a
+prerequisite cost a detour. Tailscale itself was worth having anyway, and its NoState wedge
+after the first reboot cleared on the second.
 
 Not yet started on box3. Same sequence, same reboot, once box2 proves it.
 
