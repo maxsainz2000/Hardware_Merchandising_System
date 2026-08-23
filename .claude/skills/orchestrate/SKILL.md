@@ -204,10 +204,12 @@ enforces. Four things bite, in this order:
    in the PS module, *not* an unhealthy CBS stack. Check with `dism /online /get-capabilities`
    before concluding the box needs a Windows repair — that repair is not a fleet task and it
    will swallow the session that starts it.
-2. **`dism /online /add-capability` for OpenSSH.Server needs a reboot before the service
-   exists.** It exits 0, reports `State = Installed`, and `Start-Service sshd` still fails with
-   "service was not found". Plan the reboot into the provisioning window; it also kills that
-   box's RC session, which then has to be restarted inside the checkout again.
+2. **Always pass `/norestart /quiet` to `dism /online /add-capability`.** Without them it ends
+   at an interactive "restart now?" prompt — which a session with no TTY cannot answer, and
+   killing it there leaves the service half-registered and costs two reboots to unpick.
+   **Then check `Get-Service sshd` immediately:** on a healthy box it is already registered and
+   no reboot is needed at all. A service that does *not* appear after a clean install is itself
+   the diagnostic — that box is damaged, and rebooting to chase it is how you spend an afternoon.
 3. **If the box's account is a local Administrator, sshd reads
    `C:\ProgramData\ssh\administrators_authorized_keys` and ignores `~/.ssh/authorized_keys`
    entirely.** ASCII, no BOM, ACLs `/inheritance:r` granting only `Administrators` and `SYSTEM`.

@@ -47,7 +47,7 @@
       "sdk": "10.0.400",
       "freeGb": 200.9,
       "owns": ["evidence/", "scripts/"],
-      "notes": "PROVISIONED 2026-08-23. bootstrap-worker-machine.ps1 returned READY with no failing rows; L4 pre-commit hook installed by that run (a clone does not carry .git/hooks). Session restarted inside the checkout on 05d73d6 with the project CLAUDE.md loaded - verified, not assumed. SDK 10.0.301 side-by-side with 10.0.400. No XAMPP/MariaDB by design: every card touching the database, a migration, or the running API belongs on box1 (ADR-013). Git credential cached by a one-time interactive sign-in at the machine; an RC session has no TTY and can never establish one itself."
+      "notes": "PROVISIONED 2026-08-23 for RC work; L4 pre-commit hook installed, session runs inside the checkout. CONNECTIVITY: ethernet ONLY - this box has no working wireless and is cabled to the Huawei 5G router, so (a) it is reachable only when box1 is on that same router, i.e. AT HOME, and is UNAVAILABLE at school or anywhere box1 is on a different network - do not place demo-day or away-from-home cards here; (b) all of its internet is mobile data through that router, so any download it makes is metered. SSH transport BLOCKED: sshd.exe dies at the Windows loader (0xC0000135), one of three symptoms of OS corruption on this box; Windows repair in progress at the user's direction. No XAMPP/MariaDB by design (ADR-013 pins the DB to box1). Git credential cached by a one-time interactive sign-in; an RC session has no TTY and can never establish one itself."
     },
     {
       "id": "box3",
