@@ -40,14 +40,14 @@
       "formFactor": "desktop",
       "role": "secondary",
       "transport": "rc",
-      "rcSessionName": "desktop-g83ccsh-scalable-candle",
+      "rcSessionName": "desktop-g83ccsh-joyful-bubble",
       "sshTarget": "",
-      "repo": "",
-      "enabled": false,
+      "repo": "C:/dev/Hardware_Merchandising_System",
+      "enabled": true,
       "sdk": "10.0.400",
       "freeGb": 200.9,
       "owns": ["evidence/", "scripts/"],
-      "notes": "SDK 10.0.301 confirmed installed side-by-side with 10.0.400. gh not installed (not required - clone is over https with Git Credential Manager). PCSystemType=1, a real desktop. Remaining: clone to C:/dev/Hardware_Merchandising_System, global git identity, bootstrap verdict, and a session restarted INSIDE the checkout - the live RC session sits in C:/Users/maxsa (user-profile root), which loads no project CLAUDE.md and cannot resolve /worker."
+      "notes": "PROVISIONED 2026-08-23. bootstrap-worker-machine.ps1 returned READY with no failing rows; L4 pre-commit hook installed by that run (a clone does not carry .git/hooks). Session restarted inside the checkout on 05d73d6 with the project CLAUDE.md loaded - verified, not assumed. SDK 10.0.301 side-by-side with 10.0.400. No XAMPP/MariaDB by design: every card touching the database, a migration, or the running API belongs on box1 (ADR-013). Git credential cached by a one-time interactive sign-in at the machine; an RC session has no TTY and can never establish one itself."
     },
     {
       "id": "box3",
@@ -55,14 +55,14 @@
       "formFactor": "laptop",
       "role": "secondary",
       "transport": "rc",
-      "rcSessionName": "desktop-f5lk8ma-jazzy-karp",
+      "rcSessionName": "desktop-f5lk8ma-rosy-flute",
       "sshTarget": "",
-      "repo": "",
-      "enabled": false,
+      "repo": "C:/dev/Hardware_Merchandising_System",
+      "enabled": true,
       "sdk": "10.0.400",
       "freeGb": 57.8,
       "owns": ["documentations/"],
-      "notes": "Same remaining steps as box2. SDK 10.0.301 confirmed. gh not installed. PCSystemType=2 (Mobile) - physically a laptop despite the DESKTOP- hostname, confirmed from the registry, not guessed from the name. 57.8 GB free is the tightest box in the fleet."
+      "notes": "PROVISIONED 2026-08-23, same path as box2: READY with no failing rows, L4 pre-commit hook installed, session restarted inside the checkout on 05d73d6 with CLAUDE.md loaded. PCSystemType=2 (Mobile) - physically a LAPTOP despite the DESKTOP- hostname; read formFactor from here, never from the name. 57.8 GB free is the tightest box in the fleet - place disk-heavy work elsewhere."
     }
   ],
   "defaults": {
