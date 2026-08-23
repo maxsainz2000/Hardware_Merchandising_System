@@ -114,6 +114,28 @@ switch ($Action) {
 
         $rep = $r.report
 
+        # The worker can be cut off before it ever writes a report -- budget, turn limit,
+        # an API error. The envelope says so and the report does not, so read the envelope
+        # FIRST. Rendering that case as [UNKNOWN] tells the orchestrator nothing, and
+        # "no status" and "killed at the budget cap" demand completely different responses.
+        if ((Get-Prop $r.env 'is_error') -and -not (Get-Prop $rep 'status')) {
+            $sub = if (Get-Prop $r.env 'subtype') { $r.env.subtype } else { 'unknown_error' }
+            $label = switch ($sub) {
+                'error_max_budget_usd' { 'BUDGET EXCEEDED' }
+                'error_max_turns'      { 'TURN LIMIT REACHED' }
+                default                { "WORKER ERROR ($sub)" }
+            }
+            Write-Host ''
+            Write-Host "[$label] $($run.TaskId)  ($($run.Machine), $($run.Model))" -ForegroundColor Yellow
+            Write-Host "  The worker was cut off before it produced a report. Nothing it did is verified."
+            Write-Host "  Re-dispatch with a higher limit, or split the card -- do NOT treat this as partial work."
+            if (Get-Prop $r.env 'num_turns')      { Write-Host "  turns: $($r.env.num_turns)" }
+            if (Get-Prop $r.env 'total_cost_usd') { Write-Host "  cost: `$$([Math]::Round($r.env.total_cost_usd, 3))" }
+            Write-Host "  log: $($run.RunDir)"
+            Write-Host ''
+            break
+        }
+
         $status = if (Get-Prop $rep 'status') { $rep.status.ToUpper() } else { 'UNKNOWN' }
         Write-Host ''
         Write-Host "[$status] $($run.TaskId)  ($($run.Machine), $($run.Model))"
@@ -153,8 +175,15 @@ switch ($Action) {
         elseif (-not $All) { throw "Give -TaskId <id> or -All." }
         if (-not $runs) { Write-Host 'Nothing live to stop.'; break }
         foreach ($run in $runs) {
+            # /T kills the tree, and that is the whole point. Stop-Process on the tracked pid
+            # alone kills the shell and leaves the worker running -- for a tty dispatch the
+            # claude process is a CHILD of the tracked pwsh and simply outlives it, so "STOPPED"
+            # would be a lie and the run would keep spending budget unattended. bg and ssh runs
+            # happen to die anyway when their wrapper goes, but there is no reason to rely on
+            # two different behaviours here.
+            & taskkill.exe /PID $run.Pid /T /F 2>&1 | Out-Null
             Stop-Process -Id $run.Pid -Force -ErrorAction SilentlyContinue
-            Write-Host "STOPPED $($run.TaskId) (pid $($run.Pid))"
+            Write-Host "STOPPED $($run.TaskId) (pid $($run.Pid), tree)"
         }
     }
 

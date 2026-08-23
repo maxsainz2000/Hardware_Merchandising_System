@@ -178,15 +178,45 @@ switch ($target.transport) {
         if ($Mode -eq 'tty') {
             # A visible window. Interactive, so no -p and no structured report: this mode
             # is for work the user wants to watch, and it reports by being watched.
-            $ttyArgs = @('--model', $Model, '--effort', $Effort, '--name', "worker-$TaskId")
-            $inner = "Set-Location '$workDir'; Get-Content -Raw '$briefPath' | Set-Clipboard; " +
-                     "Write-Host 'Brief copied to clipboard -- paste with Ctrl+V' -ForegroundColor Cyan; " +
-                     "claude $($ttyArgs -join ' ')"
-            if ($DryRun) { Write-Host "DRYRUN wt.exe new-tab pwsh -NoExit -Command <inner>"; return }
+            #
+            # The launch goes through a generated .ps1 rather than `-Command "a; b; c"`,
+            # because wt.exe parses `;` as ITS OWN argument separator. A multi-statement
+            # command handed to `wt new-tab` is silently chopped: the tab receives only the
+            # first statement and the rest are executed as further wt sub-commands. That
+            # produced a claude parented to WindowsTerminal instead of to the tab, with the
+            # brief never reaching the clipboard. A -File launch has no delimiter to trip on
+            # and gives the process a stable command line to identify it by.
+            $launcher = Join-Path $runDir 'tty-launch.ps1'
+            @"
+Set-Location '$workDir'
+Get-Content -Raw '$briefPath' | Set-Clipboard
+Write-Host 'Brief copied to clipboard -- paste with Ctrl+V' -ForegroundColor Cyan
+& claude --model $Model --effort $Effort --name worker-$TaskId
+"@ | Set-Content -Path $launcher -Encoding utf8
+
+            if ($DryRun) { Write-Host "DRYRUN wt.exe new-tab pwsh -NoExit -File $launcher"; return }
             $p = Start-Process 'wt.exe' -ArgumentList @(
-                'new-tab', '--title', "worker-$TaskId", 'pwsh', '-NoProfile', '-NoExit', '-Command', $inner
+                'new-tab', '--title', "worker-$TaskId", 'pwsh', '-NoProfile', '-NoExit', '-File', $launcher
             ) -PassThru
+            # wt.exe hands the tab to the already-running WindowsTerminal and exits within a
+            # second, so its pid is worthless: -Action list would call a live worker dead,
+            # -Action stop would kill a pid already gone, and the fleet cap would stop
+            # counting tty workers -- which is how a tty dispatch runs away unbounded.
             $handle.pid = $p.Id
+            $deadline = (Get-Date).AddSeconds(20)
+            while ((Get-Date) -lt $deadline) {
+                $child = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+                         Where-Object { $_.CommandLine -like '*tty-launch.ps1*' -and
+                                        $_.CommandLine -like "*$TaskId*" } |
+                         Select-Object -First 1
+                if ($child) { $handle.pid = [int]$child.ProcessId; break }
+                Start-Sleep -Milliseconds 500
+            }
+            if ($handle.pid -eq $p.Id) {
+                Write-Warning ("Could not resolve the tty worker's pwsh process. This run is " +
+                               "UNTRACKED: list, stop and the fleet cap will all ignore it. " +
+                               "Close the tab by hand when you are done with it.")
+            }
         }
         else {
             $runner = Join-Path $workDir 'scripts/fleet/run-worker.ps1'
@@ -229,6 +259,9 @@ while ((Get-Process -Id $handle.pid -ErrorAction SilentlyContinue) -and (Get-Dat
     Start-Sleep -Seconds 5
 }
 if (Get-Process -Id $handle.pid -ErrorAction SilentlyContinue) {
+    # Tree kill, for the same reason -Action stop does it: the worker can be a child of the
+    # tracked process, and killing only the parent leaves it running past its own timeout.
+    & taskkill.exe /PID $handle.pid /T /F 2>&1 | Out-Null
     Stop-Process -Id $handle.pid -Force -ErrorAction SilentlyContinue
     Write-Host "TIMEOUT $TaskId after $TimeoutMinutes min -- worker killed. Logs: $runDir"
     exit 2
