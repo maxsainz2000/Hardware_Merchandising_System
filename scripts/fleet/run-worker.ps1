@@ -37,6 +37,10 @@ $schema = Get-Content -Raw (Join-Path $repoRoot 'scripts/fleet/worker-report.sch
 $prompt = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($prompt)) { throw 'run-worker: no brief on stdin.' }
 
+# The invariants that are walls rather than requests. Loaded from one file so the headless
+# and tty runners cannot drift apart on what a worker is forbidden to do.
+. (Join-Path $PSScriptRoot 'worker-deny.ps1')
+
 $prompt | & claude -p `
     --output-format json `
     --json-schema $schema `
@@ -44,6 +48,7 @@ $prompt | & claude -p `
     --effort $Effort `
     --permission-mode $PermissionMode `
     --max-budget-usd $MaxBudgetUsd `
+    --disallowed-tools @WorkerDenyRules `
     --name $Name
 
 exit $LASTEXITCODE

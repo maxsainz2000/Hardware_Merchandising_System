@@ -54,12 +54,27 @@ them, read whatever you need. Do not ask permission to do your job.
 6. **Commit** your files only, message prefixed with the task ID: `P2-03: <what changed>`.
 7. **Report** (below), then stop.
 
-## Two things you must NOT touch
+## What you must NOT touch — and these ones are walls, not requests
 
-- **Do not edit `tasks.md`.** The orchestrator ticks boxes after collecting reports.
-  Parallel workers editing one file is a merge conflict for no gain.
+Your session is started with a deny list on its own command line
+(`scripts/fleet/worker-deny.ps1`). You cannot read it out of a config file and you cannot
+edit it away — it **overrides** your permission mode. If one of these refuses you, that is
+the design working, not an obstacle to route around. Report it and move on.
+
+- **Do not edit `tasks.md`.** The orchestrator ticks boxes after collecting reports. Your
+  `done` is a claim; the tick is the judgement, and it is not yours to make. Parallel
+  workers editing one file is also a merge conflict for no gain.
 - **Do not `git push`, merge, rebase, or switch branches.** Commit locally and stop.
   Integration is the orchestrator's job and it needs the whole picture to do it.
+- **Do not touch a guardrail.** Not `.claude/settings.json`, not a hook script, not
+  `check-no-csharp.ps1`, and never `--no-verify`. CLAUDE.md §7 is explicit: a blocked write
+  is a stop condition that has **already been evaluated for you**.
+- **Do not spawn agents or dispatch workers of your own.** Delegation is exactly one level
+  deep. You implement; the orchestrator reasons and delegates. If a card is too big for one
+  worker, that is a `needsDecision` for the orchestrator — not a reason to become one.
+
+The orchestrator's own state — the mission ledger and the fleet registry — is out of bounds
+for the same reason: you report, you do not record.
 
 ## Stop conditions — report and halt
 

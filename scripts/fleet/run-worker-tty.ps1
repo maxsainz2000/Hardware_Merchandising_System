@@ -74,10 +74,25 @@ Write-Host "  report goes to: $ReportPath" -ForegroundColor DarkGray
 Write-Host "  watch it work. Ctrl-C or closing this tab stops the worker." -ForegroundColor DarkGray
 Write-Host ''
 
+# Same walls as the headless runner, from the same file. Resolved against $RepoRoot rather
+# than $PSScriptRoot: a remote dispatch copies THIS script into the run directory, so its
+# own folder has no sibling to dot-source.
+$denyFile = Join-Path $RepoRoot 'scripts/fleet/worker-deny.ps1'
+if (-not (Test-Path $denyFile)) {
+    # Refuse rather than run a worker with the walls silently missing. A worker that can
+    # push or tick its own boxes is worse than no worker, and this failure is invisible.
+    throw "run-worker-tty: worker-deny.ps1 not found at $denyFile. Refusing to start a worker without its deny rules."
+}
+. $denyFile
+
+# --disallowed-tools is variadic, so the brief must NEVER follow it on the command line --
+# it would be swallowed word by word as further deny rules. The brief goes last, after a
+# flag that takes exactly one value.
 & claude `
     --model $Model `
     --effort $Effort `
     --permission-mode $PermissionMode `
+    --disallowed-tools @WorkerDenyRules `
     --name $Name `
     $brief
 
