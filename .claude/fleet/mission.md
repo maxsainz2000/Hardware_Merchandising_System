@@ -63,7 +63,7 @@ Resume, in order, after the reboot:
 1. User restarts box2, then relaunches `claude --remote-control` **inside** `C:/dev/Hardware_Merchandising_System`.
 2. `Set-Service sshd -StartupType Automatic; Start-Service sshd`.
 3. Disable the install's blanket TCP 22 rule; add `fleet-sshd-tailnet` scoped to `100.76.155.51` only.
-4. box1's public key → `C:\ProgramData\sshdministrators_authorized_keys` (ASCII, no BOM;
+4. box1's public key → `C:\ProgramData\ssh\administrators_authorized_keys` (ASCII, no BOM;
    `maxsa` is a local Administrator so `~/.ssh/authorized_keys` is ignored), ACLs to Administrators+SYSTEM.
 5. `PasswordAuthentication no`, restart sshd.
 6. Test from box1: `ssh box2 "pwsh -NoProfile -Command ..."`. **The open risk lives here** —
