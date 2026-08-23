@@ -37,6 +37,43 @@ RC session names change on every restart. The names below are hints — confirm 
 `ListAgents` before dispatching. As of 2026-08-23: box2 `desktop-g83ccsh-joyful-bubble`,
 box3 `desktop-f5lk8ma-rosy-flute`.
 
+## SSH transport pilot — box2 · PAUSED, needs a reboot
+
+Why: `rc` gives the orchestrator only **prompt**. It cannot start a session, set its model or
+effort, or stop one — so on box2/box3 the model/effort table in `/orchestrate` §2 is advice
+nothing enforces. `ssh` delivers all of it and the branch in `dispatch-worker.ps1` is already
+written. This pilot proves the transport on one box before box3 gets the same treatment.
+
+Done:
+- Tailscale installed on box2 (winget, 1.102.2) and joined to `maxsainz2000@` as `box2` —
+  `100.100.110.86`, **direct** path from box1, 3ms. Chosen over a hotspot firewall rule so the
+  transport survives moving off the hotspot. Tailnet: `tail74f74a.ts.net`.
+- box1 client side complete: `~/.ssh/fleet_ed25519` (ed25519, no passphrase — required for
+  `BatchMode`), **NTFS ACLs locked to Admin+SYSTEM** because pwsh uses the System32 ssh client
+  and refuses an over-permissive key; `~/.ssh/config` holds `Host box2` → tailnet hostname,
+  user `maxsa`, identity file. So `sshTarget` stays a bare alias.
+- `OpenSSH.Server~~~~0.0.1.0` capability installed on box2 (DISM CLI; the PS servicing cmdlets
+  are COM-broken on that box, CBS itself is healthy).
+
+**Blocked on: a reboot of box2, at the user's convenience.** DISM exits 0 and reports
+`State = Installed`, but the `sshd` service does not exist until the machine restarts. The user
+has asked to hold off. Nothing is mid-flight on box2, so the reboot costs only the RC session.
+
+Resume, in order, after the reboot:
+1. User restarts box2, then relaunches `claude --remote-control` **inside** `C:/dev/Hardware_Merchandising_System`.
+2. `Set-Service sshd -StartupType Automatic; Start-Service sshd`.
+3. Disable the install's blanket TCP 22 rule; add `fleet-sshd-tailnet` scoped to `100.76.155.51` only.
+4. box1's public key → `C:\ProgramData\sshdministrators_authorized_keys` (ASCII, no BOM;
+   `maxsa` is a local Administrator so `~/.ssh/authorized_keys` is ignored), ACLs to Administrators+SYSTEM.
+5. `PasswordAuthentication no`, restart sshd.
+6. Test from box1: `ssh box2 "pwsh -NoProfile -Command ..."`. **The open risk lives here** —
+   box2's pwsh is Store/MSIX, and its execution alias may not resolve under a non-interactive
+   SSH login. If it fails, the fix is a full path in the dispatch invocation, not the transport.
+7. Then `transport: "ssh"`, `sshTarget: "box2"` in `machines.json`, and prove it end to end with
+   a throwaway card at `-Model haiku -Effort low` — model/effort selection is the whole point.
+
+Not yet started on box3. Same sequence, same reboot, once box2 proves it.
+
 ## Status values
 
 `planned` → `dispatched` → `done` \| `blocked` \| `failed`

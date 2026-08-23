@@ -192,6 +192,38 @@ with a clone, so every new box reopens the exact gap CLAUDE.md §11 says L4 exis
 runs the guardrails, and prints `READY` or `NOT READY` with the failing rows. Record the
 result in `machines.json`, set `enabled: true`, confirm with `fleet.ps1 -Action doctor`.
 
+### Wiring the `ssh` transport on a Windows box
+
+`rc` gives you exactly one verb: **prompt**. You cannot start a session, set its model or
+effort, or stop it. `ssh` gives you all of them, and `dispatch-worker.ps1` already has the
+branch — so a box on `rc` is a box where the model/effort table in §2 is advice nothing
+enforces. Four things bite, in this order:
+
+1. **The PowerShell servicing cmdlets may be broken while DISM itself is fine.**
+   `Get-WindowsCapability` failing with `Class not registered` is a broken COM registration
+   in the PS module, *not* an unhealthy CBS stack. Check with `dism /online /get-capabilities`
+   before concluding the box needs a Windows repair — that repair is not a fleet task and it
+   will swallow the session that starts it.
+2. **`dism /online /add-capability` for OpenSSH.Server needs a reboot before the service
+   exists.** It exits 0, reports `State = Installed`, and `Start-Service sshd` still fails with
+   "service was not found". Plan the reboot into the provisioning window; it also kills that
+   box's RC session, which then has to be restarted inside the checkout again.
+3. **If the box's account is a local Administrator, sshd reads
+   `C:\ProgramData\ssh\administrators_authorized_keys` and ignores `~/.ssh/authorized_keys`
+   entirely.** ASCII, no BOM, ACLs `/inheritance:r` granting only `Administrators` and `SYSTEM`.
+   The obvious placement produces a setup that looks correct and rejects every login.
+4. **Lock the private key's NTFS ACLs on the orchestrator box, not just its `chmod`.**
+   `dispatch-worker.ps1` runs `ssh` from pwsh — the System32 client, which refuses an
+   over-permissive key. Git Bash `chmod` does not touch NTFS ACLs, so the key works from Bash
+   and fails from the dispatcher, which reads as a key fault rather than a permissions one.
+
+**Tailscale is the better network path than a LAN firewall rule** when the boxes are not
+always on the same network — MagicDNS names stay valid, and sshd can be scoped to the
+orchestrator's tailnet IP alone rather than to a subnet. **Tailscale's own SSH server is
+Linux-only**: on Windows it does nothing, and the box still needs OpenSSH Server. Keep
+`sshTarget` a bare `Host` alias and let `~/.ssh/config` hold the user, identity file, and
+hostname — the fleet registry should not carry credentials-adjacent detail.
+
 **Address a box by hostname, never by a hand-set static IP** — a settled decision here, and a
 DHCP lease handing the same address back is exactly the trap that makes a static IP look
 like it works. Hostnames also do not indicate form factor: `DESKTOP-F5LK8MA` is physically a
