@@ -54,15 +54,15 @@
       "hostname": "DESKTOP-F5LK8MA",
       "formFactor": "laptop",
       "role": "secondary",
-      "transport": "rc",
+      "transport": "ssh",
       "rcSessionName": "desktop-f5lk8ma-rosy-flute",
-      "sshTarget": "",
+      "sshTarget": "box3",
       "repo": "C:/dev/Hardware_Merchandising_System",
       "enabled": true,
       "sdk": "10.0.400",
       "freeGb": 57.8,
       "owns": ["documentations/"],
-      "notes": "PROVISIONED 2026-08-23, same path as box2: READY with no failing rows, L4 pre-commit hook installed, session restarted inside the checkout on 05d73d6 with CLAUDE.md loaded. PCSystemType=2 (Mobile) - physically a LAPTOP despite the DESKTOP- hostname; read formFactor from here, never from the name. 57.8 GB free is the tightest box in the fleet - place disk-heavy work elsewhere."
+      "notes": "SSH TRANSPORT LIVE, proven end to end 2026-08-23 (SMOKE-02, haiku/low, $0.069). Addressed as the ssh_config Host alias `box3`; user, identity file and hostname live in box1's ~/.ssh/config, not here. Key-only auth, PasswordAuthentication no, sshd firewall rule scoped to 192.168.100.0/24 - the subnet, not a single IP, because DHCP will move box1 eventually and a rule pinned to one lease fails silently later. Store/MSIX pwsh resolves fine under a non-interactive SSH login - that risk did not materialise. Health-gated before install: DISM CLI works, signature validation Valid, sfc's only finding a cosmetic Default-profile OneDrive.lnk. PCSystemType=2 (Mobile) - a LAPTOP despite the DESKTOP- hostname; read formFactor from here, never from the name. The only secondary that exists away from home: box2 is cabled to the house router with no wireless, so at school the fleet is box1 + box3. 57.8 GB free is the tightest disk - place disk-heavy work elsewhere. Owns documentations/."
     }
   ],
   "defaults": {
