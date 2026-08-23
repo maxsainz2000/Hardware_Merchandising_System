@@ -13,7 +13,7 @@
     Instead, both transports invoke THIS file with plain scalar parameters. The schema
     is read from disk on whichever machine is running, and the brief arrives on stdin.
     Nothing that can contain a quote, a newline, or a backslash ever touches a command
-    line. box2 gets its copy the same way it gets everything else -- by pulling the repo.
+    line. A worker box gets its copy the same way it gets everything else -- by pulling the repo.
 #>
 [CmdletBinding()]
 param(

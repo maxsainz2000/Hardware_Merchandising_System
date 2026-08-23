@@ -9,10 +9,12 @@
 
     Three transports, chosen by the machine's entry in .claude/fleet/machines.json:
       local  - this machine, headless (-Mode bg) or in a visible terminal (-Mode tty)
-      ssh    - second machine, headless, structured JSON back over the pipe
-      rc     - Remote Control; NOT dispatched here. This script refuses and tells the
-               orchestrator to use SendMessage instead, because an RC session is driven
-               by messages, not by a shell.
+      ssh    - worker box. `ssh -t` for a visible tab here (-Mode tty, the default),
+               or headless with a structured JSON envelope back (-Mode bg).
+      rc     - Remote Control; NOT dispatched here. No machine uses rc now - it survives
+               only as a manual fallback if box3's ssh transport ever breaks. This script
+               refuses it and tells the orchestrator to use SendMessage instead, because
+               an RC session is driven by messages, not by a shell.
 
     The brief is piped in on stdin. That is deliberate: it means no prompt text ever
     passes through a command line, so quotes, newlines, backslashes and SQL fragments
@@ -20,7 +22,7 @@
 
 .EXAMPLE
     pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -BriefFile brief.md
-    pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-04 -Machine box2 -Model opus -Effort high -Wait
+    pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-04 -Machine box3 -Model opus -Effort high -Wait
 #>
 [CmdletBinding()]
 param(
@@ -38,10 +40,13 @@ param(
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string] $Effort,
 
-    # bg  = headless, no window, JSON back (default -- cheapest and scriptable)
-    # tty = a real visible terminal window, for work you want to watch
-    [ValidateSet('bg', 'tty')]
-    [string] $Mode = 'bg',
+    # tty = a real visible terminal tab running the ordinary interactive session (DEFAULT).
+    #       Remote workers open a tab HERE over `ssh -t`, so a box3 worker is watched from
+    #       box1's screen. The report is written to a file rather than returned on stdout.
+    # bg  = headless, no window, JSON envelope back. Cheaper and scriptable, but you see
+    #       nothing until it finishes.
+    [ValidateSet('tty', 'bg')]
+    [string] $Mode = 'tty',
 
     [ValidateSet('acceptEdits', 'auto', 'manual', 'plan', 'dontAsk', 'bypassPermissions')]
     [string] $PermissionMode,
@@ -96,10 +101,17 @@ if (-not $PermissionMode) { $PermissionMode = $defaults.permissionMode }
 if (-not $PSBoundParameters.ContainsKey('MaxBudgetUsd'))  { $MaxBudgetUsd   = $defaults.maxBudgetUsd }
 if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes')){ $TimeoutMinutes = $defaults.timeoutMinutes }
 
-if ($PermissionMode -eq 'bypassPermissions') {
-    Write-Warning ("Dispatching with bypassPermissions. This worker can run any command " +
-                   "without asking. Only correct when the user has explicitly approved it " +
-                   "for this dispatch.")
+# bypassPermissions is the registry default here, approved by the user on 2026-08-23 after
+# acceptEdits and auto were both measured stalling a worker on its first shell command. So
+# it gets no warning: one that fires on every single dispatch is noise, and noise is how a
+# real warning stops being read. The mode is printed on the DISPATCHED line instead, where
+# it is visible without crying wolf. What DOES deserve a warning is the reverse - a milder
+# mode, which on this fleet means a worker that will stall rather than one that is safer.
+if ($PermissionMode -in @('acceptEdits','auto','manual')) {
+    Write-Warning ("Dispatching with -PermissionMode $PermissionMode. On this fleet that " +
+                   "STALLS the worker at its first Bash/PowerShell prompt -- measured on " +
+                   "box3, SMOKE-03 and SMOKE-04. Only do this in tty mode with someone " +
+                   "watching the tab.")
 }
 
 # --- Fleet cap: the orchestrator's own guard against running away -------------------
@@ -116,6 +128,21 @@ if ($live.Count -ge $defaults.maxFleet -and -not $DryRun) {
     $ids = ($live | ForEach-Object { $_.taskId }) -join ', '
     Fail ("Fleet cap reached ($($defaults.maxFleet) live: $ids). Collect or stop a worker " +
            "before dispatching another -- see fleet.ps1 -Action list.")
+}
+
+# Per-machine ceiling. The global cap alone would let every worker in the fleet pile onto
+# one box -- which on box3 means four TUIs, four SDK restores and four builds competing for
+# 57.8 GB and one CPU, and on box1 means workers competing with the orchestrator session and
+# with Visual Studio. maxConcurrent is a CEILING; how many actually run is the
+# orchestrator's decision per mission, and this only stops that decision going wrong.
+$machineCap = if ($target.PSObject.Properties['maxConcurrent'] -and $target.maxConcurrent) {
+                  [int]$target.maxConcurrent
+              } else { [int]$defaults.maxFleet }
+$liveHere = @($live | Where-Object { $_.machine -eq $Machine })
+if ($liveHere.Count -ge $machineCap -and -not $DryRun) {
+    $ids = ($liveHere | ForEach-Object { $_.taskId }) -join ', '
+    Fail ("$Machine is at its concurrency ceiling ($machineCap live: $ids). Place this card " +
+          "on another box, or collect one of those first -- see fleet.ps1 -Action list.")
 }
 
 # --- Assemble the brief -------------------------------------------------------------
@@ -140,6 +167,35 @@ $prompt = @"
 
 $briefBody
 "@
+
+# In tty mode the worker's final message goes to a terminal nobody will parse, so the
+# report has to land on disk. On a remote box that path is on THAT machine; the report is
+# fetched back at collection time.
+$remoteRunDir = if ($target.transport -eq 'ssh') { "$($target.repo)/.claude/fleet/runs/$TaskId-$stamp" } else { $null }
+$workerReportPath = if ($Mode -ne 'tty') { $null }
+                    elseif ($remoteRunDir)  { "$remoteRunDir/report.json" }
+                    else                    { (Join-Path $runDir 'report.json').Replace('\','/') }
+
+if ($Mode -eq 'tty') {
+    $prompt += @"
+
+---
+REPORTING -- read this, it changes how you finish.
+
+You are running in a VISIBLE terminal. Your final message is not captured anywhere the
+orchestrator can read, and it will never read this scrollback. So as your LAST action,
+write your report object as JSON to exactly this path:
+
+  $workerReportPath
+
+Raw JSON only -- no markdown fence, no commentary around it. Create the folder if it does
+not exist. Everything else in the worker contract is unchanged: the same schema, the same
+honesty rules, and ``status: done`` still requires guardrails AND tests to have passed.
+
+If you do not write that file, the orchestrator sees this run as having produced nothing,
+no matter how well it went on screen.
+"@
+}
 
 $briefPath = Join-Path $runDir 'brief.md'
 $rawPath   = Join-Path $runDir 'raw.json'
@@ -171,55 +227,103 @@ $handle = [ordered]@{
 }
 
 # --- Dispatch -----------------------------------------------------------------------
-switch ($target.transport) {
+$handle.reportPath = $workerReportPath
+$handle.remoteRunDir = $remoteRunDir
 
-    'local' {
-        $workDir = $target.repo
-        if ($Mode -eq 'tty') {
-            # A visible window. Interactive, so no -p and no structured report: this mode
-            # is for work the user wants to watch, and it reports by being watched.
-            #
-            # The launch goes through a generated .ps1 rather than `-Command "a; b; c"`,
-            # because wt.exe parses `;` as ITS OWN argument separator. A multi-statement
-            # command handed to `wt new-tab` is silently chopped: the tab receives only the
-            # first statement and the rest are executed as further wt sub-commands. That
-            # produced a claude parented to WindowsTerminal instead of to the tab, with the
-            # brief never reaching the clipboard. A -File launch has no delimiter to trip on
-            # and gives the process a stable command line to identify it by.
-            $launcher = Join-Path $runDir 'tty-launch.ps1'
-            @"
-Set-Location '$workDir'
-Get-Content -Raw '$briefPath' | Set-Clipboard
-Write-Host 'Brief copied to clipboard -- paste with Ctrl+V' -ForegroundColor Cyan
-& claude --model $Model --effort $Effort --name worker-$TaskId
-"@ | Set-Content -Path $launcher -Encoding utf8
+if ($Mode -eq 'tty') {
+    # One visible tab per worker, on THIS machine, whether the worker runs here or on a
+    # worker box. A remote worker is reached with `ssh -t`, whose ConPTY gives the TUI a
+    # real terminal -- so box3's session renders in a tab on box1's screen rather than on
+    # a monitor nobody is sitting at.
+    if ($target.transport -eq 'ssh') {
+        if (-not $target.sshTarget) { Fail "Machine '$Machine' has transport ssh but no sshTarget set." }
+        if (-not $target.repo)      { Fail "Machine '$Machine' has transport ssh but no repo path set." }
 
-            if ($DryRun) { Write-Host "DRYRUN wt.exe new-tab pwsh -NoExit -File $launcher"; return }
-            $p = Start-Process 'wt.exe' -ArgumentList @(
-                'new-tab', '--title', "worker-$TaskId", 'pwsh', '-NoProfile', '-NoExit', '-File', $launcher
-            ) -PassThru
-            # wt.exe hands the tab to the already-running WindowsTerminal and exits within a
-            # second, so its pid is worthless: -Action list would call a live worker dead,
-            # -Action stop would kill a pid already gone, and the fleet cap would stop
-            # counting tty workers -- which is how a tty dispatch runs away unbounded.
-            $handle.pid = $p.Id
-            $deadline = (Get-Date).AddSeconds(20)
-            while ((Get-Date) -lt $deadline) {
-                $child = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
-                         Where-Object { $_.CommandLine -like '*tty-launch.ps1*' -and
-                                        $_.CommandLine -like "*$TaskId*" } |
-                         Select-Object -First 1
-                if ($child) { $handle.pid = [int]$child.ProcessId; break }
-                Start-Sleep -Milliseconds 500
-            }
-            if ($handle.pid -eq $p.Id) {
-                Write-Warning ("Could not resolve the tty worker's pwsh process. This run is " +
-                               "UNTRACKED: list, stop and the fleet cap will all ignore it. " +
-                               "Close the tab by hand when you are done with it.")
+        $remoteBrief  = "$remoteRunDir/brief.md"
+        # The runner is carried WITH the dispatch rather than assumed present. A worker box
+        # only gets repo changes when it pulls, so a checkout that is one commit behind this
+        # one has no run-worker-tty.ps1 at all -- and the failure surfaces as pwsh saying a
+        # file does not exist, inside a tab that closes, which reads as a transport fault.
+        # Copying it makes the transport self-carrying: the dispatcher is never older than
+        # the runner it invokes.
+        $remoteRunner = "$remoteRunDir/run-worker-tty.ps1"
+        if (-not $DryRun) {
+            # Create the run dir over there, then copy the brief with scp. The brief never
+            # goes on a command line -- it is the one value that can contain anything.
+            & ssh -o BatchMode=yes $target.sshTarget "pwsh -NoProfile -Command New-Item -ItemType Directory -Force -Path $remoteRunDir" 2>&1 | Out-Null
+            & scp -q -o BatchMode=yes $briefPath "$($target.sshTarget):$remoteBrief" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Fail "Could not copy the brief to $Machine. Check: ssh $($target.sshTarget) whoami" }
+            & scp -q -o BatchMode=yes (Join-Path $repoRoot 'scripts/fleet/run-worker-tty.ps1') "$($target.sshTarget):$remoteRunner" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Fail "Could not copy the tty runner to $Machine." }
+
+            # The runner travels; the PROJECT does not. Say so plainly when the worker box
+            # is on a different commit, because that decides whether its report means
+            # anything -- a card worked against a stale tree can pass its own tests and
+            # still not apply here. A warning, not a Fail: dispatching against an older
+            # tree is occasionally deliberate, and only the orchestrator knows which.
+            $localHead  = (& git -C $repoRoot rev-parse HEAD 2>$null)
+            $remoteHead = (& ssh -o BatchMode=yes $target.sshTarget "git -C $($target.repo) rev-parse HEAD" 2>$null)
+            if ($localHead -and $remoteHead -and $localHead.Trim() -ne $remoteHead.Trim()) {
+                Write-Warning ("$Machine is on a different commit ($($remoteHead.Trim().Substring(0,7))) " +
+                               "than this box ($($localHead.Trim().Substring(0,7))). The worker will read " +
+                               "the card, the spec and CLAUDE.md as they are THERE. Push and have it pull " +
+                               "before dispatching real work.")
             }
         }
-        else {
-            $runner = Join-Path $workDir 'scripts/fleet/run-worker.ps1'
+        $inner = "ssh -t $($target.sshTarget) pwsh -NoProfile -File $remoteRunner " +
+                 "-RepoRoot $($target.repo) -BriefFile $remoteBrief -ReportPath $workerReportPath " +
+                 "-Model $Model -Effort $Effort -PermissionMode $PermissionMode -Name worker-$TaskId"
+    }
+    else {
+        $localRunner = (Join-Path $repoRoot 'scripts/fleet/run-worker-tty.ps1').Replace('\','/')
+        $localBrief  = $briefPath.Replace('\','/')
+        $inner = "pwsh -NoProfile -File $localRunner -RepoRoot '$($target.repo)' -BriefFile $localBrief " +
+                 "-ReportPath $workerReportPath -Model $Model -Effort $Effort " +
+                 "-PermissionMode $PermissionMode -Name worker-$TaskId"
+    }
+
+    # The tab launches a generated .ps1, never `-Command "a; b; c"`: wt.exe parses `;` as
+    # ITS OWN argument separator, so a multi-statement command is silently chopped and the
+    # tail runs as further wt sub-commands instead of inside the tab.
+    $launcher = Join-Path $runDir 'tty-launch.ps1'
+    @"
+`$Host.UI.RawUI.WindowTitle = 'worker-$TaskId'
+Set-Location '$repoRoot'
+$inner
+Write-Host ''
+Write-Host 'worker-$TaskId finished. This tab stays open so you can read it.' -ForegroundColor DarkGray
+"@ | Set-Content -Path $launcher -Encoding utf8
+
+    if ($DryRun) { Write-Host "DRYRUN wt.exe new-tab pwsh -NoExit -File $launcher`n  inner: $inner"; return }
+
+    $p = Start-Process 'wt.exe' -ArgumentList @(
+        'new-tab', '--title', "worker-$TaskId", 'pwsh', '-NoProfile', '-NoExit', '-File', $launcher
+    ) -PassThru
+    # wt.exe hands the tab to the already-running WindowsTerminal and exits within a second,
+    # so its pid is worthless: -Action list would call a live worker dead, -Action stop would
+    # kill a pid already gone, and the fleet cap would stop counting tty workers -- which is
+    # how a tty dispatch runs away unbounded. Resolve the pwsh actually running the launcher.
+    $handle.pid = $p.Id
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        $child = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.CommandLine -like '*tty-launch.ps1*' -and
+                                $_.CommandLine -like "*$TaskId*" } |
+                 Select-Object -First 1
+        if ($child) { $handle.pid = [int]$child.ProcessId; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($handle.pid -eq $p.Id) {
+        Write-Warning ("Could not resolve the tty worker's pwsh process. This run is UNTRACKED: " +
+                       "list, stop and the fleet cap will all ignore it. Close the tab by hand.")
+    }
+}
+else {
+    switch ($target.transport) {
+
+        'local' {
+            $workDir = $target.repo
+            $runner  = Join-Path $workDir 'scripts/fleet/run-worker.ps1'
             $inner = "Get-Content -Raw '$briefPath' | " +
                      "& pwsh -NoProfile -File '$runner' $runnerArgs " +
                      "1> '$rawPath' 2> '$errPath'"
@@ -228,27 +332,27 @@ Write-Host 'Brief copied to clipboard -- paste with Ctrl+V' -ForegroundColor Cya
                                       -WindowStyle Hidden -PassThru
             $handle.pid = $p.Id
         }
-    }
 
-    'ssh' {
-        if (-not $target.sshTarget) { Fail "Machine '$Machine' has transport ssh but no sshTarget set." }
-        if (-not $target.repo)      { Fail "Machine '$Machine' has transport ssh but no repo path set." }
-        # Prompt goes over stdin and the runner takes only scalars, so nothing in the
-        # brief can break the remote shell regardless of what shell answers over there.
-        $remote = "pwsh -NoProfile -File $($target.repo)/scripts/fleet/run-worker.ps1 $runnerArgs"
-        $inner  = "Get-Content -Raw '$briefPath' | & ssh -o BatchMode=yes '$($target.sshTarget)' " +
-                  "'$remote' 1> '$rawPath' 2> '$errPath'"
-        if ($DryRun) { Write-Host "DRYRUN ssh $($target.sshTarget) -> $remote"; return }
-        $p = Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-Command', $inner) `
-                                  -WindowStyle Hidden -PassThru
-        $handle.pid = $p.Id
+        'ssh' {
+            if (-not $target.sshTarget) { Fail "Machine '$Machine' has transport ssh but no sshTarget set." }
+            if (-not $target.repo)      { Fail "Machine '$Machine' has transport ssh but no repo path set." }
+            # Prompt goes over stdin and the runner takes only scalars, so nothing in the
+            # brief can break the remote shell regardless of what shell answers over there.
+            $remote = "pwsh -NoProfile -File $($target.repo)/scripts/fleet/run-worker.ps1 $runnerArgs"
+            $inner  = "Get-Content -Raw '$briefPath' | & ssh -o BatchMode=yes '$($target.sshTarget)' " +
+                      "'$remote' 1> '$rawPath' 2> '$errPath'"
+            if ($DryRun) { Write-Host "DRYRUN ssh $($target.sshTarget) -> $remote"; return }
+            $p = Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-Command', $inner) `
+                                      -WindowStyle Hidden -PassThru
+            $handle.pid = $p.Id
+        }
     }
 }
 
 $handle | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $runDir 'handle.json') -Encoding utf8
 
 if (-not $Wait) {
-    Write-Host "DISPATCHED $TaskId -> $Machine ($($target.transport)/$Mode) $Model/$Effort  pid=$($handle.pid)"
+    Write-Host "DISPATCHED $TaskId -> $Machine ($($target.transport)/$Mode) $Model/$Effort  perms=$PermissionMode  pid=$($handle.pid)"
     Write-Host "  collect:  pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId $TaskId"
     return
 }

@@ -88,8 +88,17 @@ names the exact question is worth more than a plausible implementation of the wr
 
 ## Your report — the only thing that reaches the orchestrator
 
-Your final message must be **the JSON report object and nothing else** — no prose before
-or after it. Everything else you did stays in a log the orchestrator will not read.
+**Two delivery paths, and your dispatch tells you which one you are on.**
+
+- **Default (headless):** your final message must be **the JSON report object and nothing
+  else** — no prose before or after it.
+- **If your brief ends with a REPORTING section naming a file path**, you are running in a
+  visible terminal. Nothing you say is captured; your last action is to **write the same
+  JSON object to that exact path**, raw, with no markdown fence around it.
+
+The object is identical either way. Only where you put it changes. Everything else you did
+stays in a session the orchestrator will not read — that separation is deliberate, and the
+report is the whole of what crosses back.
 
 ```json
 {
