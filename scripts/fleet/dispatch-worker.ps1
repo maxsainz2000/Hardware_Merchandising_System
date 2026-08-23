@@ -371,11 +371,11 @@ if (-not $Wait) {
     # worker whose tab is simply still open after finishing is left alone to be read.
     $watch = @"
 Start-Sleep -Seconds $($TimeoutMinutes * 60)
-`$fleet = '$((Join-Path $repoRoot 'scripts/fleet/fleet.ps1').Replace('','/'))'
+`$fleet = '$(Join-Path $repoRoot 'scripts/fleet/fleet.ps1')'
 & `$fleet -Action report -TaskId '$TaskId' *> `$null
-if (Test-Path '$((Join-Path $runDir 'report.json').Replace('','/'))') { exit 0 }
+if (Test-Path '$(Join-Path $runDir 'report.json')') { exit 0 }
 if (Get-Process -Id $($handle.pid) -ErrorAction SilentlyContinue) {
-    & `$fleet -Action stop -TaskId '$TaskId' *> '$((Join-Path $runDir 'watchdog.log').Replace('','/'))'
+    & `$fleet -Action stop -TaskId '$TaskId' *> '$(Join-Path $runDir 'watchdog.log')'
 }
 "@
     $watchFile = Join-Path $runDir 'watchdog.ps1'

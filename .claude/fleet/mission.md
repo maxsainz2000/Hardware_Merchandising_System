@@ -116,6 +116,48 @@ seconds, no transcript in the orchestrator's context. Stop then killed the remot
 verified it: zero `claude` processes left on box3. The four facts came back correct,
 including `HEAD=0e6eaaf` — the stale commit the drift warning had predicted.
 
+## box3 is a full Claude Code session — verified, not assumed, 2026-08-23
+
+**It already was one, because it is the same repository.** Everything that makes a session
+project-aware is committed and travels with the clone: `CLAUDE.md`, `.claude/settings.json`
+(the L1/L2/L3 hook wiring), all four skills, the three hook scripts, and the guardrail
+scripts. Only two things do not travel, and both were already handled — `.git/hooks`
+(the L4 pre-commit hook, installed by `bootstrap-worker-machine.ps1`, content verified
+genuine on box3) and machine-level user settings.
+
+What was missing was never configuration. It was **proof**. CLAUDE.md §11 is explicit that a
+hook must not be reported as verified in the session that created it, and no hook had ever
+been observed firing *on box3, in a dispatched worker*. Files being present is not evidence
+that a hook executes — a wrong `$CLAUDE_PROJECT_DIR`, a missing `pwsh`, or settings not
+loading would all look identical from here.
+
+All four layers now measured on box3:
+
+- **L1 `PreToolUse`** — proven in a live dispatched worker (`GUARD-01`, sonnet/low). The
+  worker was told to attempt `src/GuardrailProbe.cs`; the hook refused it with the full
+  project message (the VB-only rule, PA-001, the "do not rename it or write it elsewhere"
+  clause). No file was created, box3's tree stayed clean, and the worker reported the block
+  instead of working around it. **This also proves `.claude/settings.json` loads there and
+  `$CLAUDE_PROJECT_DIR` resolves** — every other hook is declared in that same file.
+- **L2 `PostToolUse`** — `check-vbproj.ps1` run on box3 against a `.vbproj` payload, exit 0.
+  A real scan, not a trivial one: box3 has the same **11 `.vbproj` files** as box1.
+- **L3 `Stop`** — `stop-guardrails.ps1` exits 0 and silent on a clean tree, which proves
+  nothing on its own, so it was re-run against a deliberately planted `src/L3Probe.cs`:
+  **exit 2, `G-A FAIL`**, probe removed, `git status` clean afterwards.
+- **L4 pre-commit** — hook file content verified genuine on box3, and the script it calls
+  (`check-no-csharp.ps1`) is the one L3 just proved detects a violation there.
+
+`stopHookObserved: false` in the worker's report is **not** a fault: a Stop hook's output
+runs after the turn and does not reach the model. That is why L3 was verified out of band
+rather than taken from the worker's word.
+
+**The one thing this exposed in our own code:** the async watchdog added earlier the same day
+had never executed. Every test after writing it was a `-DryRun`, and `-DryRun` returns before
+the async block — so a mangled `.Replace('','/')` (a backslash eaten by escaping) sat there
+until the first real async dispatch, which failed outright. **A dry run cannot validate the
+async path.** The path conversion was cosmetic and is gone: backslashes inside a
+single-quoted PowerShell string are already literal.
+
 ## Efficiency without budget-awareness — the user's decision, 2026-08-23
 
 **No worker and no orchestrator is ever told about a budget, a token count, a cost or a
