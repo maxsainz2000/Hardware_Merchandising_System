@@ -12,6 +12,30 @@ You do the thinking. Workers do the typing. Your scarcest resource is **your own
 not their time — protect it deliberately, because an orchestrator that has read three
 transcripts is worse at deciding than one that has read none.
 
+## What this session should be running on
+
+**`opus` at `xhigh`.** Start the orchestrator session with
+`claude --model opus --effort xhigh`, then `/orchestrate`. If you are reading this on a
+weaker configuration, say so to the user before planning a mission — the split only pays off
+when the deciding half is the capable half.
+
+The reasoning, not a preference: this session does the planning, the placement, the
+decisions a worker escalates, and the verification of every report. Anthropic's own
+orchestrator-worker guidance puts the coordinator on `claude-opus-5` and the workers on
+smaller models for exactly this reason — *"the large model spends its tokens on planning,
+checking, and synthesis; the small model does the bulk reading."* On effort, the documented
+rule is to run long-horizon agentic work at `high`/`xhigh`, and `xhigh` is Claude Code's own
+default for agentic use.
+
+`max` is deliberately not the answer here. It is reserved for cards where correctness
+outranks cost — the money, transaction and grant work in §2 — and spending it on the
+dispatcher rather than on those cards inverts the point.
+
+**Workers run lower on purpose, and that is not thrift.** A worker with a card, a scope
+boundary, and acceptance checks copied verbatim is doing bounded implementation; the
+judgement was already made here. That is what makes `sonnet` the right default for them and
+`opus` the right one for you.
+
 ## Efficiency is structural — never an instruction
 
 **No worker is ever told about a budget, a token count, a cost, or a time limit, and

@@ -116,6 +116,65 @@ seconds, no transcript in the orchestrator's context. Stop then killed the remot
 verified it: zero `claude` processes left on box3. The four facts came back correct,
 including `HEAD=0e6eaaf` — the stale commit the drift warning had predicted.
 
+## Enforcement: what is a wall and what is only a request — 2026-08-23
+
+The user asked for a 100% guarantee that a worker reports, escalates decisions, and only
+implements. **Prompting cannot give 100%** — a worker is a model and compliance with an
+instruction is probabilistic. What the fleet can do is make the expensive violations
+*impossible* and the rest *detectable*. So the invariants were split, deliberately:
+
+**Walls — mechanically enforced, verified end to end (`ENFORCE-01`, box3, sonnet/high).**
+`--disallowed-tools` **overrides `--permission-mode bypassPermissions`** — measured, not
+assumed. `scripts/fleet/worker-deny.ps1` is passed on the worker's own command line by both
+runners, so it cannot be read from config and edited away. All five forbidden probes were
+denied and the control probe succeeded:
+
+| Probe | Result |
+|---|---|
+| edit `tasks.md` | denied |
+| `git push --dry-run` | denied |
+| edit a guardrail hook | denied |
+| edit the fleet registry | denied |
+| spawn a subagent (`Agent`) | denied — *the tool was not present in the session at all* |
+| control: write/confirm/delete a scratch file | **succeeded** |
+
+**The control probe is load-bearing, not ceremony.** `Edit(tasks.md)` refuses with "File is
+in a directory that is denied by your permission settings" — a message that would read
+identically if the rule had blanket-denied the repo root. Probe 6 writing a file in that
+same directory is the only thing that distinguishes a *specific* rule from an
+indiscriminate one. Any future enforcement probe keeps a control step.
+
+Denying `Agent` removes subagent spawning from the session entirely, which is how depth-1
+delegation stops being a request. That mirrors the platform: Anthropic's multiagent
+documentation notes one-level delegation "is enforced rather than silently flattened" — a
+validation error, not a system-prompt line.
+
+**Requests — instructions the skill makes, that no permission rule can reach:** asking
+instead of guessing, staying inside a scope boundary, reporting honestly, refusing scope
+creep. These are judgement. The mitigation is not a stronger prompt; it is that the
+orchestrator treats every report as **a claim to be checked** (§5 already requires internal
+coherence — `done` with `tests: fail` is a contradiction) and that a worker's blast radius
+is bounded by the walls above even when its judgement is wrong.
+
+Syntax facts learned from the CLI's own validator rather than guessed:
+`Edit(path)` covers **all** file-editing tools; `Write(path)` is **not matched by file
+permission checks** and the CLI says so; `Bash(git push:*)` is the command-prefix form; and
+the flag is **variadic**, so a prompt following it on the command line is swallowed word by
+word as further deny rules.
+
+## Orchestrator runs on opus/xhigh — workers lower, on purpose
+
+`claude --model opus --effort xhigh`, then `/orchestrate`. Grounded, not preferred:
+Anthropic's orchestrator-worker guidance puts the coordinator on `claude-opus-5` with
+workers on smaller models — *"the large model spends its tokens on planning, checking, and
+synthesis; the small model does the bulk reading"* — and the effort guidance says to run
+long-horizon agentic work at `high`/`xhigh`, `xhigh` being Claude Code's own default for
+agentic use. `max` stays reserved for the money, transaction and grant cards, where
+correctness outranks cost; spending it on the dispatcher instead of those cards inverts the
+point.
+
+A fresh-session audit prompt lives at `.claude/fleet/health-check.md`.
+
 ## box3 is a full Claude Code session — verified, not assumed, 2026-08-23
 
 **It already was one, because it is the same repository.** Everything that makes a session
