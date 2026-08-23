@@ -16,7 +16,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'report', 'stop', 'doctor')]
+    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync')]
     [string] $Action,
 
     [string] $TaskId,
@@ -292,6 +292,69 @@ switch ($Action) {
                 }
             }
         }
+    }
+
+    'sync' {
+        # Bring a worker box up to this box's HEAD, by git BUNDLE over scp.
+        #
+        # Why not just `git pull` over there: an SSH session cannot read the box's stored
+        # GitHub credential. Git Credential Manager's default wincredman store is bound to
+        # an INTERACTIVE desktop logon, so the credential that works when you sit at the
+        # box, and worked for the old Remote Control transport, is unreadable to sshd's
+        # network logon. It fails as `fatal: Unable to persist credentials` and then a
+        # username prompt against /dev/tty that does not exist.
+        #
+        # Why not git-over-ssh to box3 directly: box3's default SSH shell does not strip the
+        # single quotes git wraps the remote path in, so the path arrives literally quoted
+        # and git says the repository does not exist. Changing that box's DefaultShell would
+        # fix it and break every quoting pattern the dispatcher and doctor rely on.
+        #
+        # A bundle needs none of it: no credential, no remote shell parsing, no network path
+        # to GitHub at all. It is one file, moved by the scp that is already proven, and the
+        # worker box fast-forwards from it. A dirty tree over there refuses rather than
+        # merging, because a worker's uncommitted work is not this command's to resolve.
+        $targets = @($registry.machines | Where-Object { $_.transport -eq 'ssh' -and $_.enabled })
+        if ($TaskId) { $targets = @($targets | Where-Object { $_.id -eq $TaskId }) }
+        if (-not $targets) { Write-Host 'No enabled ssh machines to sync.'; break }
+
+        $localHead = (& git -C $repoRoot rev-parse HEAD).Trim()
+        $branch    = (& git -C $repoRoot rev-parse --abbrev-ref HEAD).Trim()
+        $bundle    = Join-Path ([System.IO.Path]::GetTempPath()) "fleet-sync-$([guid]::NewGuid().ToString('N')).bundle"
+        & git -C $repoRoot bundle create $bundle $branch 2>&1 | Out-Null
+        if (-not (Test-Path $bundle)) { throw "sync: could not create a bundle from $branch." }
+
+        try {
+            foreach ($m in $targets) {
+                Write-Host ''
+                Write-Host "  [$($m.id)] syncing to $($localHead.Substring(0,7)) ($branch)"
+
+                $dirty = (& ssh -o BatchMode=yes $m.sshTarget "git -C $($m.repo) status --porcelain" 2>$null)
+                if ($dirty) {
+                    Write-Warning ("$($m.id) has uncommitted changes. Not syncing -- commit or discard them " +
+                                   "there first. Left alone: " + (($dirty | Select-Object -First 3) -join ' | '))
+                    continue
+                }
+
+                $remoteBundle = "$($m.repo)/../fleet-sync.bundle"
+                & scp -q -o BatchMode=yes $bundle "$($m.sshTarget):$remoteBundle" 2>&1 | Out-Null
+
+                $cmd = "git -C $($m.repo) fetch '$remoteBundle' ${branch}:refs/remotes/origin/$branch --force; " +
+                       "git -C $($m.repo) merge --ff-only refs/remotes/origin/$branch; " +
+                       "Remove-Item '$remoteBundle' -Force -ErrorAction SilentlyContinue; " +
+                       "git -C $($m.repo) rev-parse HEAD"
+                $out = (& ssh -o BatchMode=yes $m.sshTarget "pwsh -NoProfile -Command `"$cmd`"" 2>&1)
+                $newHead = (@($out) | Where-Object { $_ -match '^[0-9a-f]{40}$' } | Select-Object -Last 1)
+
+                if ($newHead -and $newHead.Trim() -eq $localHead) {
+                    Write-Host "    OK - $($m.id) is at $($localHead.Substring(0,7))" -ForegroundColor Green
+                } else {
+                    Write-Warning ("$($m.id) did NOT reach $($localHead.Substring(0,7)). It is at " +
+                                   "'$newHead'. Dispatching there now would work a stale tree.")
+                }
+            }
+        }
+        finally { Remove-Item $bundle -Force -ErrorAction SilentlyContinue }
+        Write-Host ''
     }
 
     'doctor' {

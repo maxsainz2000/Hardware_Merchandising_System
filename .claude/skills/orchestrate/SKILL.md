@@ -99,6 +99,9 @@ Never inline CLAUDE.md or the worker contract into a brief. Workers load both fr
 # check transports and each box's remaining headroom before trusting any of them
 pwsh ./scripts/fleet/fleet.ps1 -Action doctor
 
+# bring the worker boxes up to this box's HEAD -- do this BEFORE dispatching real work
+pwsh ./scripts/fleet/fleet.ps1 -Action sync
+
 # dispatch (async; returns immediately with a handle)
 pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -Machine box1 `
      -Model sonnet -Effort medium -BriefFile .claude/fleet/briefs/P2-03.md
@@ -115,6 +118,13 @@ pwsh ./scripts/fleet/fleet.ps1 -Action list
 pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId P2-03
 pwsh ./scripts/fleet/fleet.ps1 -Action stop   -TaskId P2-03      # or -All
 ```
+
+**Sync before you dispatch.** The runner travels with the dispatch; **the project does
+not**. A worker box only moves when you move it, and a card worked against a stale tree can
+pass its own tests and still not apply here — so `-Action sync` comes before the first
+dispatch of any mission. The dispatcher warns when the commits differ; the warning is a
+backstop, not the plan. Sync refuses a box with uncommitted changes rather than merging over
+a worker's unfinished work.
 
 **`tty` is the default mode, including for box3.** A remote worker is reached with
 `ssh -t`, whose ConPTY gives the TUI a real terminal, so box3's session renders in a tab
@@ -257,15 +267,22 @@ A box is ready only when **all seven** of these hold. Six of the seven have bitt
 5. **`git config user.name` / `user.email` set on that machine.** Box1 sets these at the
    *repo* level, so a clone does not inherit them and git refuses to commit without them.
    Never invent an identity — it lands on every commit; confirm it with the user.
-6. **Git credentials already cached on that machine, established out of band.** A
-   dispatched session has **no interactive login** — Git Credential Manager cannot prompt
-   in one, so a private-repo clone dies on `fatal: Cannot prompt because user interactivity
-   has been disabled` before any browser opens. There is no flag that fixes this and no
-   workaround a worker may take: never hand a box a token in a brief or a `SendMessage`,
-   and never ask one to install `gh` and authenticate itself. The user signs in **once,
-   from a real terminal on that machine**; Windows Credential Manager caches it and every
-   later headless fetch works. Read the provisioning order off this: **the clone precedes
-   the transport, not the other way round.**
+6. **The repo cloned there by a human, once, from a real terminal on that box.** A
+   private-repo clone needs credentials Git Credential Manager can only obtain
+   interactively, so a dispatched session cannot do it: it dies on `fatal: Cannot prompt
+   because user interactivity has been disabled` before any browser opens. Never hand a box
+   a token in a brief or a `SendMessage`, and never ask one to install `gh` and
+   authenticate itself. **The clone precedes the transport, not the other way round.**
+
+   **After that first clone the box needs no working credential at all**, and the older
+   version of this rule — "sign in once and every later headless fetch works" — is wrong
+   for `ssh`. It was true of Remote Control, whose session is an interactive desktop logon.
+   GCM's default `wincredman` store is bound to that logon, so **sshd's network logon cannot
+   read it**: a `git pull` over ssh fails with `Unable to persist credentials with the
+   'wincredman' credential store` and then a username prompt against a `/dev/tty` that does
+   not exist. `-Action sync` sidesteps the whole problem by moving a **git bundle** over
+   `scp` — no credential, no GitHub reachability, no remote shell quoting. Workers commit
+   locally and never push, so nothing else on that box needs to authenticate.
 
 7. **`bypassPermissions` accepted once on that box, by a human, in a real terminal.**
    Claude Code shows a one-time "Yes, I accept" acknowledgement the first time a session

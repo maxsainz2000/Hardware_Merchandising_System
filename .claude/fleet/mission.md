@@ -116,6 +116,38 @@ seconds, no transcript in the orchestrator's context. Stop then killed the remot
 verified it: zero `claude` processes left on box3. The four facts came back correct,
 including `HEAD=0e6eaaf` — the stale commit the drift warning had predicted.
 
+## Syncing a worker box — by bundle, not by pull
+
+**box3 cannot `git pull` over ssh, and this is not fixable on that box.** Git Credential
+Manager's default `wincredman` store is bound to an **interactive desktop logon**. Remote
+Control sessions are one, which is why the old readiness rule ("sign in once and every later
+headless fetch works") was true then and is **wrong for ssh**: sshd's network logon cannot
+read that credential. It fails as `Unable to persist credentials with the 'wincredman'
+credential store`, then a username prompt against a `/dev/tty` that does not exist.
+
+Two paths were tried and rejected before the one that works:
+
+- **git-over-ssh from box1 to box3** (`git push box3 master` with
+  `receive.denyCurrentBranch=updateInstead`). The path arrives literally single-quoted —
+  box3's default SSH shell does not strip the quotes git wraps it in — and git reports the
+  repository does not exist. Changing that box's `DefaultShell` would fix it **and break
+  every quoting pattern the dispatcher, doctor and stop rely on.** Not worth it. Both the
+  temporary remote and the `denyCurrentBranch` setting were reverted; nothing was left on
+  box3.
+- **A token in a plaintext credential store on box3.** Works, and puts a GitHub token in
+  cleartext on a laptop, permanently, to save a step. Refused.
+
+**What works: `fleet.ps1 -Action sync`.** `git bundle` on box1 → `scp` → fetch and
+fast-forward on box3 → bundle deleted. No credential, no GitHub reachability from the worker
+box, no remote shell parsing. It refuses a box with uncommitted changes rather than merging
+over a worker's unfinished work, and it verifies the resulting HEAD rather than trusting the
+command's exit code.
+
+**Consequence for provisioning:** after the one human clone, a worker box needs **no working
+git credential at all**. Workers commit locally and never push.
+
+**Sync before dispatching.** The runner travels with the dispatch; the project does not.
+
 ## box2, retired — 2026-08-23
 
 DESKTOP-G83CCSH (desktop, 200.9 GB, SDK 10.0.400) was removed from `machines.json`. Kept
