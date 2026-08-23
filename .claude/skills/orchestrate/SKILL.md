@@ -218,9 +218,10 @@ enforces. Four things bite, in this order:
    respond in a timely fashion") is what Windows says for almost any startup failure. Run
    `sshd.exe -t` directly to get the real one, and compare against `ssh.exe -V` from the same
    folder: if the client runs and the server dies at `0xC0000135` (STATUS_DLL_NOT_FOUND), the
-   payload is fine and the machine is not. **Stop there.** A box whose loader, signature
-   validation, and servicing cmdlets are all failing needs a Windows repair, and that repair is
-   not a fleet task — it is open-ended, it may not fix the thing you wanted, and the box doing
+   payload is fine and the machine is not. **Stop there** — even when every other health check
+   passes. On the box this was learned from, `ScanHealth`, `sfc`, signature validation and the
+   DISM CLI all came back clean; the loader failure was the *only* real symptom, and it was
+   still enough. Chasing it means a Windows repair, and that repair is not a fleet task — it is open-ended, it may not fix the thing you wanted, and the box doing
    the repairing is the broken one. Report it to the user as a machine problem, not a setup step.
 
 4. **Lock the private key's NTFS ACLs on the orchestrator box, not just its `chmod`.**

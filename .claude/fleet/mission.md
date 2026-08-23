@@ -81,10 +81,14 @@ Windows loader before any config is read. Config and host keys were regenerated 
 stale empty `C:\ProgramData\ssh` dated 2020) and it changed nothing, as expected.
 
 It is not a broken OpenSSH payload: `ssh.exe -V` from the same folder runs fine
-(OpenSSH_for_Windows_9.5p1). Three symptoms now point at one cause on this box —
-`Get-WindowsCapability` → `Class not registered`, `Get-AuthenticodeSignature` on sshd.exe →
-`UnknownError`, and sshd.exe → DLL-not-found. That is OS-level corruption, and it will affect
-Windows Update and future installs on box2 well beyond anything the fleet needs.
+(OpenSSH_for_Windows_9.5p1). **Corrected 2026-08-23:** an earlier note here claimed three
+symptoms pointed at one cause. Two of the three did not survive checking. `Get-WindowsCapability`
+returning `Class not registered` is a trait of these Windows images — box3 returns it too and box3
+is healthy. And `Get-AuthenticodeSignature` on sshd.exe is **Valid**, not `UnknownError`; that was
+a formatting artifact misread from a bundled command, retracted by box2 itself. The loader failure
+is the ONE reproducible symptom, with ScanHealth, sfc, the import scan, and signature validation
+all clean. That is still enough to stop — but the box was not "three ways corrupt", and the
+inflated framing is what made a Windows repair look justified.
 
 The user was told plainly that repairing it is open-ended, may not fix sshd, and is not fleet
 work. They chose to repair. Stage 1 (`DISM /Online /Cleanup-Image /ScanHealth`, read-only) is
