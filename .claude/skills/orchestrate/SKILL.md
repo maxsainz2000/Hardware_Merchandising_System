@@ -12,10 +12,38 @@ You do the thinking. Workers do the typing. Your scarcest resource is **your own
 not their time — protect it deliberately, because an orchestrator that has read three
 transcripts is worse at deciding than one that has read none.
 
+## Efficiency is structural — never an instruction
+
+**No worker is ever told about a budget, a token count, a cost, or a time limit, and
+neither are you.** This is a deliberate design decision by the user, not an oversight to
+correct. A model told it is running out of something changes how it works: it paces itself,
+consolidates prematurely, truncates reasoning and settles for the first adequate answer.
+That is a quality loss bought with a saving nobody measured.
+
+Efficiency here comes from **architecture and placement**, both of which act on a model
+without it perceiving anything:
+
+- **Separate context windows.** A worker's transcript never enters yours. This is the
+  single largest saving in the design and it costs no quality at all.
+- **Reports, not logs** (§5). One small object crosses back per card, not a session.
+- **Briefs are boundaries** (§3). A tight scope means less exploration, because there is
+  less in scope — not because anyone asked for restraint.
+- **Reading `tasks.md` and nothing else** (§1). The source-tree wander is the biggest
+  avoidable spend available to you, and skipping it costs no information you needed.
+- **Placement** (§2). `low` effort on a genuinely mechanical card produces fewer and more
+  consolidated tool calls — as a property of the setting, not as an instruction obeyed.
+- **External ceilings the worker cannot see.** A per-run timeout enforced by a watchdog
+  process, a fleet cap, per-box concurrency ceilings. All of them live outside the session
+  and none of them reaches a prompt.
+
+**So: never write "be concise", "save tokens", "you have a limited budget", or a time
+pressure into a brief, and never add one to this skill.** If a card is costing more than it
+should, the lever is its placement in §2 or the boundary in §3 — never a plea to the model.
+
 ## 0. Before anything: is this even an orchestration?
 
-Dispatching costs a worker startup, a brief, and a report. **If the whole job is under
-roughly two tool calls, just do it yourself.** Orchestrate when:
+Dispatching has overhead — a worker startup, a brief, and a report. **If the whole job is
+under roughly two tool calls, just do it yourself.** Orchestrate when:
 
 - there are **≥2 genuinely independent cards** (disjoint file sets), **or**
 - one card is long-running and you have other work to place beside it, **or**
@@ -92,9 +120,9 @@ the count from the work, against three real limits:
 - **Attention.** In the default `tty` mode every worker opens a tab **on your screen**.
   Four tabs is four things the user could be watching and is not.
 
-Two well-placed `sonnet/high` workers beat four cheap ones on cards that were never
-independent. When in doubt, dispatch fewer and dispatch again — the second wave costs a
-startup, and a merge conflict across two machines costs an afternoon.
+Two well-placed `sonnet/high` workers beat four poorly-placed ones on cards that were never
+independent. When in doubt, dispatch fewer and dispatch again — the second wave is one more
+startup, and a merge conflict across two machines is an afternoon.
 
 ## 3. Write the brief
 
@@ -105,6 +133,9 @@ A brief is a **boundary**, not a description. Every brief states, in this order:
 3. **Acceptance checks**, copied from the card. Not paraphrased.
 4. **What NOT to do** — the adjacent thing they will be tempted by. Be explicit; this line
    prevents more damage than the other four combined.
+   **Scope, never scarcity.** Name files and behaviours that are out of bounds. Never write
+   a budget, a token count, a cost, a deadline or "be brief" into this section — bounding
+   the work is what makes a worker efficient; telling it to hurry is what makes it worse.
 5. **Evidence path**, if the card names one.
 
 Never inline CLAUDE.md or the worker contract into a brief. Workers load both from disk.
@@ -173,9 +204,17 @@ are yours:
   at the tab — or ask the user to — rather than waiting longer. Waiting is the one response
   that is always wrong.
 
-Defaults, the global fleet cap, the per-box `maxConcurrent` ceilings and the per-worker
-budget all live in `.claude/fleet/machines.json`. Raising either cap is a §7 stop
-condition — take it to the user with the reason, do not edit the registry mid-mission.
+Defaults, the global fleet cap, the per-box `maxConcurrent` ceilings and the per-run
+timeout all live in `.claude/fleet/machines.json`. Raising a cap is a §7 stop condition —
+take it to the user with the reason, do not edit the registry mid-mission.
+
+**The ceilings are external, and that is the point.** An async dispatch starts a watchdog
+process that kills the run after `timeoutMinutes` **only if it has produced no report** —
+so a runaway is bounded, while a finished `tty` worker whose tab you are still reading is
+left alone. `maxBudgetUsd` is a hard spend cut-off that applies to `-Mode bg` only, because
+`--max-budget-usd` requires `--print`; it terminates the session from outside and is never
+shown to the worker. None of these are things the worker knows about, and none of them
+should become things it is told.
 
 **Remote Control is not dispatched with this script, and no machine uses it now.** It
 survives only as a manual fallback if box3's ssh transport ever breaks: `ListAgents` to

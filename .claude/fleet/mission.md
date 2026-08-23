@@ -116,6 +116,40 @@ seconds, no transcript in the orchestrator's context. Stop then killed the remot
 verified it: zero `claude` processes left on box3. The four facts came back correct,
 including `HEAD=0e6eaaf` — the stale commit the drift warning had predicted.
 
+## Efficiency without budget-awareness — the user's decision, 2026-08-23
+
+**No worker and no orchestrator is ever told about a budget, a token count, a cost or a
+deadline.** The user's reasoning, and it is sound: a model that knows it is running out of
+something paces itself, consolidates prematurely, truncates reasoning and settles for the
+first adequate answer — a quality loss bought with a saving nobody measured. Anthropic's own
+`task_budget` feature works exactly this way *on purpose*, by injecting a countdown the
+model sees so it paces itself. This fleet wants the opposite.
+
+So efficiency is **architectural and placement-based** — it acts on a model without the
+model perceiving anything: separate context windows, reports instead of transcripts, briefs
+that bound scope, reading `tasks.md` and not the source tree, and the model/effort table.
+`low` effort produces fewer and more consolidated tool calls as a *property of the setting*,
+not as an instruction obeyed. That distinction is the whole design.
+
+**This forced the containment to be real, because it can no longer be a prompt.** Two gaps
+were open and are now closed:
+
+- `--max-budget-usd` **only works with `--print`**, so the `maxBudgetUsd: 5` in the registry
+  did nothing in the `tty` mode that is now the default.
+- The hard timeout only ran under `-Wait`. An **async dispatch — the normal path — had no
+  enforced ceiling of any kind**, only the OVERDUE marker in `-Action list`.
+
+An async dispatch now starts a **watchdog process** that kills the run at `timeoutMinutes`
+**only if it has produced no report**, so a runaway is bounded while a finished `tty` worker
+whose tab is still being read is left alone. Both paths were tested against a synthetic run
+with a dummy process rather than by spending a worker: the kill path killed, the
+report-present path left the process running.
+
+That test also exposed a separate fault worth keeping: `Get-Runs` read optional handle
+fields directly, and `Set-StrictMode` turns a missing property into a terminating error —
+so **one stale run directory broke `list`, `report` and `stop` for every run**, including
+the commands you would use to clean it up. All optional fields go through `Get-Prop` now.
+
 ## Model and effort — corrected against documentation, 2026-08-23
 
 The user asked what the `/orchestrate` §2 model/effort table was based on. The honest

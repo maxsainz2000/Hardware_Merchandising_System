@@ -356,7 +356,34 @@ else {
 $handle | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $runDir 'handle.json') -Encoding utf8
 
 if (-not $Wait) {
+    # A watchdog, because an async dispatch had NO enforced ceiling of any kind: the hard
+    # timeout below only ran under -Wait, and --max-budget-usd only works with --print, so
+    # it does nothing in the tty mode that is now the default. A runaway worker was bounded
+    # by nothing but somebody noticing.
+    #
+    # This is deliberately the ONLY kind of limit the fleet uses: an external one the worker
+    # cannot perceive. Telling a model it is on a budget changes how it works -- it paces,
+    # truncates and settles early -- so efficiency here comes from architecture and from
+    # placement, never from an instruction to be frugal. Nothing about this watchdog reaches
+    # a prompt.
+    #
+    # It kills only a worker that is past its deadline AND has produced no report, so a tty
+    # worker whose tab is simply still open after finishing is left alone to be read.
+    $watch = @"
+Start-Sleep -Seconds $($TimeoutMinutes * 60)
+`$fleet = '$((Join-Path $repoRoot 'scripts/fleet/fleet.ps1').Replace('','/'))'
+& `$fleet -Action report -TaskId '$TaskId' *> `$null
+if (Test-Path '$((Join-Path $runDir 'report.json').Replace('','/'))') { exit 0 }
+if (Get-Process -Id $($handle.pid) -ErrorAction SilentlyContinue) {
+    & `$fleet -Action stop -TaskId '$TaskId' *> '$((Join-Path $runDir 'watchdog.log').Replace('','/'))'
+}
+"@
+    $watchFile = Join-Path $runDir 'watchdog.ps1'
+    $watch | Set-Content -Path $watchFile -Encoding utf8
+    Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-File', $watchFile) -WindowStyle Hidden | Out-Null
+
     Write-Host "DISPATCHED $TaskId -> $Machine ($($target.transport)/$Mode) $Model/$Effort  perms=$PermissionMode  pid=$($handle.pid)"
+    Write-Host "  ceiling:  $TimeoutMinutes min, then killed if it has produced no report"
     Write-Host "  collect:  pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId $TaskId"
     return
 }

@@ -57,17 +57,25 @@ function Get-Runs {
             $h = Join-Path $_.FullName 'handle.json'
             if (Test-Path $h) {
                 $handle = Get-Content -Raw $h | ConvertFrom-Json
-                $alive = [bool]($handle.pid -and (Get-Process -Id $handle.pid -ErrorAction SilentlyContinue))
+                $hpid  = Get-Prop $handle 'pid'
+                $alive = [bool]($hpid -and (Get-Process -Id $hpid -ErrorAction SilentlyContinue))
+                # Every optional field goes through Get-Prop. StrictMode turns a missing
+                # property into a terminating error, and this function enumerates ALL runs --
+                # so one handle.json written by an older dispatcher (no remoteRunDir, no
+                # timeoutMinutes) took down list, report AND stop for every run in the
+                # directory, not just its own. A stale folder must never be able to brick
+                # the tool you would use to clean it up.
+                $started = Get-Prop $handle 'startedAt'
                 [pscustomobject]@{
-                    TaskId = $handle.taskId; Machine = $handle.machine; Mode = $handle.mode
-                    Model  = "$($handle.model)/$($handle.effort)"
-                    Alive  = $alive; Pid = $handle.pid; RunDir = $_.FullName
-                    Started = $handle.startedAt
-                    Transport = $handle.transport; RemoteRunDir = $handle.remoteRunDir
-                    Mins   = if ($handle.startedAt) {
-                                 [int]((Get-Date) - [datetime]$handle.startedAt).TotalMinutes
-                             } else { $null }
-                    Timeout = $handle.timeoutMinutes
+                    TaskId = Get-Prop $handle 'taskId'; Machine = Get-Prop $handle 'machine'
+                    Mode   = Get-Prop $handle 'mode'
+                    Model  = "$(Get-Prop $handle 'model')/$(Get-Prop $handle 'effort')"
+                    Alive  = $alive; Pid = Get-Prop $handle 'pid'; RunDir = $_.FullName
+                    Started = $started
+                    Transport = Get-Prop $handle 'transport'
+                    RemoteRunDir = Get-Prop $handle 'remoteRunDir'
+                    Mins   = if ($started) { [int]((Get-Date) - [datetime]$started).TotalMinutes } else { $null }
+                    Timeout = Get-Prop $handle 'timeoutMinutes'
                 }
             }
         }

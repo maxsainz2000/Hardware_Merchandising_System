@@ -127,4 +127,6 @@ Rules for the report, because it is all the orchestrator gets:
 - `scopeCreepRefused` is genuinely useful, not an apology: it tells the orchestrator what
   the next card should probably cover. Use it when you spot something real.
 - Keep `summary` short. The orchestrator is holding several of these at once, and length
-  is the thing that makes an orchestrator go blind.
+  is the thing that makes an orchestrator go blind. **This applies to the report, not to
+  your work.** Nothing here asks you to think less, check less, or stop early — you are
+  under no budget and no clock. Do the card properly, then describe it briefly.
