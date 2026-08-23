@@ -152,7 +152,7 @@ when it is available — headless, structured reports, no interactive session to
 but it needs `sshd` on that machine and LAN reachability, neither of which the current
 fleet has.
 
-A box is ready only when **all five** of these hold. Four of the five have bitten already:
+A box is ready only when **all six** of these hold. Five of the six have bitten already:
 
 1. **`claude --remote-control` running there**, signed into the same Anthropic account, and
    **visibly listed by `ListAgents` here**. A named session that never connected looks
@@ -170,6 +170,14 @@ A box is ready only when **all five** of these hold. Four of the five have bitte
 5. **`git config user.name` / `user.email` set on that machine.** Box1 sets these at the
    *repo* level, so a clone does not inherit them and git refuses to commit without them.
    Never invent an identity — it lands on every commit; confirm it with the user.
+6. **Git credentials already cached on that machine, established out of band.** An RC
+   session has **no TTY** — Git Credential Manager cannot prompt in one, so a private-repo
+   clone dies on `fatal: Cannot prompt because user interactivity has been disabled` before
+   any browser opens. There is no flag that fixes this and no workaround a worker may take:
+   never hand a box a token over `SendMessage`, and never ask one to install `gh` and
+   authenticate itself. The user signs in **once, from a real terminal on that machine**;
+   Windows Credential Manager caches it and every later RC fetch works headlessly. Read the
+   provisioning order off this: **the clone precedes the RC session, not the other way round.**
 
 Then run, on that machine:
 

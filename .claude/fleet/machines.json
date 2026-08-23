@@ -40,14 +40,14 @@
       "formFactor": "desktop",
       "role": "secondary",
       "transport": "rc",
-      "rcSessionName": "desktop-g83ccsh-inherited-bear",
+      "rcSessionName": "desktop-g83ccsh-scalable-candle",
       "sshTarget": "",
       "repo": "",
       "enabled": false,
       "sdk": "10.0.400",
       "freeGb": 200.9,
       "owns": ["evidence/", "scripts/"],
-      "notes": "BLOCKED on two things: (1) no repo - needs the remote created and cloned; (2) SDK drift - has 10.0.400, global.json requires exactly 10.0.301, so dotnet will refuse until 10.0.301 is installed side-by-side. Currently running in C:/Users/maxsa (user-profile root), which loads no project CLAUDE.md and cannot resolve /worker - must be restarted inside the clone."
+      "notes": "SDK 10.0.301 confirmed installed side-by-side with 10.0.400. gh not installed (not required - clone is over https with Git Credential Manager). PCSystemType=1, a real desktop. Remaining: clone to C:/dev/Hardware_Merchandising_System, global git identity, bootstrap verdict, and a session restarted INSIDE the checkout - the live RC session sits in C:/Users/maxsa (user-profile root), which loads no project CLAUDE.md and cannot resolve /worker."
     },
     {
       "id": "box3",
@@ -55,14 +55,14 @@
       "formFactor": "laptop",
       "role": "secondary",
       "transport": "rc",
-      "rcSessionName": "desktop-f5lk8ma-abstract-ritchie",
+      "rcSessionName": "desktop-f5lk8ma-jazzy-karp",
       "sshTarget": "",
       "repo": "",
       "enabled": false,
       "sdk": "10.0.400",
       "freeGb": 57.8,
       "owns": ["documentations/"],
-      "notes": "Same two blockers as box2. Physically a laptop despite the DESKTOP- hostname."
+      "notes": "Same remaining steps as box2. SDK 10.0.301 confirmed. gh not installed. PCSystemType=2 (Mobile) - physically a laptop despite the DESKTOP- hostname, confirmed from the registry, not guessed from the name. 57.8 GB free is the tightest box in the fleet."
     }
   ],
   "defaults": {

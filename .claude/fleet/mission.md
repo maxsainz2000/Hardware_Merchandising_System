@@ -11,18 +11,36 @@ mission closes — this is a worksheet, not a history. `git log` is the history.
 |---|---|---|---|---|---|
 | _(none open)_ | | | | | Phase 2 not started; fleet setup in progress |
 
-## Fleet state — 2026-08-22
+## Fleet state — 2026-08-23
 
 | Box | Machine | Transport | Ready | Blocked on |
 |---|---|---|---|---|
 | box1 | LAPTOP-3HH6OHHE (laptop) | local | yes | — |
-| box2 | DESKTOP-G83CCSH (desktop, 200.9 GB) | rc | no | repo clone; restart session inside checkout; git identity |
+| box2 | DESKTOP-G83CCSH (desktop, 200.9 GB) | rc | no | clone → bootstrap verdict → restart session inside checkout |
 | box3 | DESKTOP-F5LK8MA (**laptop**, 57.8 GB) | rc | no | same three |
 
-Done: SDK 10.0.301 installed side-by-side on box2/box3; `global.json` pins it with
-`rollForward: disable`; git history scanned — no real credentials, only test fixtures.
+Done: SDK 10.0.301 installed side-by-side on box2/box3 and **verified on both today**;
+`global.json` pins it with `rollForward: disable`; git history scanned — no real credentials,
+only test fixtures; `gh` authenticated on box1; **private remote created and `master` pushed**
+(2026-08-23) — the clone is what every remaining step hung on.
 
-Open: GitHub private remote not yet created (`gh` installed on box1, not authenticated).
+Open: **the clone, blocked on authentication.** Global git identity is now set on both boxes
+(`Max Sainz <maxsainz2000@gmail.com>`, confirmed by the user) — that step passed. The clone
+itself failed identically on box2 and box3:
+
+    fatal: Cannot prompt because user interactivity has been disabled.
+    fatal: could not read Username for 'https://github.com': terminal prompts disabled
+
+An RC session has no TTY, so Git Credential Manager cannot prompt at all — no browser, no 403.
+This is now readiness condition 6 in the `/orchestrate` skill. The user is signing in once from
+a real terminal on each box; after that the cached credential makes every RC fetch headless.
+Then: `bootstrap-worker-machine.ps1` verdict, then the RC session restarted **inside** the
+checkout — the step only the user can take, and the reason a green bootstrap alone does not
+flip a box to `enabled: true`.
+
+Note: RC session names change on every restart. The names in `machines.json` are hints; confirm
+against a live `ListAgents` before dispatching. Today's: box2 `desktop-g83ccsh-scalable-candle`,
+box3 `desktop-f5lk8ma-jazzy-karp`.
 
 ## Status values
 
