@@ -206,7 +206,16 @@ switch ($Action) {
                 'ssh' {
                     if (-not $m.sshTarget) { Write-Host '    sshTarget     : NOT SET'; continue }
                     $probe = & ssh -o BatchMode=yes -o ConnectTimeout=5 $m.sshTarget 'claude --version' 2>&1
-                    if ($LASTEXITCODE -eq 0) { Write-Host "    ssh + claude  : OK ($probe)" }
+                    $ok = $LASTEXITCODE -eq 0
+                    # Keep the client's advisory chatter out of the verdict. A newer OpenSSH
+                    # client warns about post-quantum key exchange against an older server; it
+                    # is not an error and it is not this check's business, but spliced into the
+                    # OK line it makes a healthy box look alarming on every single run.
+                    $probe = (@($probe) | Where-Object {
+                        $_ -notmatch 'post-quantum|store now, decrypt later|openssh\.com/pq|^\s*\*\*\s*$'
+                    }) -join ' '
+                    $probe = ($probe -replace '\s+', ' ').Trim()
+                    if ($ok) { Write-Host "    ssh + claude  : OK ($probe)" }
                     else { Write-Host "    ssh + claude  : FAIL -> $probe" }
                 }
                 'rc' { Write-Host '    Remote Control: check with ListAgents in the orchestrator session, not here.' }
