@@ -18,7 +18,7 @@
 [CmdletBinding()]
 param(
     [string] $Model          = 'sonnet',
-    [string] $Effort         = 'medium',
+    [string] $Effort         = 'high',
     [string] $PermissionMode = 'acceptEdits',
     [double] $MaxBudgetUsd   = 5,
     [string] $Name           = 'worker'

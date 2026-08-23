@@ -62,7 +62,21 @@
   ],
   "defaults": {
     "model": "sonnet",
-    "effort": "medium",
+    "effort": "high",
+    "$effortNote": [
+      "high, NOT medium. Corrected 2026-08-23 against Anthropic's documented guidance after",
+      "the user asked what the original table was based on - the honest answer was nothing.",
+      "The documented rule: minimum high for intelligence-sensitive work, high/xhigh for",
+      "long-horizon agentic tasks, max when correctness matters more than cost, low for",
+      "simple sub-tasks. xhigh is Claude Code's OWN default, so a fleet on medium was running",
+      "below what Claude Code would have chosen for itself.",
+      "Effort levels are low/medium/high/xhigh/max - verified against `claude --help` on this",
+      "machine, not quoted from memory.",
+      "haiku is deliberately NOT the default and should not be reintroduced as a cost saving:",
+      "effort is unsupported on Haiku 4.5, so haiku/low reads as a tuning choice while the",
+      "effort flag does nothing; its context is 200K against 1M for Opus 5 and Sonnet 5; and",
+      "Sonnet 5 is $3/$15 per MTok against Haiku's $1/$5, two to three times, not ten."
+    ],
     "permissionMode": "bypassPermissions",
     "maxBudgetUsd": 5,
     "maxFleet": 5,

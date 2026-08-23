@@ -45,15 +45,33 @@ One card, alone, on this machine, is `/task` — not this skill. Say so and swit
 
 ## 2. Choose model, effort, and how many — deliberately
 
-Three decisions, all yours, none of them a default to skip past. Starting everything on
-`opus/high` wastes budget; starting everything on `haiku/low` produces work you rewrite.
+Three decisions, all yours, none of them a default to skip past.
 
 | Card looks like | Model | Effort |
 |---|---|---|
-| Mechanical, fully specified — boilerplate, evidence capture, a scripted run | `haiku` | `low` |
-| Ordinary implementation of a card that is already well specified | `sonnet` | `medium` |
-| Business rules, transactions, concurrency, money/decimal handling, auth, SQL grants | `opus` | `high` |
+| Mechanical, fully specified — evidence capture, a scripted run, boilerplate | `sonnet` | `low` |
+| Ordinary implementation of a card that is already well specified | `sonnet` | `high` |
+| Business rules, transactions, concurrency, money/decimal handling, auth, SQL grants | `opus` | `max` |
 | A card that already came back `blocked` once, or where the design is genuinely open | `opus` | `xhigh` |
+
+**This table is derived from Anthropic's documented guidance, not from intuition** — an
+earlier version of it was the reverse, and was wrong in three ways worth naming so they are
+not reintroduced:
+
+- **`medium` is below the floor for this kind of work.** The documented rule is a *minimum*
+  of `high` for intelligence-sensitive work, `high`/`xhigh` for long-horizon agentic tasks,
+  and `max` when correctness matters more than cost. `xhigh` is **Claude Code's own
+  default**. A fleet running `medium` is running below what Claude Code would have picked
+  for itself, which is not a saving anybody chose.
+- **`haiku` is gone, and not on quality grounds.** Haiku 4.5 is a 4.5-generation model:
+  `effort` is **not supported on it** — a `haiku`/`low` dispatch gives you haiku with the
+  effort flag doing nothing, while reading like a deliberate tuning choice. Its context is
+  200K against 1M for Opus 5 and Sonnet 5, which is a real constraint for a worker holding
+  the spec, CLAUDE.md and a card at once. And Sonnet 5 is $3/$15 per MTok against Haiku's
+  $1/$5 — two to three times, not the order of magnitude the old table implied.
+- **`opus/max`, not `opus/high`, for the money and grant cards.** `DECIMAL(19,4)`
+  arithmetic, transaction atomicity and the `merch_api` grant model are exactly the
+  "correctness matters more than cost" case the guidance names.
 
 **Escalate on evidence, never pre-emptively.** Dispatch at the tier the card deserves; if
 the report comes back `blocked` or `failed` on something real, re-dispatch that card one
@@ -74,7 +92,7 @@ the count from the work, against three real limits:
 - **Attention.** In the default `tty` mode every worker opens a tab **on your screen**.
   Four tabs is four things the user could be watching and is not.
 
-Two well-placed `sonnet/medium` workers beat four `haiku/low` ones on cards that were never
+Two well-placed `sonnet/high` workers beat four cheap ones on cards that were never
 independent. When in doubt, dispatch fewer and dispatch again — the second wave costs a
 startup, and a merge conflict across two machines costs an afternoon.
 
@@ -104,11 +122,11 @@ pwsh ./scripts/fleet/fleet.ps1 -Action sync
 
 # dispatch (async; returns immediately with a handle)
 pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -Machine box1 `
-     -Model sonnet -Effort medium -BriefFile .claude/fleet/briefs/P2-03.md
+     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-03.md
 
 # the worker box - same command, different -Machine. `ssh -t` opens its tab on YOUR screen
 pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-04 -Machine box3 `
-     -Model sonnet -Effort medium -BriefFile .claude/fleet/briefs/P2-04.md
+     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-04.md
 
 # headless instead, when nobody is going to watch it anyway
 pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-05 -Machine box3 -Mode bg

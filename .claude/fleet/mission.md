@@ -116,6 +116,39 @@ seconds, no transcript in the orchestrator's context. Stop then killed the remot
 verified it: zero `claude` processes left on box3. The four facts came back correct,
 including `HEAD=0e6eaaf` — the stale commit the drift warning had predicted.
 
+## Model and effort — corrected against documentation, 2026-08-23
+
+The user asked what the `/orchestrate` §2 model/effort table was based on. The honest
+answer was **nothing**: it arrived in `e2bc326` with the skill, was never checked against
+Anthropic's guidance, and had since been built on — the "how many workers" section added
+the same day called it "the same kind of decision", lending it authority it had not earned.
+
+Checked properly, it was wrong in three ways. The corrected table is in §2; the reasoning
+is recorded here because a table that looks plausible is exactly the kind that gets
+reverted by someone trying to save money.
+
+- **`medium` was below the floor.** Documented guidance: a *minimum* of `high` for
+  intelligence-sensitive work, `high`/`xhigh` for long-horizon agentic tasks, `max` when
+  correctness matters more than cost, `low` for simple sub-tasks. **`xhigh` is Claude
+  Code's own default.** The fleet was running every worker below what Claude Code would
+  have picked for itself — a saving nobody chose. Registry default is `high` now.
+- **`haiku`/`low` was not a real setting.** Haiku 4.5 is a 4.5-generation model and
+  **`effort` is not supported on it**, so the flag did nothing while reading as a tuning
+  decision. Its context is 200K against 1M for Opus 5 and Sonnet 5 — a real limit for a
+  worker holding the spec, CLAUDE.md and a card at once. And Sonnet 5 is $3/$15 per MTok
+  against Haiku's $1/$5: two to three times, not the order of magnitude assumed. It stays
+  *selectable* for a deliberate choice and is no longer a default anywhere.
+- **`opus/high` was too low for the cards that matter most here.** `DECIMAL(19,4)`
+  arithmetic, transaction atomicity and the `merch_api` grant model are precisely the
+  "correctness matters more than cost" case, which is `max`.
+
+**What was verified on this machine versus taken from documentation**, because the
+distinction is the whole point: the effort levels (`low`/`medium`/`high`/`xhigh`/`max`) and
+the model aliases were read out of `claude --help` here. The per-tier *recommendations* come
+from Anthropic's API documentation, and the fleet drives the **CLI**, not the API — carrying
+them across is an inference. A reasonable one, since the docs state `xhigh` is Claude Code's
+default, but an inference, and it was not confirmed against CLI-specific documentation.
+
 ## Syncing a worker box — by bundle, not by pull
 
 **box3 cannot `git pull` over ssh, and this is not fixable on that box.** Git Credential

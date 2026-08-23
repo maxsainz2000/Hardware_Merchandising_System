@@ -35,6 +35,10 @@ param(
     [string] $BriefFile,
 
     [string] $Machine = 'box1',
+    # haiku stays selectable for a deliberate choice, but it is NOT the default and should
+    # not be reintroduced as one: effort is unsupported on Haiku 4.5, so -Effort alongside
+    # -Model haiku reads as tuning while doing nothing; its context is 200K against 1M for
+    # Opus 5 and Sonnet 5; and Sonnet 5 is 2-3x its price, not 10x. See /orchestrate section 2.
     [ValidateSet('fable', 'opus', 'sonnet', 'haiku')]
     [string] $Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]

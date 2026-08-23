@@ -27,7 +27,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $BriefFile,
     [Parameter(Mandatory = $true)] [string] $ReportPath,
     [string] $Model          = 'sonnet',
-    [string] $Effort         = 'medium',
+    [string] $Effort         = 'high',
     [string] $PermissionMode = 'acceptEdits',
     [string] $Name           = 'worker',
 
