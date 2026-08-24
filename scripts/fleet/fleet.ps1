@@ -54,6 +54,32 @@ function Read-RemoteLine([string] $Target, [string] $Command, [string] $Pattern)
     return $null
 }
 
+# Is this run's process still OUR process?
+#
+# "A process with this id exists" is not the same question, and the difference is not
+# academic: Windows recycles pids within hours. Measured here on 2026-08-24 -- a finished
+# HC-ENFORCE worker's pid came back as an svchost, so `list` reported a phantom worker
+# running 22 minutes after it had exited, the fleet cap counted a slot that nothing was
+# using, and `-Action stop` ran `taskkill /T /F` against a live SYSTEM SERVICE. Two of those
+# are annoying and the third is dangerous.
+#
+# Identity is the start time: a recycled pid always has a different one. Handles written
+# before that field existed fall back to a name check, which is weaker but still would have
+# caught the svchost.
+function Test-RunAlive($handle) {
+    $hpid = Get-Prop $handle 'pid'
+    if (-not $hpid) { return $false }
+    $p = Get-Process -Id $hpid -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }
+
+    $stamp = Get-Prop $handle 'pidStartedAt'
+    if ($stamp) {
+        try { return ([Math]::Abs(($p.StartTime - [datetime]$stamp).TotalSeconds) -le 5) }
+        catch { return $false }   # cannot read StartTime => not a process we launched
+    }
+    return ($p.ProcessName -in @('pwsh', 'powershell'))
+}
+
 # Returns the property value if present AND non-empty, else $null -- so callers can
 # write `if (Get-Prop $o 'x')` without tripping over StrictMode on a missing property.
 function Get-Prop($obj, [string] $name) {
@@ -72,8 +98,7 @@ function Get-Runs {
             $h = Join-Path $_.FullName 'handle.json'
             if (Test-Path $h) {
                 $handle = Get-Content -Raw $h | ConvertFrom-Json
-                $hpid  = Get-Prop $handle 'pid'
-                $alive = [bool]($hpid -and (Get-Process -Id $hpid -ErrorAction SilentlyContinue))
+                $alive = Test-RunAlive $handle
                 # Every optional field goes through Get-Prop. StrictMode turns a missing
                 # property into a terminating error, and this function enumerates ALL runs --
                 # so one handle.json written by an older dispatcher (no remoteRunDir, no

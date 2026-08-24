@@ -146,7 +146,7 @@ Produce the table. Then answer these three plainly:
   free space (X4 FAIL), `cards` removed from the report schema (X5 FAIL), the selector's
   no-track refusal changed to exit 0 (X6 FAIL), the `Stop` layer removed from the committed
   `settings.json` (X7 FAIL), a commit left stranded on box3 (X8 FAIL), and the dispatcher's
-  database-exclusivity rule neutralised (X9 FAIL).
+  database-exclusivity rule neutralised (X9 FAIL), and liveness put back to existence-only (X10 FAIL).
 
 ---
 
@@ -181,6 +181,12 @@ found in what it does ask for.
   like an idle fleet. Checks both halves — the real file must yield scopes that each contain
   a card, and a file with no `## Track` headings must be refused rather than dispatched as
   one scope containing the whole phase.
+- **X10 — a recycled pid does not resurrect a finished run.** Windows reuses pids within
+  hours. While liveness was "a process with this id exists", a dead worker whose number had
+  been handed to an `svchost` was reported `running` twenty-two minutes after it exited, the
+  fleet cap counted a slot nothing was using — two of those against box1's ceiling of 2 would
+  refuse every dispatch forever — and `-Action stop` ran `taskkill /T /F` against a live
+  system service. Liveness is now identity: the pid's start time is stamped at dispatch.
 - **X8 — no worker box is holding commits this box has never collected.** Workers commit
   locally and never push, so a worker box holds the only copy of its own work until
   `-Action collect` runs. The symptom of forgetting is silent: the report says `done` with a

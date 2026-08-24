@@ -95,9 +95,9 @@ the table:
   items 1–6, 12–14, X2–X4 and X6 against live machinery — X2 runs a generated watchdog, X3
   fills a box to its ceiling and takes the refusal, X4 reads free disk over ssh, X6 runs the
   scope selector against both the real `tasks.md` and a no-track fixture, X8 asks each worker
-  box what it is holding, X9 holds the database with a live run and takes the refusal. Items
-  7–11, X1, X5 and X7 are static analysis of files in the repo. Say so rather than implying
-  every item was exercised equally.
+  box what it is holding, X9 holds the database with a live run and takes the refusal, X10
+  fabricates a recycled pid. Items 7–11, X1, X5 and X7 are static analysis of files in the
+  repo. Say so rather than implying every item was exercised equally.
 - **What is the single most likely way this setup fails in real use that the checklist does
   not cover?**
 - **Is there any check here that cannot fail as written?** A check that always passes is

@@ -127,11 +127,26 @@ if ($PermissionMode -in @('acceptEdits','auto','manual')) {
 # --- Fleet cap: the orchestrator's own guard against running away -------------------
 $runsRoot = Join-Path $repoRoot '.claude/fleet/runs'
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
+# Liveness is IDENTITY, not existence. Windows recycles pids within hours, and a recycled
+# one made a finished run look live forever -- which here means a permanently consumed slot
+# against a ceiling of 2, so box1 would refuse every dispatch for a worker that had exited.
+# Measured 2026-08-24: a dead worker's pid came back as an svchost.
+function Test-LiveHandle($handle) {
+    if (-not $handle.PSObject.Properties['pid'] -or -not $handle.pid) { return $false }
+    $p = Get-Process -Id $handle.pid -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }
+    if ($handle.PSObject.Properties['pidStartedAt'] -and $handle.pidStartedAt) {
+        try { return ([Math]::Abs(($p.StartTime - [datetime]$handle.pidStartedAt).TotalSeconds) -le 5) }
+        catch { return $false }
+    }
+    return ($p.ProcessName -in @('pwsh', 'powershell'))
+}
+
 $live = @(Get-ChildItem $runsRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     $h = Join-Path $_.FullName 'handle.json'
     if (Test-Path $h) {
         $handle = Get-Content -Raw $h | ConvertFrom-Json
-        if ($handle.pid -and (Get-Process -Id $handle.pid -ErrorAction SilentlyContinue)) { $handle }
+        if (Test-LiveHandle $handle) { $handle }
     }
 })
 if ($live.Count -ge $defaults.maxFleet -and -not $DryRun) {
@@ -263,6 +278,7 @@ $handle = [ordered]@{
     startedAt = (Get-Date).ToString('o')
     pid       = $null
     timeoutMinutes = $TimeoutMinutes
+    pidStartedAt   = $null
     # Recorded so the NEXT dispatch can see that the one MariaDB is spoken for. The check
     # above reads this off every live run's handle.
     needsDatabase = $needsDb
@@ -406,6 +422,19 @@ else {
             $handle.pid = $p.Id
         }
     }
+}
+
+# Stamp the process's start time next to its pid. This is what makes a later liveness test
+# an identity test rather than an existence test -- without it, a recycled pid keeps a
+# finished run "live" forever, holding a slot and making `stop` aim at a stranger.
+# Recorded here, once, for every launch path, so no path can forget it.
+try {
+    $proc = Get-Process -Id $handle.pid -ErrorAction Stop
+    $handle.pidStartedAt = $proc.StartTime.ToString('o')
+} catch {
+    # A worker that finished before we could stamp it is not an error; it is just already
+    # done, and an unstamped handle degrades to the name check rather than to a wrong answer.
+    $handle.pidStartedAt = $null
 }
 
 $handle | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $runDir 'handle.json') -Encoding utf8

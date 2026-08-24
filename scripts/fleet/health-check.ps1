@@ -862,6 +862,55 @@ Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the repor
     "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
 }
 
+# --- X10 ---------------------------------------------------------------------------------
+# Windows recycles pids. If liveness is "a process with this id exists", a finished run comes
+# back to life the moment something else is handed its number -- and all three consequences
+# are real, measured here on 2026-08-24 when a dead worker's pid became an svchost:
+#   list  reported a phantom worker "running" 22 minutes after it exited
+#   the fleet cap counted a slot nothing was using -- against box1's ceiling of 2, two of
+#         those would refuse every dispatch forever
+#   stop  ran `taskkill /T /F` against a live SYSTEM SERVICE
+# The fix is identity, not existence: the pid's start time is stamped at dispatch. This
+# check fabricates the failure directly.
+Invoke-Check -Id 'X10' -Area 'X' -Name 'a recycled pid does not resurrect a finished run' -Body {
+    $runsRoot = Join-Path $repoRoot '.claude/fleet/runs'
+
+    # A live process that is definitely NOT one of our workers. Its pid stands in for the
+    # recycled number a dead worker's handle would be pointing at.
+    $stranger = Get-Process -Name 'svchost' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $stranger) { $stranger = Get-Process -Id $PID }   # last resort: this process
+    $dir = Join-Path $runsRoot "ZZPID-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+
+    try {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        # No pidStartedAt: the legacy shape, which must still be caught by the name check.
+        @{ taskId = 'ZZPID-GHOST'; machine = 'box1'; mode = 'tty'; pid = $stranger.Id } |
+            ConvertTo-Json | Set-Content -Path (Join-Path $dir 'handle.json') -Encoding utf8
+
+        $out = Invoke-Fleet @('-Action', 'list')
+        $row = @($out.Lines | Where-Object { $_ -match 'ZZPID-GHOST' })
+        if (-not $row) { throw 'the fabricated run did not appear in -Action list at all, so this check proved nothing' }
+        if ($row[0] -match '\brunning\b') {
+            throw ("a handle pointing at an unrelated live process ($($stranger.ProcessName) pid $($stranger.Id)) " +
+                   "is reported as RUNNING -- a recycled pid resurrects finished runs, holds a fleet slot forever, " +
+                   "and `stop` would taskkill a stranger")
+        }
+
+        # And the stamped shape: right pid, wrong start time, must also be dead.
+        @{ taskId = 'ZZPID-GHOST'; machine = 'box1'; mode = 'tty'; pid = $PID
+           pidStartedAt = (Get-Date).AddYears(-5).ToString('o') } |
+            ConvertTo-Json | Set-Content -Path (Join-Path $dir 'handle.json') -Encoding utf8
+        $out2 = Invoke-Fleet @('-Action', 'list')
+        $row2 = @($out2.Lines | Where-Object { $_ -match 'ZZPID-GHOST' })
+        if ($row2 -and $row2[0] -match '\brunning\b') {
+            throw 'a handle whose pid is live but whose recorded start time does not match is reported as RUNNING -- liveness is not testing identity'
+        }
+
+        "a handle pointing at an unrelated live process ($($stranger.ProcessName)) is not counted live, and neither is a pid whose start time does not match"
+    }
+    finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 # --- X9 ----------------------------------------------------------------------------------
 # There is one MariaDB, on box1. Two scopes with disjoint FILES can still collide through it
 # -- one applies a migration while the other's integration tests read the tables -- and the
