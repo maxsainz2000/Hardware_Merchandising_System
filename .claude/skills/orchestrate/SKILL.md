@@ -116,6 +116,18 @@ one worker, one commit *per card*.
    proposes a mutually-compatible wave. When it says nothing is parallel-safe, believe it
    and sequence: a merge conflict across two machines costs far more than a serial run.
 
+   **Disjoint files are not disjoint work.** There is exactly one MariaDB, on box1, so two
+   database-touching scopes collide through it even when they share no file — one applies a
+   migration while the other's integration tests are reading the tables, and the failure
+   lands in whichever worker read second looking exactly like a code bug. The database is
+   therefore modelled as an **exclusive resource**: at most one database scope runs at a
+   time, `-Action next` shows it as a conflict, and **the dispatcher refuses the second one**
+   rather than trusting anyone to remember. That is a wall, not advice.
+
+   The consequence for Phase 2 is worth stating plainly: **every track needs the database,
+   so Phase 2 runs one scope at a time.** The fleet's parallelism arrives when there is
+   non-database work — docs, scripts, client XAML, evidence capture — to place beside it.
+
    Its one real limit, and it is worth holding in mind: it is only as good as the
    `**Files:**` lines in the cards. **A card that understates its files understates its
    conflicts.** If a scope's file list looks thin for what the card actually describes,
@@ -344,14 +356,30 @@ you act on: the top-level `status` is a rollup and cannot tell you which card to
 
 ## 6. Integrate
 
-Workers commit locally and never push. You handle integration, in one place, once:
+Workers commit locally and never push. You handle integration, in one place, once.
+
+**A remote worker's commits are on ITS box until you collect them.** This is the step that
+is easy to skip and impossible to skip safely: the report says `done` with a real sha, but
+that sha exists only on box3. Collect first, then look at the log.
 
 > **Folder:** repo root · **USB:** not required · **Shell:** normal
 
 ```powershell
+# bring box3's commits here. Lands them on refs/remotes/box3/master, then fast-forwards
+# this box when it is clean. A DIVERGED box is refused -- that is an integration decision.
+pwsh ./scripts/fleet/fleet.ps1 -Action collect
+
 git -C . log --oneline -n 10
 git -C . status --short
+
+# and put the boxes back on one line before the next dispatch
+pwsh ./scripts/fleet/fleet.ps1 -Action sync
 ```
+
+**`sync` will refuse a box that is holding uncollected commits**, and say so — it is the
+other direction of the same pipe, and fast-forwarding over a worker's only copy of its work
+is not something it may do. If you see that warning, the answer is `-Action collect`, never
+a harder reset.
 
 Then run the guardrails and the tests **once, yourself**, across the merged result. Green
 workers do not imply a green tree — that is precisely what parallel work breaks.

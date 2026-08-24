@@ -44,7 +44,11 @@
 param(
     [string] $TasksFile,
     [int]    $Max = 3,
-    [switch] $Json
+    [switch] $Json,
+    # Look up ONE scope by its key (P2-TRACK-A) and emit just that record as JSON. This is
+    # how dispatch-worker.ps1 finds out whether a scope needs the database, so that the
+    # exclusivity rule is enforced by the dispatcher rather than remembered by a model.
+    [string] $ScopeId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -78,6 +82,14 @@ function New-Scope([string] $Name, [string] $Kind) {
     }
     $script:scopes.Add($s) | Out-Null
     $script:current = $s
+}
+
+# The phase number, for the scope keys. A key is what the orchestrator actually passes to
+# `dispatch-worker.ps1 -Scope`, so it has to be printed here rather than invented at the
+# keyboard -- an invented one silently becomes a run directory nobody can look up again.
+$phase = 'P?'
+foreach ($line in $lines) {
+    if ($line -match '^#\s+tasks\.md.*Phase\s+(\d+)') { $phase = "P$($Matches[1])"; break }
 }
 
 foreach ($line in $lines) {
@@ -136,9 +148,16 @@ foreach ($s in $scopes) {
                ($bodyAll -match '(?i)mariadb|migration|merch_api|merch_migrator|integration test|grant')
     $box = if ($needsDb) { 'box1' } else { 'box3' }
 
+    # The key the orchestrator dispatches with: P2-TRACK-A. Derived, never typed.
+    $key = if ($s.kind -eq 'carried') { 'CARRIED' }
+           elseif ($s.name -match '^Track\s+([A-Za-z0-9]+)') { "$phase-TRACK-$($Matches[1].ToUpperInvariant())" }
+           else { "$phase-$($s.name -replace '[^A-Za-z0-9]+', '-')".TrimEnd('-').ToUpperInvariant() }
+
     $open += [pscustomobject]@{
+        key       = $key
         scope     = $s.name
         kind      = $s.kind
+        needsDb   = [bool]$needsDb
         cards     = @($openCards | ForEach-Object { $_.id })
         titles    = @($openCards | ForEach-Object { "$($_.id) · $($_.title)" })
         openCount = $openCards.Count
@@ -176,10 +195,33 @@ for ($i = 0; $i -lt $open.Count; $i++) {
                 }
             }
         }
+
+        # Disjoint FILES are not the same thing as disjoint WORK. Two scopes can touch no
+        # common file and still collide, because there is exactly one MariaDB on box1 and
+        # both of them migrate it and run integration tests against it. Their failures then
+        # look like code bugs -- a migration applying underneath another scope's test run --
+        # and land in whichever worker happened to read the table second.
+        #
+        # So the database is modelled as an exclusive resource: at most one database-touching
+        # scope runs at a time. This is the conflict edge that file comparison cannot see,
+        # and it is why "parallel-safe" over file sets alone was a claim this tool should
+        # never have made.
+        if ($open[$i].needsDb -and $open[$j].needsDb) {
+            $shared += 'the MariaDB instance on box1 (exclusive - both scopes migrate it or test against it)'
+        }
+
         if ($shared) {
             $conflicts += [pscustomobject]@{ a = $open[$i].scope; b = $open[$j].scope; shared = $shared }
         }
     }
+}
+
+# Single-scope lookup for the dispatcher. Emitted before the digest so it stays cheap.
+if ($ScopeId) {
+    $hit = @($open | Where-Object { $_.key -eq $ScopeId.ToUpperInvariant() })
+    if (-not $hit) { '{}' ; exit 0 }
+    $hit[0] | ConvertTo-Json -Depth 6
+    exit 0
 }
 
 # Carried-forward cards are open, but each one is owed to a NAMED later gate (ADR-016), so
@@ -229,7 +271,7 @@ Write-Host "Open scopes in $([IO.Path]::GetFileName($TasksFile))  ($($open.Count
 Write-Host ''
 foreach ($s in $shown) {
     $tag = if ($s.kind -eq 'carried') { '  [carried forward -- owned by a later gate, take it only if asked]' } else { '' }
-    Write-Host "  $($s.scope)$tag" -ForegroundColor White
+    Write-Host "  $($s.scope)  [$($s.key)]$tag" -ForegroundColor White
     Write-Host "    cards : $($s.cards -join ', ')  ($($s.openCount) open of $($s.cardCount))"
     if ($s.files) { Write-Host "    files : $($s.files -join ', ')" -ForegroundColor DarkGray }
     else          { Write-Host "    files : (none declared -- independence cannot be computed for this scope)" -ForegroundColor DarkYellow }

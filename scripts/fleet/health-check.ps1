@@ -862,6 +862,91 @@ Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the repor
     "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
 }
 
+# --- X9 ----------------------------------------------------------------------------------
+# There is one MariaDB, on box1. Two scopes with disjoint FILES can still collide through it
+# -- one applies a migration while the other's integration tests read the tables -- and the
+# failure lands in whichever worker read second, looking exactly like a code bug. The rule is
+# enforced in the dispatcher rather than advised in a skill, so it is checked like a wall.
+#
+# Both directions matter equally. Over-blocking would be just as bad: a probe or a docs scope
+# that needs no database must still dispatch while a database scope is running, or the fleet
+# serialises into one worker and the whole design stops paying for itself.
+Invoke-Check -Id 'X9' -Area 'X' -Name 'two database scopes cannot run at once, and a non-database scope is not blocked' -Body {
+    $runsRoot = Join-Path $repoRoot '.claude/fleet/runs'
+    $probeDir = Join-Path $runsRoot "ZZDB-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    $holder   = $null
+    try {
+        $holder = Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 90') -PassThru -WindowStyle Hidden
+        New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+        @{ taskId = 'ZZDB-HOLDER'; machine = 'box1'; pid = $holder.Id; needsDatabase = $true } |
+            ConvertTo-Json | Set-Content -Path (Join-Path $probeDir 'handle.json') -Encoding utf8
+
+        # A scope tasks.md says needs the database. Resolved from the real file, so this
+        # check follows the project rather than hard-coding a track that may be finished.
+        $dbScope = ((& pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/fleet/next-scope.ps1') -Json 2>$null) -join "`n" |
+                    ConvertFrom-Json).openScopes | Where-Object { $_.needsDb } | Select-Object -First 1
+        if (-not $dbScope) { Unverified 'no open scope in tasks.md needs the database, so the exclusivity rule cannot be exercised' }
+
+        # The brief deliberately does not exist: if the rule fails to fire the dispatcher
+        # stops at the brief, so this check can never start a worker.
+        $nope = Join-Path ([IO.Path]::GetTempPath()) "hc-no-brief-$([guid]::NewGuid().ToString('N')).md"
+
+        $out = & pwsh -NoProfile -File $dispatchPs1 -Scope $dbScope.key -Machine box1 -BriefFile $nope 2>&1
+        $txt = (@($out) | ForEach-Object { "$_" }) -join ' '
+        if ($txt -match 'DISPATCHED') { throw "a second database scope ($($dbScope.key)) was DISPATCHED while one was held -- two migrations can now interleave" }
+        if ($txt -notmatch 'needs the database') {
+            throw ("the database exclusivity rule did not fire for $($dbScope.key) while a holder was live. Dispatcher said: $txt")
+        }
+
+        # And the other direction: a scope the selector does not know is not a database
+        # holder, and must sail past this rule to the brief error.
+        $out2 = & pwsh -NoProfile -File $dispatchPs1 -Scope 'ZZ-NOT-A-DB-SCOPE' -Machine box3 -BriefFile $nope 2>&1
+        $txt2 = (@($out2) | ForEach-Object { "$_" }) -join ' '
+        if ($txt2 -match 'needs the database') {
+            throw 'a scope with no database surface was blocked by the database rule -- the fleet would serialise to one worker'
+        }
+
+        "held the database with a live run; $($dbScope.key) was REFUSED, and a non-database scope was not"
+    }
+    finally {
+        if ($holder) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# --- X8 ----------------------------------------------------------------------------------
+# Workers commit locally and never push, so a worker box accumulates the only copy of its
+# own work until someone runs -Action collect. Nothing used to do that at all, and the
+# symptom is silent: the report says `done` with a real sha, the orchestrator ticks the box,
+# and the commit is on the other laptop. The next sync then refuses forever, because
+# ff-only cannot fast-forward a box that has moved.
+Invoke-Check -Id 'X8' -Area 'X' -Name 'no worker box is holding commits this box has never collected' -Body {
+    $targets = @($registry.machines | Where-Object { $_.transport -eq 'ssh' -and $_.enabled })
+    if (-not $targets) { Unverified 'no enabled ssh worker box to inspect' }
+
+    $localHead = (& git -C $repoRoot rev-parse HEAD).Trim()
+    $lines = @()
+    foreach ($m in $targets) {
+        $remoteHead = @(Read-OverSsh $m.sshTarget "git -C $($m.repo) rev-parse HEAD" |
+                        Where-Object { $_ -match '^[0-9a-f]{40}$' }) | Select-Object -Last 1
+        if (-not $remoteHead) { Unverified "could not read HEAD on $($m.id) over ssh" }
+
+        if ($remoteHead.Trim() -eq $localHead) { $lines += "$($m.id) level at $($localHead.Substring(0,7))"; continue }
+
+        # rev-list prints a number only when the box actually has this box's HEAD. When it
+        # does not, the box is behind or diverged -- which is item 3's business, not this
+        # item's, and saying so beats guessing.
+        $cnt = @(Read-OverSsh $m.sshTarget "git -C $($m.repo) rev-list --count $localHead..HEAD" |
+                 Where-Object { $_ -match '^\d+$' }) | Select-Object -Last 1
+        if ($cnt -and [int]$cnt -gt 0) {
+            throw ("$($m.id) is holding $cnt commit(s) that this box has never collected -- a worker's work " +
+                   "exists only there, and every later -Action sync will refuse. Run: fleet.ps1 -Action collect")
+        }
+        $lines += "$($m.id) differs from this box but holds nothing uncollected (behind or diverged -- see item 3)"
+    }
+    ($lines -join '; ')
+}
+
 # --- X7 ----------------------------------------------------------------------------------
 # Every worker on every box inherits its edit-time guardrails from the COMMITTED
 # .claude/settings.json -- it travels with the repo, so `-Action sync` is what puts L1-L3 on

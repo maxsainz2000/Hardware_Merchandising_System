@@ -144,8 +144,9 @@ Produce the table. Then answer these three plainly:
   it exists to catch: a watchdog with its kill branch deleted (14 and X2 both FAIL), the
   dispatcher's per-machine ceiling neutralised (X3 FAIL), the disk allowance raised past the
   free space (X4 FAIL), `cards` removed from the report schema (X5 FAIL), the selector's
-  no-track refusal changed to exit 0 (X6 FAIL), and the `Stop` layer removed from the
-  committed `settings.json` (X7 FAIL).
+  no-track refusal changed to exit 0 (X6 FAIL), the `Stop` layer removed from the committed
+  `settings.json` (X7 FAIL), a commit left stranded on box3 (X8 FAIL), and the dispatcher's
+  database-exclusivity rule neutralised (X9 FAIL).
 
 ---
 
@@ -180,6 +181,16 @@ found in what it does ask for.
   like an idle fleet. Checks both halves — the real file must yield scopes that each contain
   a card, and a file with no `## Track` headings must be refused rather than dispatched as
   one scope containing the whole phase.
+- **X8 — no worker box is holding commits this box has never collected.** Workers commit
+  locally and never push, so a worker box holds the only copy of its own work until
+  `-Action collect` runs. The symptom of forgetting is silent: the report says `done` with a
+  real sha and the sha is on the other laptop. It also breaks `sync` permanently, because
+  `merge --ff-only` cannot fast-forward a box that has moved.
+- **X9 — two database scopes cannot run at once, and a non-database scope is not blocked.**
+  There is one MariaDB. Two scopes with disjoint *files* still collide through it, and the
+  failure lands in whichever worker read the tables second, looking like a code bug. Checked
+  in both directions on purpose: over-blocking would serialise the fleet to one worker and
+  the design would stop paying for itself.
 - **X7 — the three edit-time guardrails are wired in the *committed* `settings.json`.**
   Workers inherit L1–L3 from the repo, so `-Action sync` is the only thing that puts them on
   box3 at all. A layer deleted, or moved into the gitignored `settings.local.json` to stop

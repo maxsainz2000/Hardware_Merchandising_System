@@ -416,6 +416,19 @@ switch ($Action) {
                     continue
                 }
 
+                # Refuse BEFORE trying if the box is holding commits this one does not have.
+                # ff-only would fail anyway, but the old wording called an ahead box a "stale
+                # tree", which points at exactly the wrong fix: the box is not behind, it is
+                # carrying a worker's work that has never been collected. Syncing is not what
+                # is wanted there and overwriting it would destroy the work.
+                $ahead = (Read-RemoteLine $m.sshTarget `
+                          "git -C $($m.repo) rev-list --count $localHead..HEAD" '^\d+$')
+                if ($ahead -and [int]$ahead -gt 0) {
+                    Write-Warning ("$($m.id) has $ahead commit(s) this box does not. NOT syncing -- that is a " +
+                                   "worker's work, and ff-only would refuse anyway. Run: fleet.ps1 -Action collect")
+                    continue
+                }
+
                 $remoteBundle = "$($m.repo)/../fleet-sync.bundle"
                 & scp -q -o BatchMode=yes $bundle "$($m.sshTarget):$remoteBundle" 2>&1 | Out-Null
 

@@ -148,6 +148,35 @@ if ($live.Count -ge $defaults.maxFleet -and -not $DryRun) {
 $machineCap = if ($target.PSObject.Properties['maxConcurrent'] -and $target.maxConcurrent) {
                   [int]$target.maxConcurrent
               } else { [int]$defaults.maxFleet }
+# --- The database is an exclusive resource -------------------------------------------
+# There is exactly one MariaDB, on box1. Two scopes can touch no common FILE and still
+# collide through it: one applies a migration while the other's integration tests are
+# reading the tables. The failures land in whichever worker read second and look exactly
+# like code bugs, which is the worst possible way to lose an afternoon.
+#
+# So it is enforced here rather than advised in a skill. next-scope.ps1 knows which scopes
+# need the database; a scope it does not recognise (a probe, a smoke test) is not a database
+# holder and is never blocked by this.
+$needsDb = $false
+try {
+    $lookup = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'next-scope.ps1') -ScopeId $TaskId 2>$null
+    $rec    = ((@($lookup) | ForEach-Object { "$_" }) -join "`n") | ConvertFrom-Json
+    $needsDb = [bool]($rec.PSObject.Properties.Name -contains 'needsDb' -and $rec.needsDb)
+} catch { $needsDb = $false }
+
+if ($needsDb -and -not $DryRun) {
+    $dbHolders = @($live | Where-Object {
+        $_.PSObject.Properties.Name -contains 'needsDatabase' -and $_.needsDatabase
+    })
+    if ($dbHolders) {
+        $ids = ($dbHolders | ForEach-Object { $_.taskId }) -join ', '
+        Fail ("$TaskId needs the database and it is already held by: $ids. There is one MariaDB on " +
+              "box1, so two database scopes cannot run at once -- their migrations and integration " +
+              "tests would interleave. Collect that worker first, or dispatch a scope that needs no " +
+              "database (fleet.ps1 -Action next shows which).")
+    }
+}
+
 $liveHere = @($live | Where-Object { $_.machine -eq $Machine })
 if ($liveHere.Count -ge $machineCap -and -not $DryRun) {
     $ids = ($liveHere | ForEach-Object { $_.taskId }) -join ', '
@@ -234,6 +263,9 @@ $handle = [ordered]@{
     startedAt = (Get-Date).ToString('o')
     pid       = $null
     timeoutMinutes = $TimeoutMinutes
+    # Recorded so the NEXT dispatch can see that the one MariaDB is spoken for. The check
+    # above reads this off every live run's handle.
+    needsDatabase = $needsDb
 }
 
 # --- Dispatch -----------------------------------------------------------------------
@@ -296,9 +328,16 @@ if ($Mode -eq 'tty') {
     # ITS OWN argument separator, so a multi-statement command is silently chopped and the
     # tail runs as further wt sub-commands instead of inside the tab.
     $launcher = Join-Path $runDir 'tty-launch.ps1'
+    $pidFile  = Join-Path $runDir 'worker.pid'
     @"
 `$Host.UI.RawUI.WindowTitle = 'worker-$TaskId'
 Set-Location '$repoRoot'
+# First action, before anything can go wrong: state which process this tab is. Resolving it
+# from the outside by scanning Win32_Process for a matching command line is a race, and when
+# it lost the run went UNTRACKED -- list, stop and the fleet cap all ignored it, which is
+# exactly how a tty dispatch runs away unbounded. A pid the launcher writes itself cannot
+# lose that race.
+Set-Content -Path '$pidFile' -Value `$PID -Encoding ascii
 $inner
 Write-Host ''
 Write-Host 'worker-$TaskId finished. This tab stays open so you can read it.' -ForegroundColor DarkGray
@@ -316,6 +355,12 @@ Write-Host 'worker-$TaskId finished. This tab stays open so you can read it.' -F
     $handle.pid = $p.Id
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
+        # The pid the launcher wrote about itself is authoritative. Only fall back to
+        # scanning command lines if that file has not appeared yet.
+        if (Test-Path $pidFile) {
+            $written = (Get-Content -Raw $pidFile).Trim()
+            if ($written -match '^\d+$') { $handle.pid = [int]$written; break }
+        }
         $child = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
                  Where-Object { $_.CommandLine -like '*tty-launch.ps1*' -and
                                 $_.CommandLine -like "*$TaskId*" } |
@@ -324,8 +369,12 @@ Write-Host 'worker-$TaskId finished. This tab stays open so you can read it.' -F
         Start-Sleep -Milliseconds 500
     }
     if ($handle.pid -eq $p.Id) {
-        Write-Warning ("Could not resolve the tty worker's pwsh process. This run is UNTRACKED: " +
-                       "list, stop and the fleet cap will all ignore it. Close the tab by hand.")
+        # Both routes failed, which now means the tab never started rather than that a scan
+        # lost a race. Refuse rather than record a run nothing can see: an untracked run is
+        # worse than no run, because the cap stops counting it and a runaway is unbounded.
+        Fail ("Could not determine the tty worker's process for $TaskId (no $pidFile and no matching " +
+              "pwsh). The tab may not have started. Nothing is tracked for this run -- check the " +
+              "Windows Terminal tab, close it if it exists, and dispatch again.")
     }
 }
 else {
