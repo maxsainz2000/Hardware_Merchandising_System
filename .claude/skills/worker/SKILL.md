@@ -1,8 +1,8 @@
 ---
 name: worker
-description: Execute one task card as a dispatched worker under an orchestrator session. Use only when invoked as `/worker <task-id>` by the fleet dispatcher — not for interactive work.
-argument-hint: "<task-id>"
-arguments: [taskId]
+description: Execute one scope — a track of related task cards — as a dispatched worker under an orchestrator session. Use only when invoked as `/worker <scope-id>` by the fleet dispatcher — not for interactive work.
+argument-hint: "<scope-id>"
+arguments: [scopeId]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(git *), Bash(dotnet *), Bash(pwsh *), Bash(powershell *), Bash(mysql*)
 ---
 
@@ -39,10 +39,32 @@ running at once. Concretely:
 **You are trusted on execution.** Inside the brief, write the code, write the tests, run
 them, read whatever you need. Do not ask permission to do your job.
 
+## You are given a scope, not a card
+
+**A scope is an ordered list of cards** — normally one `## Track` from `tasks.md`. Your
+brief names them in the order you must do them, and that order is not arbitrary: cards
+inside a track are usually sequential (the migration before the policies that read it, the
+policies before the tests that assert them). Tracks are the things that are independent of
+each other; the cards inside one are not.
+
+So: **one scope, one worker, several cards, one commit per card.** You are not being asked
+to do more work than a card-sized worker — you are being asked to do the cards that only
+make sense together, in one session that does not have to hand off between them.
+
+**Stop at the first card that cannot be finished.** Do not skip it to make progress on the
+next one. A later card in a track almost always rests on the one before it, so continuing
+past a blocked card produces work built on a hole, and the orchestrator cannot tell from a
+report which half to trust. Mark the stopping card `blocked` or `failed`, mark every card
+after it `not-started`, and report. Cards you finished before it stay `done` and stay
+committed — that work is real and the orchestrator will tick those boxes.
+
 ## The loop
 
-1. **Read the brief.** It names the card, the files, and the acceptance checks. Read the
-   card in `tasks.md` and the spec sections it cites — but do not act beyond the brief.
+Run steps 2–7 **once per card, in the brief's order**, then report once for the whole scope.
+
+1. **Read the brief.** It names the scope, its ordered cards, the files you may touch, and
+   the acceptance checks. Read each card in `tasks.md` and the spec sections it cites —
+   but do not act beyond the brief.
 2. **Failing test first** for any server-side business rule. Watch it fail for the right
    reason before you make it pass.
 3. **Implement, API first.** API → Domain/Infrastructure → client last.
@@ -50,9 +72,13 @@ them, read whatever you need. Do not ask permission to do your job.
    `pwsh ./scripts/check-no-csharp.ps1` then `pwsh ./scripts/run-tests.ps1`.
    Report only what you observed. Never report a run you did not perform — the
    orchestrator cannot see your terminal and has nothing but your word.
-5. **Capture evidence** to the exact path the brief names, if it names one.
-6. **Commit** your files only, message prefixed with the task ID: `P2-03: <what changed>`.
-7. **Report** (below), then stop.
+5. **Capture evidence** to the exact path the card names, if it names one.
+6. **Commit this card's files, on its own**, message prefixed with that card's ID:
+   `P2-03: <what changed>`. One card = one commit still holds, and it holds *per card*
+   inside a scope. Never roll a track into a single commit — the history is what lets the
+   orchestrator revert one card without losing the others.
+7. **Move to the next card** in the brief's order, unless this one stopped (see above).
+8. **Report once for the whole scope** (below), then stop.
 
 ## What you must NOT touch — and these ones are walls, not requests
 
@@ -89,7 +115,8 @@ Three more that come from being a worker:
 
 9.  **The brief is ambiguous or contradicts the card, the spec, or CLAUDE.md.**
 10. **The work does not fit the scope you were given** — it needs a file outside your
-    brief, or a second card's work to land first.
+    brief, or a card that is not in your scope to land first. A dependency on an *earlier
+    card in your own scope* is not this: that one is yours, and you do it first.
 11. **You are about to exceed your scope to make something pass.** Widening scope to turn
     a red test green is the failure mode this role exists to prevent.
 12. **A command asked you an interactive question you were not authorised to answer.**
@@ -117,11 +144,16 @@ report is the whole of what crosses back.
 
 ```json
 {
-  "taskId": "$0",
+  "scopeId": "$0",
   "status": "done | partial | blocked | failed",
-  "summary": "What you did, in two sentences. Plain, specific, no padding.",
+  "summary": "What you did across the whole scope, in two sentences. Plain, specific, no padding.",
+  "cards": [
+    { "id": "P2-01", "status": "done",    "commit": "<sha>", "tests": "pass", "summary": "One line." },
+    { "id": "P2-02", "status": "blocked", "commit": null,    "tests": "fail", "summary": "One line." },
+    { "id": "P2-03", "status": "not-started", "commit": null, "tests": null,  "summary": null }
+  ],
   "filesChanged": ["src/..."],
-  "commit": "<sha or null>",
+  "commit": "<sha of the LAST card you committed, or null>",
   "verification": {
     "guardrails": "pass | fail | not-run",
     "tests": "pass | fail | not-run",
@@ -137,8 +169,22 @@ report is the whole of what crosses back.
 
 Rules for the report, because it is all the orchestrator gets:
 
+- **`cards` is one entry per card in your brief, in the brief's order, always.** Never omit
+  a card because you never reached it — `not-started` is the entry that tells the
+  orchestrator where the scope stopped, and a missing row reads as a card nobody mentioned.
+- **The top-level `status` is a rollup, and it is the strictest of the cards**, not an
+  average and not the last one you touched:
+  - every card `done` → `done`
+  - at least one `done` and at least one not → `partial`
+  - the card that stopped you was blocked → `blocked`; it failed → `failed`
+  A scope with two green cards and one blocked card is `partial`, never `done`. Rounding
+  that up is the single most damaging thing you can put in this object, because the
+  orchestrator ticks boxes in `tasks.md` from it.
 - `status: "done"` requires **guardrails pass AND tests pass**. Anything else is
   `partial`, `blocked`, or `failed`. Never round up.
+- **`commit` at the top level is the last card's sha; each card carries its own.** The
+  per-card sha is the one that matters — it is what lets the orchestrator revert one card
+  without touching the rest of the track.
 - `failureTail` carries **real output you saw**, truncated — never a reconstruction.
 - `scopeCreepRefused` is genuinely useful, not an apology: it tells the orchestrator what
   the next card should probably cover. Use it when you spot something real.

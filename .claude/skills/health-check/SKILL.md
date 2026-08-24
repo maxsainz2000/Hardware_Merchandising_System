@@ -19,13 +19,13 @@ definition of each item and the reasoning behind it. This skill runs it.
 
 `high`, not `xhigh`: this is verification, not orchestration. And it must not be the session
 that then goes on to run a mission — an orchestrator that has just audited its own fleet is
-holding fourteen items of detail it will spend the whole mission carrying. If you are
+holding a full audit of detail it will spend the whole mission carrying. If you are
 reading this in a session that has been doing something else, say so in the report.
 
 ## The ground rules — they matter more than the checklist
 
 - **Verify by executing, never by reading.** That is the whole reason the checklist is a
-  script: fourteen manual steps get executed unevenly, and the step that gets skipped is
+  script: a long manual checklist gets executed unevenly, and the step that gets skipped is
   the one that reports `PASS` anyway. Run it and paste the real output.
 - **Do not fix anything.** This is a diagnosis. If you find a fault, describe it precisely
   and stop; the repair is a separate decision that belongs to the user. The tool list above
@@ -92,8 +92,10 @@ plainly. They are the part of the audit a script cannot do, and they are worth m
 the table:
 
 - **Which items did you actually execute, and which did you only read?** The script executes
-  items 1–6 and 12–14 against live machinery; items 7–11 and X1 are static analysis of files
-  in the repo. Say so rather than implying all fourteen were exercised equally.
+  items 1–6, 12–14 and X2–X4 against live machinery — X2 runs a generated watchdog, X3 fills
+  a box to its ceiling and takes the refusal, X4 reads free disk over ssh. Items 7–11, X1 and
+  X5 are static analysis of files in the repo. Say so rather than implying every item was
+  exercised equally.
 - **What is the single most likely way this setup fails in real use that the checklist does
   not cover?**
 - **Is there any check here that cannot fail as written?** A check that always passes is

@@ -216,11 +216,18 @@ P4-07: partial receiving accumulates across receipts
 
 **`/phase-gate`** runs the phase exit review and, on a genuine PASS only, regenerates `tasks.md` for the next phase.
 
-**`/orchestrate`** runs several cards in parallel across this machine and `box3` (see
-`.claude/fleet/machines.json`). It dispatches **`/worker`** sessions — one card each, fixed
-scope, structured report back — and does the deciding itself. Workers never edit `tasks.md`,
-never push, and report a blocker rather than guessing. Use it only when there are genuinely
-independent cards; a single card is `/task`.
+**`/orchestrate`** runs several **scopes** in parallel across this machine and `box3` (see
+`.claude/fleet/machines.json`). **A scope is one `## Track` from `tasks.md`** — an ordered
+list of cards that only make sense together, because tracks are what is independent of each
+other and the cards inside one are not. It dispatches **`/worker`** sessions — one scope
+each, one commit per card, one structured report back — and does the deciding itself.
+Workers never edit `tasks.md`, never push, and report a blocker rather than guessing. Use it
+only when there are genuinely independent tracks; a single track is `/task`, card by card.
+
+**Which scope is next is a command, not a judgement call:** `pwsh ./scripts/fleet/fleet.ps1
+-Action next` parses `tasks.md` and returns the open tracks in file order with their cards,
+their combined file sets, the collisions between them, and a box recommendation. The
+orchestrator asks it rather than reading `tasks.md` itself.
 
 **`/health-check`** audits the fleet itself — transports, the deny list that makes a worker's
 invariants walls rather than requests, context isolation, and the external ceilings. Run it

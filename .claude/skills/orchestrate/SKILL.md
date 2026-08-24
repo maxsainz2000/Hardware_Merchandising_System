@@ -1,7 +1,7 @@
 ---
 name: orchestrate
-description: Run a fleet of Claude Code workers across this laptop and box3 to execute several task cards. Use for "orchestrate", "dispatch workers", "run tasks in parallel", "use the other laptop", or when a phase has independent cards worth splitting.
-argument-hint: "[task-ids or goal]"
+description: Run a fleet of Claude Code workers across this laptop and box3 to execute several scopes - tracks of related task cards. Use for "orchestrate", "dispatch workers", "run tasks in parallel", "use the other laptop", "what is next", or when a phase has independent tracks worth splitting.
+argument-hint: "[scope, task-ids, or goal - omit to take the next open scope]"
 arguments: [goal]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(pwsh *), Bash(git *), Bash(ssh *), ListAgents, SendMessage, AskUserQuestion
 ---
@@ -49,11 +49,13 @@ without it perceiving anything:
 
 - **Separate context windows.** A worker's transcript never enters yours. This is the
   single largest saving in the design and it costs no quality at all.
-- **Reports, not logs** (§5). One small object crosses back per card, not a session.
+- **Reports, not logs** (§5). One small object crosses back per scope, not a session — and
+  a scope is several cards, so the saving grows with the size of the track.
 - **Briefs are boundaries** (§3). A tight scope means less exploration, because there is
   less in scope — not because anyone asked for restraint.
-- **Reading `tasks.md` and nothing else** (§1). The source-tree wander is the biggest
-  avoidable spend available to you, and skipping it costs no information you needed.
+- **Asking `-Action next` instead of reading `tasks.md`** (§1). The source-tree wander is
+  the biggest avoidable spend available to you and reading the whole card file is its close
+  cousin; a script that answers the same question costs you three lines of output.
 - **Placement** (§2). `low` effort on a genuinely mechanical card produces fewer and more
   consolidated tool calls — as a property of the setting, not as an instruction obeyed.
 - **External ceilings the worker cannot see.** A per-run timeout enforced by a watchdog
@@ -69,29 +71,72 @@ should, the lever is its placement in §2 or the boundary in §3 — never a ple
 Dispatching has overhead — a worker startup, a brief, and a report. **If the whole job is
 under roughly two tool calls, just do it yourself.** Orchestrate when:
 
-- there are **≥2 genuinely independent cards** (disjoint file sets), **or**
-- one card is long-running and you have other work to place beside it, **or**
+- there are **≥2 genuinely independent scopes** (disjoint file sets), **or**
+- one scope is long-running and you have other work to place beside it, **or**
 - the user explicitly asked for the fleet or for box3.
 
-One card, alone, on this machine, is `/task` — not this skill. Say so and switch.
+One scope, alone, on this machine, is `/task` card by card — not this skill. Say so and
+switch. And a scope of one card is still just a card: Track D is P2-10 and nothing else,
+so it is `/task` unless something else is running beside it.
 
-## 1. Plan before you spawn
+## 1. Plan before you spawn — and the unit is a SCOPE, not a card
 
-1. **Read `tasks.md`** and pick the cards. Nothing else — do not read the source tree to
-   "understand context" first. That is the single biggest context leak available to you.
-2. **Prove independence.** Two cards may run in parallel only if their file sets are
-   disjoint. Shared file → sequence them. When unsure, sequence: a merge conflict across
-   two machines costs far more than a serial run.
-3. **Place each card.** The fleet is two laptops, and the split is one rule:
+**A scope is one `## Track` from `tasks.md`: an ordered list of cards that only make sense
+together.** Track A is P2-01 → P2-02 → P2-03, and that order is real — the migration has to
+land before the policies that read it, and the policies before the tests that assert them.
+**Tracks are the things that are independent of each other; the cards inside one are not.**
+
+Dispatching a card at a time splits work that has to stay together, pays a worker startup
+for each piece, and forces a hand-off in the middle of a dependency chain. Dispatching a
+track hands one worker a boundary that matches how the work actually decomposes. One scope,
+one worker, one commit *per card*.
+
+1. **Ask which scope is next. Do not read `tasks.md` to find out.**
+
+   ```powershell
+   pwsh ./scripts/fleet/fleet.ps1 -Action next
+   ```
+
+   That is how the next scope is chosen when nobody names one, and it is deliberately a
+   command rather than an instruction you follow by hand. It parses `tasks.md` itself and
+   returns, for each open scope: the ordered open cards, the union of their `**Files:**`
+   lines, a box recommendation, and every pair of scopes that collide. Reading `tasks.md`
+   yourself to answer the same question costs you the whole file and answers it less
+   reliably — the source-tree wander is the biggest avoidable spend available to you, and
+   this is its close cousin.
+
+   The rule it implements, so you can predict it: **the next scope is the first track in
+   file order with at least one card not `✅`.** Carried-forward cards are listed but never
+   proposed — each is owed to a named later gate (ADR-016), so they are open work, not next
+   work. Take one only if the user asks.
+
+2. **Independence is computed for you, and it is stricter than string equality.** Two
+   scopes may run in parallel only if their file sets are disjoint, where a declared
+   *directory* collides with any file inside it. `-Action next` prints the collisions and
+   proposes a mutually-compatible wave. When it says nothing is parallel-safe, believe it
+   and sequence: a merge conflict across two machines costs far more than a serial run.
+
+   Its one real limit, and it is worth holding in mind: it is only as good as the
+   `**Files:**` lines in the cards. **A card that understates its files understates its
+   conflicts.** If a scope's file list looks thin for what the card actually describes,
+   sequence it rather than trusting the green line.
+
+3. **Place each scope.** The fleet is two laptops, and the split is one rule:
    `box1` holds XAMPP/MariaDB, so **every card touching the database, the API at runtime,
    or a migration runs on box1** (ADR-013 pins the three DB identities to that host).
    **box3 takes everything else** — evidence capture, scripts, docs, client-only
    XAML/VB, unit tests that need no database, guardrail runs. It is the worker box, not a
    documentation box; do not leave it idle because a card "feels like box1 work".
+
+   **Check this against reality before you plan a wide mission.** In Phase 2 every single
+   track routes to box1 — all five touch a migration, a grant, or an integration test —
+   so box3's four-worker ceiling is not reachable no matter how the cards are cut, and
+   box1's ceiling of 2 is the real bound on the phase. That is a fact about Phase 2, not
+   a rule; re-run `-Action next` at the next phase rather than assuming it still holds.
 4. **Decide how many.** See §2 — the count is your call, bounded by each box's
-   `maxConcurrent` in the registry (box1 2, box3 4). The dispatcher enforces the ceiling;
-   it does not choose the number for you.
-5. **Write the ledger** to `.claude/fleet/mission.md` before dispatching — card, machine,
+   `maxConcurrent` in the registry (box1 2, box3 4). The dispatcher enforces the ceiling
+   and **refuses** past it (proven, health check X3); it does not choose the number for you.
+5. **Write the ledger** to `.claude/fleet/mission.md` before dispatching — scope, cards, machine,
    model, scope boundary, one line each. On disk, not in your context. It is what lets you
    resume after a compaction without re-deriving the plan.
 
@@ -99,7 +144,7 @@ One card, alone, on this machine, is `/task` — not this skill. Say so and swit
 
 Three decisions, all yours, none of them a default to skip past.
 
-| Card looks like | Model | Effort |
+| Scope looks like | Model | Effort |
 |---|---|---|
 | Mechanical, fully specified — evidence capture, a scripted run, boilerplate | `sonnet` | `low` |
 | Ordinary implementation of a card that is already well specified | `sonnet` | `high` |
@@ -125,8 +170,8 @@ not reintroduced:
   arithmetic, transaction atomicity and the `merch_api` grant model are exactly the
   "correctness matters more than cost" case the guidance names.
 
-**Escalate on evidence, never pre-emptively.** Dispatch at the tier the card deserves; if
-the report comes back `blocked` or `failed` on something real, re-dispatch that card one
+**Escalate on evidence, never pre-emptively.** Dispatch at the tier the scope deserves; if
+the report comes back `blocked` or `failed` on something real, re-dispatch the remaining cards one
 tier up with the blocker written into the brief. Escalation with the failure in hand beats
 starting high and hoping.
 
@@ -152,9 +197,13 @@ startup, and a merge conflict across two machines is an afternoon.
 
 A brief is a **boundary**, not a description. Every brief states, in this order:
 
-1. **Card ID** and the spec sections it cites.
-2. **Exact scope** — the files this worker may touch. Name them.
-3. **Acceptance checks**, copied from the card. Not paraphrased.
+1. **Scope ID and its cards, in execution order** — `P2-TRACK-A: P2-01 → P2-02 → P2-03` —
+   plus the spec sections each card cites. The order is the instruction: a worker does them
+   in it, and stops at the first one it cannot finish rather than skipping ahead.
+2. **Exact scope** — the files this worker may touch, across the whole track. Name them.
+   `-Action next` already printed this union; copy it rather than re-deriving it.
+3. **Acceptance checks per card**, copied from the cards. Not paraphrased, not merged into
+   one list — the worker reports per card and cannot do that against a merged list.
 4. **What NOT to do** — the adjacent thing they will be tempted by. Be explicit; this line
    prevents more damage than the other four combined.
    **Scope, never scarcity.** Name files and behaviours that are out of bounds. Never write
@@ -169,28 +218,36 @@ Never inline CLAUDE.md or the worker contract into a brief. Workers load both fr
 > **Folder:** repo root · **USB:** not required · **Shell:** normal (elevation not needed)
 
 ```powershell
+# which scope is next, what it collides with, and where it should run
+pwsh ./scripts/fleet/fleet.ps1 -Action next
+
 # check transports and each box's remaining headroom before trusting any of them
 pwsh ./scripts/fleet/fleet.ps1 -Action doctor
 
 # bring the worker boxes up to this box's HEAD -- do this BEFORE dispatching real work
 pwsh ./scripts/fleet/fleet.ps1 -Action sync
 
-# dispatch (async; returns immediately with a handle)
-pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-03 -Machine box1 `
-     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-03.md
+# dispatch one SCOPE (async; returns immediately with a handle)
+pwsh ./scripts/fleet/dispatch-worker.ps1 -Scope P2-TRACK-A -Machine box1 `
+     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-TRACK-A.md
 
 # the worker box - same command, different -Machine. `ssh -t` opens its tab on YOUR screen
-pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-04 -Machine box3 `
-     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-04.md
+pwsh ./scripts/fleet/dispatch-worker.ps1 -Scope P2-TRACK-B -Machine box3 `
+     -Model sonnet -Effort high -BriefFile .claude/fleet/briefs/P2-TRACK-B.md
 
 # headless instead, when nobody is going to watch it anyway
-pwsh ./scripts/fleet/dispatch-worker.ps1 -TaskId P2-05 -Machine box3 -Mode bg
+pwsh ./scripts/fleet/dispatch-worker.ps1 -Scope P2-TRACK-C -Machine box3 -Mode bg
 
 # collect, stop, survey
 pwsh ./scripts/fleet/fleet.ps1 -Action list
-pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId P2-03
-pwsh ./scripts/fleet/fleet.ps1 -Action stop   -TaskId P2-03      # or -All
+pwsh ./scripts/fleet/fleet.ps1 -Action report -TaskId P2-TRACK-A
+pwsh ./scripts/fleet/fleet.ps1 -Action stop   -TaskId P2-TRACK-A      # or -All
 ```
+
+**`-Scope` and `-TaskId` are the same parameter.** `-Scope` is the name that matches what is
+dispatched; `-TaskId` stays because every run directory, handle and watchdog already written
+on both boxes keys on it, and renaming a key breaks collection of runs in flight. Collection
+still takes `-TaskId`, and the value is the scope id.
 
 **Sync before you dispatch.** The runner travels with the dispatch; **the project does
 not**. A worker box only moves when you move it, and a card worked against a stale tree can
@@ -265,9 +322,19 @@ user's window onto the work, not an input to yours — never read the scrollback
 
 Per report:
 
+**A scope report carries a `cards` array — read it, and tick per card.** `-Action report`
+prints one line per card with its own status, sha and test result. That array is the part
+you act on: the top-level `status` is a rollup and cannot tell you which card to tick.
+
 - **`done`** → verify the claim is *internally* coherent (status `done` with `tests: fail`
-  is a contradiction — treat it as `failed` and re-dispatch). Then tick the card's boxes in
-  `tasks.md` **yourself**. Workers never edit that file.
+  is a contradiction — treat it as `failed` and re-dispatch; so is a top-level `done` over
+  a `cards` array containing anything not `done`). Then tick the boxes in `tasks.md`
+  **yourself, card by card**. Workers never edit that file.
+- **`partial`** → this is the normal shape of a stopped scope, not a failure. The `done`
+  cards are real, committed, and get ticked. Exactly one card will be `blocked` or `failed`
+  and the rest `not-started`: deal with the stopping card, then re-dispatch **the remainder
+  of the track as a new scope** — not the whole track again, which would redo committed
+  work and produce a second commit per card.
 - **`blocked` / `needsDecision`** → this is your job arriving. Decide it. If it is a CLAUDE.md
   §7 stop condition that is genuinely the user's or the professor's, take it to the user
   with the worker's exact wording — do not soften it into a guess.
@@ -300,7 +367,7 @@ Stop and hand back to the user when:
 2. Two workers' reports contradict each other about the same file or rule.
 3. The merged tree fails guardrails or tests and the cause is not in a single card.
 4. You are about to raise the global fleet cap or a box's `maxConcurrent` ceiling, or push.
-5. **You have collected every dispatched report and the ledger has no open cards.** That is
+5. **You have collected every dispatched report and the ledger has no open scopes.** That is
    done. Say so and stop — do not look for more work to dispatch.
 
 Point 5 is the one that gets skipped. An orchestrator with idle capacity is not a problem

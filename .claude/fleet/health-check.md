@@ -138,3 +138,36 @@ Produce the table. Then answer these three plainly:
   `Get-Report` pointed at a session log, an economise-instruction added to a skill, the
   prohibition section itself deleted, `medium` and `haiku` reintroduced into the §2 table,
   the registry default drifted back to `medium`) and caught all of them.
+
+  **Items 14, X2, X3, X4 and X5 were added or strengthened on 2026-08-24 because item 14
+  could not fail as written**, and each was proven falsifiable the same day: a watchdog with
+  its kill branch deleted (14 and X2 both FAIL), the dispatcher's per-machine ceiling
+  neutralised (X3 FAIL), the disk allowance raised past the free space (X4 FAIL), and
+  `cards` removed from the report schema (X5 FAIL).
+
+---
+
+## X. What the script checks beyond this document
+
+Numbered `X*` because this checklist does not ask for them. They exist because a gap was
+found in what it does ask for.
+
+- **X1 — a brief cannot ask for a field the schema will not carry.** Found the `notes`
+  defect: three briefs demanded per-item findings the closed schema had no place for, which
+  works in `tty` mode and silently cannot work in `bg` mode.
+- **X2 — the watchdog actually kills a run that produced no report.** Item 14 proves it
+  *spares* a finished run. Nothing proved it kills an unfinished one, and a watchdog with no
+  kill branch passed 13 and 14 both. The kill branch is the only ceiling on a `tty` worker
+  stalled at a permission prompt, which is this fleet's known failure mode.
+- **X3 — a dispatch past a box's ceiling is refused, not queued.** Fills box1 to its
+  `maxConcurrent` with fabricated live runs and confirms the next dispatch is refused. The
+  brief file it passes deliberately does not exist, so if the ceiling ever *fails* to fire
+  the dispatcher stops at the brief and no worker is started by the check itself.
+- **X4 — each worker box has disk headroom for the workers its ceiling allows.**
+  `/orchestrate` §2 calls box3's disk the tightest constraint on the fleet and tells the
+  orchestrator to check it by hand. A constraint only a remembered instruction enforces is
+  not enforced.
+- **X5 — the `/worker` report template and the report schema declare the same fields.** The
+  generalisation of X1 one level up: a field in the template but not the schema cannot come
+  back from a `bg` worker, and a field the schema requires but the template omits fails
+  validation on every dispatch.

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Dispatch one Claude Code worker against exactly one task card.
+    Dispatch one Claude Code worker against one SCOPE -- a track of related cards.
 
 .DESCRIPTION
     Spawns a worker on a registered machine, hands it a brief, and returns a COMPACT
@@ -26,7 +26,13 @@
 #>
 [CmdletBinding()]
 param(
+    # The identifier for this run: a run directory name, a window title, and the argument
+    # /worker is invoked with. The fleet's unit of work is a SCOPE -- a track of related
+    # cards -- so -Scope is the name that matches what is actually dispatched. -TaskId
+    # stays as the parameter name because every run directory, handle and watchdog already
+    # written on both boxes uses it, and renaming a key breaks collection of runs in flight.
     [Parameter(Mandatory = $true)]
+    [Alias('Scope')]
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string] $TaskId,
 

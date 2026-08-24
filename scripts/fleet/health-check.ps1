@@ -231,6 +231,21 @@ function Get-Ast {
     return $ast
 }
 
+# One ssh read, retried once. A single dropped connection came back as an empty string and
+# scored the item UNVERIFIED -- honest, but wrong often enough to erode trust in the verdict,
+# and an audit nobody trusts stops being run. One retry, and only then give up. Never more:
+# a check that retries until it likes the answer is not a check.
+function Read-OverSsh {
+    param([string] $Target, [string] $Command)
+    foreach ($attempt in 1, 2) {
+        $out  = & ssh -o BatchMode=yes -o ConnectTimeout=10 $Target $Command 2>$null
+        $vals = @(@($out) | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
+        if ($vals.Count) { return $vals }
+        Start-Sleep -Seconds 2
+    }
+    return @()
+}
+
 # Newest run directory matching a filter, or $null. Used by the watchdog checks, which need
 # a run that a real async dispatch produced -- not one this script could fabricate.
 function Get-NewestRunDir {
@@ -347,7 +362,7 @@ Invoke-Check -Id '3' -Area 'A' -Name 'sync reports OK and HEAD parity holds for 
     $localHead = (& git -C $repoRoot rev-parse HEAD).Trim()
     $parity = @()
     foreach ($m in $targets) {
-        $out = & ssh -o BatchMode=yes -o ConnectTimeout=10 $m.sshTarget "git -C $($m.repo) rev-parse HEAD" 2>$null
+        $out = Read-OverSsh $m.sshTarget "git -C $($m.repo) rev-parse HEAD"
         $remoteHead = (@($out) | Where-Object { $_ -match '^[0-9a-f]{40}$' } | Select-Object -Last 1)
         if (-not $remoteHead) { Unverified "could not read HEAD on $($m.id) over ssh -- sync's own verdict is unconfirmed" }
         if ($remoteHead.Trim() -ne $localHead) {
@@ -664,10 +679,8 @@ Invoke-Check -Id '12' -Area 'D' -Name 'clock parity: same time zone and no wall-
     $localTz = (Get-TimeZone).Id
     $lines = @()
     foreach ($m in $targets) {
-        $out = & ssh -o BatchMode=yes -o ConnectTimeout=10 $m.sshTarget `
-                     'pwsh -NoProfile -Command "(Get-TimeZone).Id; (Get-Date).ToString(\"o\")"' 2>$null
+        $vals = Read-OverSsh $m.sshTarget 'pwsh -NoProfile -Command "(Get-TimeZone).Id; (Get-Date).ToString(\"o\")"'
         $sent = Get-Date
-        $vals = @(@($out) | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
         if ($vals.Count -lt 2) { Unverified "could not read the clock on $($m.id) over ssh (got: $($vals -join ' | '))" }
         $remoteTz   = $vals[0].Trim()
         $remoteTime = $vals[-1].Trim()
@@ -735,7 +748,13 @@ Invoke-Check -Id '14' -Area 'E' -Name 'the watchdog spares a run that has produc
     $exitIdx = $text.IndexOf('exit 0')
     $stopIdx = $text.IndexOf('-Action stop')
     if ($exitIdx -lt 0) { throw 'the generated watchdog has no `exit 0` -- it would kill a finished worker whose tab is still being read' }
-    if ($stopIdx -ge 0 -and $stopIdx -lt $exitIdx) { throw 'the watchdog stops the run BEFORE checking for a report' }
+    # A watchdog with NO stop branch at all satisfied every other assertion in this item and
+    # in 13, and this check printed "guard precedes the kill" over a file that had no kill.
+    # Proven on 2026-08-24 with a scratch run directory whose Get-Process/-Action stop block
+    # was deleted: 13 PASS, 14 PASS. Sparing a finished run is only half the contract; X2
+    # executes the other half, and this line is what makes the wording above honest.
+    if ($stopIdx -lt 0) { throw 'the generated watchdog has no `-Action stop` branch -- it can spare a finished run but can never bound a runaway, which is the only reason it exists' }
+    if ($stopIdx -lt $exitIdx) { throw 'the watchdog stops the run BEFORE checking for a report' }
     $guard = [regex]::Match($text, "if \(Test-Path '([^']+report\.json)'\) \{ exit 0 \}")
     if (-not $guard.Success) { throw 'the watchdog has no `if (Test-Path <report>) { exit 0 }` guard' }
     if (-not (Test-Path $guard.Groups[1].Value)) {
@@ -808,6 +827,177 @@ Invoke-Check -Id 'X1' -Area 'X' -Name 'every brief that asks for notes can actua
     $worst = [int]$maxItems * (@((Get-Prop $item 'properties').PSObject.Properties |
                 ForEach-Object { [int](Get-Prop $_.Value 'maxLength') }) | Measure-Object -Sum).Sum
     "schema declares notes for $($askers.Count) brief(s) ($(($askers.Name) -join ', ')); bounded at $maxItems entries, worst case ~$([Math]::Round($worst / 1024, 1)) KB"
+}
+
+# --- X5 ----------------------------------------------------------------------------------
+# X1 catches a BRIEF asking for a field the schema does not declare. This catches the same
+# drift one level up: the report template in /worker is what a worker actually copies, so a
+# field that appears there and not in the schema is unreportable in bg mode -- and a field
+# the schema REQUIRES but the template omits is a report that fails validation every time.
+# The notes defect was exactly this shape and cost a wasted dispatch to find.
+Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the report schema declare the same fields' -Body {
+    $skill = Join-Path $repoRoot '.claude/skills/worker/SKILL.md'
+    if (-not (Test-Path $skill)) { throw 'worker/SKILL.md is missing -- a dispatched worker has no contract to follow' }
+    $m = [regex]::Match((Get-Content -Raw $skill), '(?s)```json\s*(\{.*?\})\s*```')
+    if (-not $m.Success) { throw 'worker/SKILL.md has no ```json report template -- the worker is told to return an object whose shape is nowhere stated' }
+
+    try { $tpl = $m.Groups[1].Value | ConvertFrom-Json }
+    catch { throw "the report template in worker/SKILL.md is not valid JSON, so a worker copying it returns something unparseable: $($_.Exception.Message)" }
+
+    $schema   = Get-Content -Raw (Join-Path $repoRoot 'scripts/fleet/worker-report.schema.json') | ConvertFrom-Json
+    $declared = @((Get-Prop $schema 'properties').PSObject.Properties.Name)
+    $required = @(Get-Prop $schema 'required')
+    $inTpl    = @($tpl.PSObject.Properties.Name)
+
+    $orphan = @($inTpl | Where-Object { $declared -notcontains $_ })
+    if ($orphan) {
+        throw ("the template tells workers to return field(s) the schema does not declare: $($orphan -join ', '). " +
+               "In bg mode the schema constrains generation, so those fields cannot come back at all.")
+    }
+    $missing = @($required | Where-Object { $inTpl -notcontains $_ })
+    if ($missing) {
+        throw ("the schema REQUIRES field(s) the template never shows: $($missing -join ', '). " +
+               "A worker copying the template returns a report that fails validation every time.")
+    }
+    "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
+}
+
+# --- X2 ----------------------------------------------------------------------------------
+# Item 14 proves the watchdog SPARES a finished run. Nothing proved it KILLS an unfinished
+# one, and the difference is the whole point of the thing: the watchdog is the only ceiling
+# on a tty worker stalled at a permission prompt, which is the fleet's known failure mode.
+Invoke-Check -Id 'X2' -Area 'X' -Name 'the watchdog actually kills a run that produced no report' -Body {
+    $runDir = Get-NewestRunDir { param($d) Test-Path (Join-Path $d.FullName 'watchdog.ps1') }
+    if (-not $runDir) { Unverified 'no run directory contains a generated watchdog.ps1 to exercise' }
+    $text = Get-Content -Raw (Join-Path $runDir 'watchdog.ps1')
+
+    # Three substitutions, and the distinction matters: each replaces a FACT about the world
+    # this run no longer has, never a DECISION the watchdog makes. The guard, its ordering,
+    # the liveness test and the branch structure all execute exactly as generated.
+    #   report path -> a path guaranteed not to exist  (the run being watched has finished)
+    #   pid         -> this process                    (the real worker's pid is long dead)
+    #   the stop    -> a marker write                  (so a test cannot kill a live worker)
+    # Substituting the stop is what makes this safe to run at all; without it the honest
+    # version of this check would have to let a real `-Action stop` fire.
+    $missing = Join-Path ([IO.Path]::GetTempPath()) "hc-no-report-$([guid]::NewGuid().ToString('N')).json"
+    $marker  = Join-Path ([IO.Path]::GetTempPath()) "hc-kill-$([guid]::NewGuid().ToString('N')).txt"
+    $tmp     = Join-Path ([IO.Path]::GetTempPath()) "hc-watchdog-kill-$([guid]::NewGuid().ToString('N')).ps1"
+
+    $lines = @()
+    $sawGuard = $false; $sawStop = $false
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -match '^\s*Start-Sleep\b') { continue }
+        if ($line -match "if \(Test-Path '[^']+report\.json'\) \{ exit 0 \}") {
+            $line = $line -replace "Test-Path '[^']+report\.json'", "Test-Path '$($missing.Replace('\','\\'))'"
+            $sawGuard = $true
+        }
+        if ($line -match '-Action stop') {
+            $line = "    Set-Content -Path '$marker' -Value 'the stop branch was reached' -Encoding utf8"
+            $sawStop = $true
+        }
+        if ($line -match 'Get-Process -Id \d+') { $line = $line -replace 'Get-Process -Id \d+', "Get-Process -Id $PID" }
+        $lines += $line
+    }
+    if (-not $sawGuard) { throw 'could not find the report guard to repoint -- the generated watchdog is not the shape this check understands' }
+    if (-not $sawStop)  { throw 'the generated watchdog has no `-Action stop` line, so there is no kill branch to execute' }
+
+    try {
+        ($lines -join "`r`n") | Set-Content -Path $tmp -Encoding utf8
+        & pwsh -NoProfile -File $tmp *> $null
+        if (-not (Test-Path $marker)) {
+            throw ('with no report present the watchdog did NOT reach its stop branch -- a stalled worker ' +
+                   'would hold its slot forever, which is the one thing this watchdog exists to prevent')
+        }
+        "executed the generated watchdog against a run with NO report (report path repointed, pid=this process, stop substituted for a marker): reached the stop branch"
+    }
+    finally { Remove-Item $tmp, $marker, $missing -Force -ErrorAction SilentlyContinue }
+}
+
+# --- X3 ----------------------------------------------------------------------------------
+# The concurrency ceilings are the fleet's only defence against a runaway dispatch, and
+# nothing had ever confirmed they REFUSE rather than merely being written down.
+Invoke-Check -Id 'X3' -Area 'X' -Name 'a dispatch past a box concurrency ceiling is refused, not queued' -Body {
+    $box = @($registry.machines | Where-Object { $_.enabled -and $_.id -eq 'box1' })[0]
+    if (-not $box) { Unverified 'box1 is not enabled in the registry; nothing local to fill' }
+    $cap = [int]$box.maxConcurrent
+    if ($cap -lt 1) { throw "box1 has a maxConcurrent of $cap -- no dispatch could ever succeed" }
+
+    # Count what is genuinely live first, so this fills the ceiling rather than assuming an
+    # idle fleet. A real worker running alongside the health check is not an error here.
+    $runsRoot = Join-Path $repoRoot '.claude/fleet/runs'
+    $liveNow = @(Get-ChildItem $runsRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $h = Join-Path $_.FullName 'handle.json'
+        if (Test-Path $h) {
+            $handle = Get-Content -Raw $h | ConvertFrom-Json
+            if ((Get-Prop $handle 'pid') -and (Get-Process -Id $handle.pid -ErrorAction SilentlyContinue) -and
+                (Get-Prop $handle 'machine') -eq 'box1') { $handle }
+        }
+    })
+    $needed = $cap - $liveNow.Count
+    if ($needed -lt 1) { Unverified "box1 already has $($liveNow.Count) live run(s) against a ceiling of $cap; the ceiling is already full, so filling it proves nothing" }
+
+    $procs = @(); $dirs = @()
+    try {
+        for ($i = 1; $i -le $needed; $i++) {
+            $p = Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 120') -PassThru -WindowStyle Hidden
+            $procs += $p
+            $d = Join-Path $runsRoot "ZZCAP-$i-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $dirs += $d
+            @{ taskId = "ZZCAP-$i"; machine = 'box1'; pid = $p.Id } | ConvertTo-Json |
+                Set-Content -Path (Join-Path $d 'handle.json') -Encoding utf8
+        }
+
+        # The brief file deliberately does not exist. The cap is checked BEFORE the brief is
+        # assembled and long before anything spawns, so if the ceiling holds we see its
+        # refusal, and if it does not we see the brief refusal -- and either way no worker is
+        # ever started by this check.
+        $nope = Join-Path ([IO.Path]::GetTempPath()) "hc-no-such-brief-$([guid]::NewGuid().ToString('N')).md"
+        $out  = & pwsh -NoProfile -File $dispatchPs1 -TaskId 'ZZCAP-PROBE' -Machine box1 -BriefFile $nope 2>&1
+        $txt  = (@($out) | ForEach-Object { "$_" }) -join ' '
+
+        if ($txt -match 'concurrency ceiling|Fleet cap reached') {
+            "filled box1 to its ceiling of $cap with $needed fabricated live run(s); the next dispatch was REFUSED: $(($txt -split "`n")[0].Trim())"
+        }
+        elseif ($txt -match 'DISPATCHED') {
+            throw "the ceiling did NOT hold -- a dispatch past $cap live runs on box1 started a worker anyway: $txt"
+        }
+        else {
+            throw ("the ceiling did NOT fire: with box1 at its cap of $cap the dispatcher got as far as the brief " +
+                   "(a card past the ceiling would have been placed). Dispatcher said: $txt")
+        }
+    }
+    finally {
+        foreach ($p in $procs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        foreach ($d in $dirs)  { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# --- X4 ----------------------------------------------------------------------------------
+# /orchestrate section 2 names box3's disk as the tightest constraint on the fleet and tells
+# the orchestrator to check it by hand before dispatching three or four. A constraint that
+# only a remembered instruction enforces is not enforced.
+Invoke-Check -Id 'X4' -Area 'X' -Name 'each worker box has disk headroom for the workers its ceiling allows' -Body {
+    $targets = @($registry.machines | Where-Object { $_.transport -eq 'ssh' -and $_.enabled })
+    if (-not $targets) { Unverified 'no enabled ssh worker box to measure' }
+
+    # Per-worker allowance: each concurrent worker carries its own SDK restore and build
+    # output. Measured against this repo rather than assumed -- see the evidence line.
+    $perWorkerGb = 4
+    $lines = @()
+    foreach ($m in $targets) {
+        $free = Read-OverSsh $m.sshTarget 'pwsh -NoProfile -Command "[int]((Get-PSDrive C).Free/1GB)"' | Select-Object -Last 1
+        if (-not $free -or $free -notmatch '^\d+$') { Unverified "could not read free disk on $($m.id) over ssh (got: $free)" }
+        $freeGb = [int]$free
+        $cap    = [int]$m.maxConcurrent
+        $want   = $cap * $perWorkerGb
+        if ($freeGb -lt $want) {
+            throw ("$($m.id) has ${freeGb} GB free but its ceiling of $cap workers needs about ${want} GB " +
+                   "(${perWorkerGb} GB each for restore and build). Lower maxConcurrent or free space before a wide mission.")
+        }
+        $lines += "$($m.id): ${freeGb} GB free, ceiling $cap x ${perWorkerGb} GB = ${want} GB needed"
+    }
+    ($lines -join '; ')
 }
 
 # ---------------------------------------------------------------------------------------

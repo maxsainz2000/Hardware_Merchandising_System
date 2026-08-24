@@ -1,9 +1,10 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["taskId", "status", "summary", "verification"],
+  "required": ["scopeId", "status", "summary", "verification"],
   "properties": {
-    "taskId":   { "type": "string" },
+    "scopeId":  { "type": "string" },
+    "taskId":   { "type": ["string", "null"] },
     "status":   { "type": "string", "enum": ["done", "partial", "blocked", "failed"] },
     "summary":  { "type": "string", "maxLength": 400 },
     "filesChanged": { "type": "array", "items": { "type": "string" }, "maxItems": 40 },
@@ -30,6 +31,23 @@
     },
     "needsDecision": { "type": ["string", "null"], "maxLength": 600 },
     "scopeCreepRefused": { "type": ["string", "null"], "maxLength": 300 },
+
+    "cards": {
+      "type": ["array", "null"],
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id":      { "type": "string", "maxLength": 20 },
+          "status":  { "type": "string", "enum": ["done", "partial", "blocked", "failed", "not-started"] },
+          "commit":  { "type": ["string", "null"], "maxLength": 60 },
+          "tests":   { "type": ["string", "null"], "enum": ["pass", "fail", "not-run", null] },
+          "summary": { "type": ["string", "null"], "maxLength": 300 }
+        }
+      }
+    },
 
     "notes": {
       "type": ["array", "null"],

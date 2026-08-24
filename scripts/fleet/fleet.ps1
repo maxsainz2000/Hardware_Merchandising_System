@@ -7,6 +7,7 @@
     -Action report  Collect one worker's structured report as a COMPACT digest.
     -Action stop    Kill a worker (or all of them).
     -Action doctor  Check every registered transport BEFORE dispatching to it.
+    -Action next    Which SCOPE is next in tasks.md, and which scopes may run beside it.
 
     'report' is the context-bloat guard, enforced in tooling rather than in good
     intentions: it prints the parsed report fields and a path to the full log. It
@@ -16,11 +17,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync')]
+    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync', 'next')]
     [string] $Action,
 
     [string] $TaskId,
     [switch] $All,
+    # next only: how many open scopes to describe.
+    [int]    $Max = 3,
     # report only: also print the failing-output tail the worker captured.
     [switch] $Verbose_Tail
 )
@@ -221,6 +224,40 @@ switch ($Action) {
                 Write-Host '  --- failure tail ---'; Write-Host $v.failureTail
             }
         }
+        # A scope is several cards, so the per-card roll is the part the orchestrator acts
+        # on: it ticks boxes in tasks.md card by card, and a scope that came back `partial`
+        # is only actionable if it says WHICH card stopped and which ones never started.
+        # Printed before the rollup fields below, because it is what makes them legible.
+        # @($null).Count is 1, not 0 -- so an absent field must have its nulls filtered out
+        # or this prints a header over an empty list. That exact bug shipped in the notes
+        # block below and showed up as `notes (1):` on every ordinary card report.
+        $cards = @(Get-Prop $rep 'cards' | Where-Object { $null -ne $_ })
+        if ($cards.Count) {
+            $doneN = @($cards | Where-Object { (Get-Prop $_ 'status') -eq 'done' }).Count
+            Write-Host "  cards ($doneN/$($cards.Count) done):"
+            foreach ($c in ($cards | Select-Object -First 8)) {
+                $st = Get-Prop $c 'status'
+                $colour = switch ($st) {
+                    'done'        { 'Green' }
+                    'not-started' { 'DarkGray' }
+                    'partial'     { 'Yellow' }
+                    default       { 'Red' }
+                }
+                $sha  = Get-Prop $c 'commit'
+                $tst  = Get-Prop $c 'tests'
+                $bits = @()
+                if ($sha) { $bits += $sha.Substring(0, [Math]::Min(7, $sha.Length)) }
+                if ($tst) { $bits += "tests=$tst" }
+                Write-Host ("    {0,-8} " -f (Get-Prop $c 'id')) -NoNewline
+                Write-Host ("{0,-12}" -f $st) -ForegroundColor $colour -NoNewline
+                Write-Host " $($bits -join '  ')"
+                $cs = Get-Prop $c 'summary'
+                if ($cs) {
+                    if ($cs.Length -gt 140) { $cs = $cs.Substring(0, 137) + '...' }
+                    Write-Host "                          $cs" -ForegroundColor DarkGray
+                }
+            }
+        }
         if (Get-Prop $rep 'commit')       { Write-Host "  commit: $($rep.commit)" }
         if (Get-Prop $rep 'filesChanged') {
             Write-Host "  files ($($rep.filesChanged.Count)): $(($rep.filesChanged | Select-Object -First 8) -join ', ')"
@@ -242,7 +279,7 @@ switch ($Action) {
         # what prints is a DIGEST. The schema already caps notes at 20 x 600 characters, and
         # this trims each line further still. Whoever needs the verbatim text -- normally the
         # health check auditing a probe, not an orchestrator -- reads report.json for it.
-        $notes = @(Get-Prop $rep 'notes')
+        $notes = @(Get-Prop $rep 'notes' | Where-Object { $null -ne $_ })
         if ($notes.Count) {
             # `ok` is optional, because an entry can be a plain OBSERVATION (a hostname, a
             # working directory) rather than a verdict. Absent must therefore render as
@@ -387,6 +424,14 @@ switch ($Action) {
         }
         finally { Remove-Item $bundle -Force -ErrorAction SilentlyContinue }
         Write-Host ''
+    }
+
+    # Which scope is next, computed from tasks.md rather than remembered. Delegated to
+    # next-scope.ps1 so the parsing lives in one place and can be run without fleet.ps1 at
+    # all -- and so this file stays about RUNS, which is what everything else here is about.
+    'next' {
+        & (Join-Path $PSScriptRoot 'next-scope.ps1') -Max $Max
+        exit $LASTEXITCODE
     }
 
     'doctor' {
