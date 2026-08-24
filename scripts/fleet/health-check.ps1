@@ -862,6 +862,55 @@ Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the repor
     "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
 }
 
+# --- X6 ----------------------------------------------------------------------------------
+# /orchestrate now asks `-Action next` which scope to run instead of reading tasks.md. That
+# makes the selector load-bearing: if it stops parsing tasks.md -- a phase regenerates the
+# file in a new shape, a heading style changes -- the orchestrator loses the mechanism it
+# uses to choose work, and the failure is silent because an empty answer looks like an idle
+# fleet. Both halves are exercised: the real file must yield real scopes, and a file with no
+# track headings must be REFUSED rather than lumped into one enormous scope.
+Invoke-Check -Id 'X6' -Area 'X' -Name 'the scope selector parses tasks.md, and refuses a file with no tracks' -Body {
+    $next = Join-Path $repoRoot 'scripts/fleet/next-scope.ps1'
+    if (-not (Test-Path $next)) { throw 'next-scope.ps1 is missing -- /orchestrate section 1 tells the orchestrator to run it' }
+
+    $raw = & pwsh -NoProfile -File $next -Json 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "the selector exited $LASTEXITCODE against the real tasks.md: $((@($raw) | ForEach-Object { "$_" }) -join ' ')" }
+    try { $parsed = ((@($raw) | ForEach-Object { "$_" }) -join "`n") | ConvertFrom-Json }
+    catch { throw "the selector's -Json output does not parse: $($_.Exception.Message)" }
+
+    $open = @(Get-Prop $parsed 'openScopes')
+    if (-not $open.Count) {
+        Unverified 'tasks.md has no open scope at all -- nothing to parse, so this proves nothing about the selector. That is a /phase-gate question.'
+    }
+    foreach ($s in $open) {
+        if (-not @(Get-Prop $s 'cards').Count) { throw "the selector reported scope '$(Get-Prop $s 'scope')' with no cards in it" }
+    }
+
+    # The refusal half, against a fixture written here so the check carries its own negative
+    # case rather than depending on one living in the repo.
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) "hc-notracks-$([guid]::NewGuid().ToString('N')).md"
+    try {
+        @(
+            '# tasks.md -- fixture with no track headings'
+            ''
+            '### ⬜ P9-01 · A card under no track'
+            '**Spec:** §1 · **Files:** `src/Nowhere.vb`'
+            '**Done when:**'
+            '- [ ] something'
+        ) | Set-Content -Path $fixture -Encoding utf8
+        & pwsh -NoProfile -File $next -TasksFile $fixture *> $null
+        $code = $LASTEXITCODE
+        if ($code -ne 2) {
+            throw ("a tasks.md with no `## Track` headings exited $code, not 2 -- an ungrouped file must be refused, " +
+                   'not silently dispatched as one scope containing the whole phase')
+        }
+    }
+    finally { Remove-Item $fixture -Force -ErrorAction SilentlyContinue }
+
+    $names = @($open | ForEach-Object { Get-Prop $_ 'scope' })
+    "parsed $($open.Count) open scope(s) from tasks.md ($(($names | Select-Object -First 3) -join '; ')); a no-track file is refused with exit 2"
+}
+
 # --- X2 ----------------------------------------------------------------------------------
 # Item 14 proves the watchdog SPARES a finished run. Nothing proved it KILLS an unfinished
 # one, and the difference is the whole point of the thing: the watchdog is the only ceiling

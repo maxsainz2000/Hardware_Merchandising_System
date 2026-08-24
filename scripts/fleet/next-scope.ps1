@@ -209,6 +209,22 @@ if (-not $open) {
     exit 0
 }
 
+# A tasks.md with no `## Track` headings has no scopes in it, and lumping every card into
+# one enormous "Ungrouped" scope would be a guess dressed as an answer -- a worker would be
+# handed the whole phase. Say what is wrong instead. /phase-gate is what regenerates this
+# file, and its step 7 is where the grouping is supposed to come from.
+$ungrouped = @($open | Where-Object { $_.kind -eq 'ungrouped' })
+if ($ungrouped) {
+    Write-Host '  tasks.md has cards that sit under no `## Track` heading:' -ForegroundColor Red
+    foreach ($u in $ungrouped) { Write-Host "    $($u.cards -join ', ')" -ForegroundColor Red }
+    Write-Host ''
+    Write-Host '  A track is the fleet''s unit of dispatch, so these cannot be orchestrated as they' -ForegroundColor Yellow
+    Write-Host '  stand. Group them under `## Track` headings (see /phase-gate step 7), or run them' -ForegroundColor Yellow
+    Write-Host '  one at a time with /task. Not proposing a wave over an ungrouped file.' -ForegroundColor Yellow
+    Write-Host ''
+    exit 2
+}
+
 Write-Host "Open scopes in $([IO.Path]::GetFileName($TasksFile))  ($($open.Count) open, showing $($shown.Count))" -ForegroundColor Cyan
 Write-Host ''
 foreach ($s in $shown) {

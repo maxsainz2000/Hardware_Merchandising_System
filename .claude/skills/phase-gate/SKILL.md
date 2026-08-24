@@ -30,9 +30,11 @@ otherwise. This review exists to be failed — a gate that always passes is deco
    - PARTIAL is for a phase whose gate section defines a partial outcome (e.g. Phase 1 rung B).
      Do not invent a PARTIAL to soften a FAIL.
 7. **On PASS only:** regenerate `tasks.md` for the next phase from that phase's section in
-   `plan.md`, using the card format in `plan.md` §8.2:
+   `plan.md`, using the card format in `plan.md` §8.2, **grouped under `## Track` headings**:
 
    ```markdown
+   ## Track A — What this group of cards is about
+
    ### ⬜ PN-NN · Short imperative title
    **Spec:** §x.y · **Closes:** G-nn · **Decides:** ADR-00n
    **Files:** paths that will change
@@ -41,6 +43,27 @@ otherwise. This review exists to be failed — a gate that always passes is deco
    - [ ] verifiable acceptance check
    **Evidence:** evidence/phase-N/pn-nn-name.txt
    ```
+
+   **The track grouping is load-bearing, not cosmetic.** A track is the fleet's unit of
+   dispatch — `/orchestrate` gives one worker one track — and `fleet.ps1 -Action next`
+   parses these headings to work out what is open and what may run in parallel. A `tasks.md`
+   with no `## Track` headings cannot be orchestrated at all; the selector reports it as
+   ungrouped rather than guessing at a split.
+
+   Two rules for where the lines go, and they follow from what a track is for:
+
+   - **Put cards in the same track when they are sequential** — a migration and the code
+     that reads it, an endpoint and the tests that assert it. A worker does a track in
+     order and stops at the first card it cannot finish.
+   - **Put cards in different tracks when their `**Files:**` are disjoint**, because that
+     is precisely what lets two of them run on two machines at once. Overlapping file sets
+     across tracks are not fatal — the selector detects the collision and sequences them —
+     but every overlap is one less thing the fleet can parallelise.
+
+   **`**Files:**` is not decoration either.** It is the only input to the independence
+   calculation, so a card that understates its files understates its conflicts and buys a
+   merge conflict across two machines. List directories with a trailing slash when the card
+   will touch several files under one.
 
    Carry forward any card from the closing phase that is still open, and say that you did.
 
