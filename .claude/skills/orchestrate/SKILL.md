@@ -229,11 +229,29 @@ Never inline CLAUDE.md or the worker contract into a brief. Workers load both fr
 
 > **Folder:** repo root · **USB:** not required · **Shell:** normal (elevation not needed)
 
+**Run the pre-flight first, every mission. If it says NOT READY, you do not dispatch.**
+
+```powershell
+pwsh ./scripts/fleet/fleet.ps1 -Action preflight
+```
+
+It checks, in one command, every state that has actually poisoned a mission here: a box that
+cannot be reached, a box holding commits nobody collected, a box that is not at this box's
+HEAD, a ceiling already full, an OVERDUE run that is probably stalled, and disk headroom for
+the workers a ceiling allows. Uncommitted work here is a **warning**, not a refusal — a
+worker box is synced from HEAD, so your uncommitted changes will not reach it.
+
+**It repairs nothing, deliberately.** Every condition it reports has a one-command fix and it
+applies none of them. A mission that heals itself is a mission that hides the state which
+told you something was wrong — the last phantom "live" worker this fleet produced turned out
+to be a pid-recycling bug with `stop` aimed at a system service, and an auto-prune would have
+buried it. Detect early, refuse loudly, decide yourself.
+
 ```powershell
 # which scope is next, what it collides with, and where it should run
 pwsh ./scripts/fleet/fleet.ps1 -Action next
 
-# check transports and each box's remaining headroom before trusting any of them
+# transport detail, when preflight says a box is unreachable and you want to know why
 pwsh ./scripts/fleet/fleet.ps1 -Action doctor
 
 # bring the worker boxes up to this box's HEAD -- do this BEFORE dispatching real work

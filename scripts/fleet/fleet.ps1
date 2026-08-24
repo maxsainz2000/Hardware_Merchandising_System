@@ -9,6 +9,7 @@
     -Action doctor  Check every registered transport BEFORE dispatching to it.
     -Action collect Bring a worker box's COMMITS back here. sync is the other direction.
     -Action next    Which SCOPE is next in tasks.md, and which scopes may run beside it.
+    -Action preflight  Everything that has poisoned a mission, checked BEFORE one starts.
 
     'report' is the context-bloat guard, enforced in tooling rather than in good
     intentions: it prints the parsed report fields and a path to the full log. It
@@ -18,7 +19,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync', 'collect', 'next')]
+    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync', 'collect', 'next', 'preflight')]
     [string] $Action,
 
     [string] $TaskId,
@@ -474,6 +475,112 @@ switch ($Action) {
         }
         finally { Remove-Item $bundle -Force -ErrorAction SilentlyContinue }
         Write-Host ''
+    }
+
+    # Everything that has poisoned a mission, checked BEFORE one starts.
+    #
+    # This is deliberately not self-healing, and the distinction is the whole point. Each of
+    # these states has a known, one-command fix; none of them is applied here. A repair made
+    # during a mission is an unobserved state change in a design whose safety rests on the
+    # orchestrator seeing everything that crossed back -- and the last phantom live run this
+    # fleet produced turned out to be a pid-recycling bug with `stop` aimed at a system
+    # service. Healing it would have hidden that. Detect early, refuse loudly, let a person
+    # decide.
+    #
+    # FAIL refuses the mission. WARN prints and proceeds: it is a thing worth knowing, not a
+    # thing that makes the work wrong.
+    'preflight' {
+        Write-Host ''
+        Write-Host 'Mission pre-flight' -ForegroundColor Cyan
+        Write-Host '------------------'
+
+        $fail = @(); $warn = @(); $ok = @()
+
+        $localHead = (& git -C $repoRoot rev-parse HEAD).Trim()
+        $short     = $localHead.Substring(0, 7)
+
+        # --- this box ------------------------------------------------------------------
+        $dirty = @(& git -C $repoRoot status --porcelain)
+        if ($dirty) {
+            # Not fatal: plenty of missions are dispatched to box1 only. But a worker box is
+            # synced from HEAD by bundle, so uncommitted work here simply does not exist over
+            # there, and a worker would build against a tree that is not the one you are
+            # looking at.
+            $warn += "this box has $($dirty.Count) uncommitted change(s) -- a worker box is synced from HEAD, so those changes will NOT reach it. Commit first if a worker needs them."
+        } else {
+            $ok += "this box is clean at $short"
+        }
+
+        # --- capacity ------------------------------------------------------------------
+        $runs     = @(Get-Runs)
+        $liveRuns = @($runs | Where-Object Alive)
+        $maxFleet = [int]$registry.defaults.maxFleet
+        if ($liveRuns.Count -ge $maxFleet) {
+            $fail += "the fleet is at its global cap ($maxFleet live: $(($liveRuns | ForEach-Object { $_.TaskId }) -join ', ')). Collect or stop one first."
+        }
+        foreach ($m in @($registry.machines | Where-Object { $_.enabled })) {
+            $mc   = if ($m.PSObject.Properties['maxConcurrent'] -and $m.maxConcurrent) { [int]$m.maxConcurrent } else { $maxFleet }
+            $here = @($liveRuns | Where-Object { $_.Machine -eq $m.id })
+            if ($here.Count -ge $mc) {
+                $fail += "$($m.id) is already at its ceiling ($mc live: $(($here | ForEach-Object { $_.TaskId }) -join ', ')). Nothing can be placed there."
+            }
+        }
+        # An OVERDUE tty worker is normally stalled at a prompt, holding a slot while looking
+        # busy. Starting a mission beside one is how a stall becomes two.
+        $overdue = @($liveRuns | Where-Object { $_.Timeout -and $_.Mins -and $_.Mins -ge $_.Timeout })
+        if ($overdue) {
+            $fail += "OVERDUE: $(($overdue | ForEach-Object { $_.TaskId }) -join ', '). A tty worker past its timeout is usually STALLED at a prompt -- look at its tab or stop it before starting anything new."
+        }
+        if (-not $fail) { $ok += "capacity: $($liveRuns.Count) live against a fleet cap of $maxFleet" }
+
+        # --- each worker box -----------------------------------------------------------
+        foreach ($m in @($registry.machines | Where-Object { $_.transport -eq 'ssh' -and $_.enabled })) {
+            $head = Read-RemoteLine $m.sshTarget "git -C $($m.repo) rev-parse HEAD" '^[0-9a-f]{40}$'
+            if (-not $head) {
+                $fail += "$($m.id): no answer over ssh. Run -Action doctor -- dispatching there would report a task that never ran."
+                continue
+            }
+
+            if ($head -ne $localHead) {
+                $cnt = Read-RemoteLine $m.sshTarget "git -C $($m.repo) rev-list --count $localHead..HEAD" '^\d+$'
+                if ($cnt -and [int]$cnt -gt 0) {
+                    $fail += "$($m.id) is holding $cnt commit(s) this box has never collected -- a worker's work exists only there. Run -Action collect."
+                } else {
+                    $fail += "$($m.id) is at $($head.Substring(0,7)), this box at $short. Run -Action sync -- a worker there would build a different tree."
+                }
+            } else {
+                $ok += "$($m.id) is level at $short"
+            }
+
+            # Each concurrent worker carries its own restore and build.
+            $free = Read-RemoteLine $m.sshTarget 'pwsh -NoProfile -Command "[int]((Get-PSDrive C).Free/1GB)"' '^\d+$'
+            $mc   = if ($m.PSObject.Properties['maxConcurrent'] -and $m.maxConcurrent) { [int]$m.maxConcurrent } else { 1 }
+            $need = $mc * 4
+            if (-not $free) {
+                $warn += "$($m.id): could not read free disk. Its ceiling of $mc worker(s) wants about ${need} GB."
+            } elseif ([int]$free -lt $need) {
+                $fail += "$($m.id) has ${free} GB free but its ceiling of $mc workers needs about ${need} GB. Lower maxConcurrent or free space."
+            } else {
+                $ok += "$($m.id): ${free} GB free for a ceiling of $mc"
+            }
+        }
+
+        # --- verdict -------------------------------------------------------------------
+        Write-Host ''
+        foreach ($o in $ok)   { Write-Host "  ok    $o" -ForegroundColor DarkGray }
+        foreach ($w in $warn) { Write-Host "  WARN  $w" -ForegroundColor Yellow }
+        foreach ($f in $fail) { Write-Host "  FAIL  $f" -ForegroundColor Red }
+        Write-Host ''
+        if ($fail) {
+            Write-Host "  NOT READY - $($fail.Count) blocking condition(s). Fix them, then run this again." -ForegroundColor Red
+            Write-Host '  Nothing here is repaired automatically, on purpose: a mission that heals itself' -ForegroundColor DarkGray
+            Write-Host '  hides the state that told you something was wrong.' -ForegroundColor DarkGray
+            Write-Host ''
+            exit 1
+        }
+        Write-Host "  READY$(if ($warn) { " - with $($warn.Count) warning(s)" })" -ForegroundColor Green
+        Write-Host ''
+        exit 0
     }
 
     # Bring a worker box's COMMITS back. The other half of sync, and its absence was a hole
