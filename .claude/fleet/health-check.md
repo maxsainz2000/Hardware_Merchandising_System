@@ -146,7 +146,8 @@ Produce the table. Then answer these three plainly:
   free space (X4 FAIL), `cards` removed from the report schema (X5 FAIL), the selector's
   no-track refusal changed to exit 0 (X6 FAIL), the `Stop` layer removed from the committed
   `settings.json` (X7 FAIL), a commit left stranded on box3 (X8 FAIL), and the dispatcher's
-  database-exclusivity rule neutralised (X9 FAIL), and liveness put back to existence-only (X10 FAIL).
+  database-exclusivity rule neutralised (X9 FAIL), liveness put back to existence-only
+  (X10 FAIL), and the pre-flight's ceiling condition made unreachable (X11 FAIL).
 
 ---
 
@@ -181,6 +182,13 @@ found in what it does ask for.
   like an idle fleet. Checks both halves — the real file must yield scopes that each contain
   a card, and a file with no `## Track` headings must be refused rather than dispatched as
   one scope containing the whole phase.
+- **X11 — the mission pre-flight passes a clean fleet and refuses a poisoned one.**
+  `/orchestrate` §4 makes `-Action preflight` the first command of every mission, so a
+  pre-flight that cannot refuse is worse than none: it waves a poisoned fleet through behind
+  a green line. Checked in both directions — a gate that refuses everything is as useless as
+  one that refuses nothing. Note what it deliberately does **not** do: it repairs none of the
+  conditions it names. A mission that heals itself hides the state that told you something
+  was wrong, and this fleet has already had one such state turn out to be a dangerous bug.
 - **X10 — a recycled pid does not resurrect a finished run.** Windows reuses pids within
   hours. While liveness was "a process with this id exists", a dead worker whose number had
   been handed to an `svchost` was reported `running` twenty-two minutes after it exited, the

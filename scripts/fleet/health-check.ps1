@@ -862,6 +862,54 @@ Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the repor
     "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
 }
 
+# --- X11 ---------------------------------------------------------------------------------
+# /orchestrate section 4 makes the pre-flight the first command of every mission, so a
+# pre-flight that cannot refuse is worse than none at all: it would wave a poisoned fleet
+# through with a green line. Both directions, for the same reason X9 checks both: a gate
+# that refuses everything is as useless as one that refuses nothing.
+Invoke-Check -Id 'X11' -Area 'X' -Name 'the mission pre-flight passes a clean fleet and refuses a poisoned one' -Body {
+    $clean = Invoke-Fleet @('-Action', 'preflight')
+    if ($clean.Code -ne 0) {
+        # Honest rather than convenient: the fleet really is in a state pre-flight objects
+        # to, and the objection itself is reported by whichever item owns that condition.
+        $why = @($clean.Lines | Where-Object { $_ -match 'FAIL' }) -join ' | '
+        Unverified "pre-flight refuses the fleet as it stands, so the pass direction cannot be tested here: $why"
+    }
+
+    # Poison it the cheapest safe way: fabricate live runs until box1 is at its ceiling.
+    $runsRoot = Join-Path $repoRoot '.claude/fleet/runs'
+    $box1 = @($registry.machines | Where-Object { $_.id -eq 'box1' })[0]
+    $cap  = [int]$box1.maxConcurrent
+    $procs = @(); $dirs = @()
+    try {
+        for ($i = 1; $i -le $cap; $i++) {
+            $p = Start-Process 'pwsh' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 90') -PassThru -WindowStyle Hidden
+            $procs += $p
+            $d = Join-Path $runsRoot "ZZPF-$([guid]::NewGuid().ToString('N').Substring(0,6))"
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $dirs += $d
+            @{ taskId = "ZZPF-$i"; machine = 'box1'; mode = 'bg'; pid = $p.Id
+               pidStartedAt = $p.StartTime.ToString('o')
+               startedAt = (Get-Date).ToString('o'); timeoutMinutes = 30 } |
+                ConvertTo-Json | Set-Content -Path (Join-Path $d 'handle.json') -Encoding utf8
+        }
+
+        $poisoned = Invoke-Fleet @('-Action', 'preflight')
+        if ($poisoned.Code -eq 0) {
+            throw ("pre-flight reported READY with box1 filled to its ceiling of $cap -- it would wave a mission " +
+                   'through onto a box that can take nothing')
+        }
+        if ($poisoned.Text -notmatch 'ceiling') {
+            throw "pre-flight refused, but not for the ceiling it was given: $($poisoned.Text)"
+        }
+        "clean fleet -> READY (exit 0); box1 filled to its ceiling of $cap -> NOT READY (exit $($poisoned.Code))"
+    }
+    finally {
+        foreach ($p in $procs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        foreach ($d in $dirs)  { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 # --- X10 ---------------------------------------------------------------------------------
 # Windows recycles pids. If liveness is "a process with this id exists", a finished run comes
 # back to life the moment something else is handed its number -- and all three consequences
