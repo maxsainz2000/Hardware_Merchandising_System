@@ -7,6 +7,7 @@
     -Action report  Collect one worker's structured report as a COMPACT digest.
     -Action stop    Kill a worker (or all of them).
     -Action doctor  Check every registered transport BEFORE dispatching to it.
+    -Action collect Bring a worker box's COMMITS back here. sync is the other direction.
     -Action next    Which SCOPE is next in tasks.md, and which scopes may run beside it.
 
     'report' is the context-bloat guard, enforced in tooling rather than in good
@@ -17,7 +18,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync', 'next')]
+    [ValidateSet('list', 'report', 'stop', 'doctor', 'sync', 'collect', 'next')]
     [string] $Action,
 
     [string] $TaskId,
@@ -41,6 +42,17 @@ New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 # branch that never populated it -- which StrictMode turns into a runtime error exactly when
 # someone is trying to stop a runaway worker.
 $registry = Get-Content -Raw (Join-Path $repoRoot '.claude/fleet/machines.json') | ConvertFrom-Json
+
+# One line of output from a remote pwsh command, matched against a pattern, or $null.
+# The pattern is the point: a newer ssh client prints post-quantum advisories on stderr and
+# pwsh startup can add its own chatter, so "the last line" is not reliably the answer. Ask
+# for the shape you expect instead.
+function Read-RemoteLine([string] $Target, [string] $Command, [string] $Pattern) {
+    $out = & ssh -o BatchMode=yes -o ConnectTimeout=10 $Target "pwsh -NoProfile -Command `"$Command`"" 2>$null
+    $hit = @(@($out) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match $Pattern }) | Select-Object -Last 1
+    if ($hit) { return $hit }
+    return $null
+}
 
 # Returns the property value if present AND non-empty, else $null -- so callers can
 # write `if (Get-Prop $o 'x')` without tripping over StrictMode on a missing property.
@@ -423,6 +435,92 @@ switch ($Action) {
             }
         }
         finally { Remove-Item $bundle -Force -ErrorAction SilentlyContinue }
+        Write-Host ''
+    }
+
+    # Bring a worker box's COMMITS back. The other half of sync, and its absence was a hole
+    # straight through the middle of the design: workers commit locally and never push, the
+    # orchestrator integrates -- but nothing moved a commit from box3 to box1, so a remote
+    # worker's work was stranded on the box that made it. Probes never committed, so four
+    # months of green smoke tests never touched it.
+    #
+    # It also un-breaks sync. sync fast-forwards the worker box with `merge --ff-only`, so
+    # the first local commit over there makes every later sync refuse -- the box diverges
+    # and cannot be caught up. Collecting first puts the two boxes back on one line.
+    #
+    # Same bundle-over-scp mechanism as sync, for the same reasons (no credential is
+    # readable from sshd's network logon, and no remote shell quoting survives git's own).
+    'collect' {
+        $targets = @($registry.machines | Where-Object { $_.transport -eq 'ssh' -and $_.enabled })
+        if ($TaskId) { $targets = @($targets | Where-Object { $_.id -eq $TaskId }) }
+        if (-not $targets) { Write-Host 'No enabled ssh machines to collect from.'; break }
+
+        $branch = (& git -C $repoRoot rev-parse --abbrev-ref HEAD).Trim()
+
+        foreach ($m in $targets) {
+            Write-Host ''
+            Write-Host "  [$($m.id)] collecting commits on $branch"
+
+            $localHead  = (& git -C $repoRoot rev-parse HEAD).Trim()
+            $remoteHead = (Read-RemoteLine $m.sshTarget "git -C $($m.repo) rev-parse HEAD" '^[0-9a-f]{40}$')
+            if (-not $remoteHead) { Write-Warning "  could not read HEAD on $($m.id); skipped."; continue }
+
+            if ($remoteHead -eq $localHead) { Write-Host "    nothing to collect - $($m.id) is at $($localHead.Substring(0,7))"; continue }
+
+            # Is this box's HEAD an ancestor of theirs? If not they have diverged, and a
+            # divergence is an integration decision, not something this command may resolve.
+            # `if (git ...)` tests git's OUTPUT, and --is-ancestor prints nothing -- so the
+            # obvious spelling is always false and every box looks diverged. The answer is
+            # the exit code.
+            $anc = (Read-RemoteLine $m.sshTarget `
+                    "git -C $($m.repo) merge-base --is-ancestor $localHead HEAD; if (`$LASTEXITCODE -eq 0) { 'YES' } else { 'NO' }" '^(YES|NO)$')
+            if ($anc -ne 'YES') {
+                Write-Warning ("  $($m.id) has DIVERGED from this box (it is at $($remoteHead.Substring(0,7)), " +
+                               "this box at $($localHead.Substring(0,7)), and this box's HEAD is not in its history). " +
+                               "Not collecting - resolve it as an integration, not a transfer.")
+                continue
+            }
+
+            $remoteBundle = "$($m.repo)/../fleet-collect.bundle"
+            $localBundle  = Join-Path ([System.IO.Path]::GetTempPath()) "fleet-collect-$([guid]::NewGuid().ToString('N')).bundle"
+            try {
+                $mk = "git -C $($m.repo) bundle create '$remoteBundle' $localHead..HEAD"
+                & ssh -o BatchMode=yes $m.sshTarget "pwsh -NoProfile -Command `"$mk`"" 2>&1 | Out-Null
+                & scp -q -o BatchMode=yes "$($m.sshTarget):$remoteBundle" $localBundle 2>&1 | Out-Null
+                & ssh -o BatchMode=yes $m.sshTarget "pwsh -NoProfile -Command `"Remove-Item '$remoteBundle' -Force -ErrorAction SilentlyContinue`"" 2>&1 | Out-Null
+                if (-not (Test-Path $localBundle)) { Write-Warning "  could not retrieve a bundle from $($m.id)."; continue }
+
+                # Land it on a tracking ref first. Nothing about the working tree changes
+                # here, so a collect can never surprise the orchestrator mid-edit.
+                $ref = "refs/remotes/$($m.id)/$branch"
+                & git -C $repoRoot fetch $localBundle "HEAD:$ref" --force 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { Write-Warning "  bundle from $($m.id) would not fetch."; continue }
+
+                $incoming = @(& git -C $repoRoot log --oneline "$localHead..$ref" 2>$null)
+                Write-Host "    fetched $($incoming.Count) commit(s) to $ref" -ForegroundColor Green
+                foreach ($line in ($incoming | Select-Object -First 10)) { Write-Host "      $line" -ForegroundColor DarkGray }
+
+                # Fast-forward this box only when it is safe and unambiguous: clean tree, and
+                # this box has not moved since we measured. Anything else is §6 integration
+                # and belongs to the orchestrator with the whole picture in front of it.
+                $dirty = @(& git -C $repoRoot status --porcelain)
+                $still = (& git -C $repoRoot rev-parse HEAD).Trim()
+                if ($dirty) {
+                    Write-Host "    NOT merged - this box has uncommitted changes. Merge it yourself: git merge --ff-only $ref" -ForegroundColor Yellow
+                } elseif ($still -ne $localHead) {
+                    Write-Host "    NOT merged - this box moved during the collect. Merge it yourself: git merge --ff-only $ref" -ForegroundColor Yellow
+                } else {
+                    & git -C $repoRoot merge --ff-only $ref 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "    merged - this box is now at $((& git -C $repoRoot rev-parse --short HEAD).Trim())" -ForegroundColor Green
+                        Write-Host "    run -Action sync to put $($m.id) back on the same line" -ForegroundColor DarkGray
+                    } else {
+                        Write-Host "    NOT merged - ff-only refused. Integrate by hand from $ref" -ForegroundColor Yellow
+                    }
+                }
+            }
+            finally { Remove-Item $localBundle -Force -ErrorAction SilentlyContinue }
+        }
         Write-Host ''
     }
 
