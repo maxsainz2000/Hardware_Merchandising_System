@@ -862,6 +862,48 @@ Invoke-Check -Id 'X5' -Area 'X' -Name 'the /worker report template and the repor
     "template and schema agree on $($inTpl.Count) field(s); every required field ($($required -join ', ')) appears in the template"
 }
 
+# --- X7 ----------------------------------------------------------------------------------
+# Every worker on every box inherits its edit-time guardrails from the COMMITTED
+# .claude/settings.json -- it travels with the repo, so `-Action sync` is what puts L1-L3 on
+# box3 at all. Two ways that quietly stops being true: a layer gets deleted, or it gets
+# moved into .claude/settings.local.json to stop it complaining, which is gitignored and
+# therefore never reaches a worker box. CLAUDE.md section 11 names the second one explicitly.
+#
+# This is the static half of what GUARD-01 probes. GUARD-01 proves L1 FIRES on box3 by
+# taking a real refusal; nothing but this proves all three are still wired at all.
+Invoke-Check -Id 'X7' -Area 'X' -Name 'the three edit-time guardrails are wired in the COMMITTED settings.json' -Body {
+    $settings = Join-Path $repoRoot '.claude/settings.json'
+    if (-not (Test-Path $settings)) { throw '.claude/settings.json is missing -- no worker on any box has edit-time guardrails' }
+
+    # Committed, not just present. A settings.json that git does not track reaches no other
+    # box, and sync is the only way box3 ever gets one.
+    & git -C $repoRoot ls-files --error-unmatch '.claude/settings.json' *> $null
+    if ($LASTEXITCODE -ne 0) { throw '.claude/settings.json is NOT tracked by git -- it cannot reach box3 through -Action sync, so a worker there runs with no guardrails' }
+
+    $cfg   = Get-Content -Raw $settings | ConvertFrom-Json
+    $hooks = Get-Prop $cfg 'hooks'
+    if (-not $hooks) { throw '.claude/settings.json declares no hooks at all' }
+
+    $want = @(
+        @{ event = 'PreToolUse';  script = 'block-csharp.ps1';     layer = 'L1' }
+        @{ event = 'PostToolUse'; script = 'check-vbproj.ps1';     layer = 'L2' }
+        @{ event = 'Stop';        script = 'stop-guardrails.ps1';  layer = 'L3' }
+    )
+    $found = @()
+    foreach ($w in $want) {
+        $entries = @(Get-Prop $hooks $w.event)
+        $cmds = @($entries | ForEach-Object { @(Get-Prop $_ 'hooks') } | ForEach-Object { Get-Prop $_ 'command' })
+        $hit  = @($cmds | Where-Object { $_ -and $_ -match [regex]::Escape($w.script) })
+        if (-not $hit) {
+            throw "$($w.layer): .claude/settings.json has no $($w.event) hook running $($w.script). If it was moved to settings.local.json it is gitignored and never reaches box3."
+        }
+        $path = Join-Path $repoRoot ".claude/hooks/$($w.script)"
+        if (-not (Test-Path $path)) { throw "$($w.layer): $($w.event) is wired to $($w.script), but that script does not exist -- the hook fails open on every edit" }
+        $found += "$($w.layer)=$($w.event)->$($w.script)"
+    }
+    "all three wired in the tracked settings.json: $($found -join ', ')"
+}
+
 # --- X6 ----------------------------------------------------------------------------------
 # /orchestrate now asks `-Action next` which scope to run instead of reading tasks.md. That
 # makes the selector load-bearing: if it stops parsing tasks.md -- a phase regenerates the

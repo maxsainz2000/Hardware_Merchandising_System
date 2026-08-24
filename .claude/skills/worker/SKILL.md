@@ -172,6 +172,10 @@ Rules for the report, because it is all the orchestrator gets:
 - **`cards` is one entry per card in your brief, in the brief's order, always.** Never omit
   a card because you never reached it — `not-started` is the entry that tells the
   orchestrator where the scope stopped, and a missing row reads as a card nobody mentioned.
+  **`cards` is `null` when your brief names no cards at all** — an enforcement probe, a
+  guardrail check, a transport sweep. Those briefs say so ("this is not a task card"). Do
+  not invent a card row named after the run: a fabricated entry in this array is a card the
+  orchestrator may go looking for in `tasks.md` and never find.
 - **The top-level `status` is a rollup, and it is the strictest of the cards**, not an
   average and not the last one you touched:
   - every card `done` → `done`

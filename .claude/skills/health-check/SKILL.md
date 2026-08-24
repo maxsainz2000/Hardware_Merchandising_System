@@ -92,9 +92,10 @@ plainly. They are the part of the audit a script cannot do, and they are worth m
 the table:
 
 - **Which items did you actually execute, and which did you only read?** The script executes
-  items 1–6, 12–14 and X2–X4 against live machinery — X2 runs a generated watchdog, X3 fills
-  a box to its ceiling and takes the refusal, X4 reads free disk over ssh. Items 7–11, X1 and
-  X5 are static analysis of files in the repo. Say so rather than implying every item was
+  items 1–6, 12–14, X2–X4 and X6 against live machinery — X2 runs a generated watchdog, X3
+  fills a box to its ceiling and takes the refusal, X4 reads free disk over ssh, X6 runs the
+  scope selector against both the real `tasks.md` and a no-track fixture. Items 7–11, X1, X5
+  and X7 are static analysis of files in the repo. Say so rather than implying every item was
   exercised equally.
 - **What is the single most likely way this setup fails in real use that the checklist does
   not cover?**

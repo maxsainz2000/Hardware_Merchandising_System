@@ -139,11 +139,13 @@ Produce the table. Then answer these three plainly:
   prohibition section itself deleted, `medium` and `haiku` reintroduced into the §2 table,
   the registry default drifted back to `medium`) and caught all of them.
 
-  **Items 14, X2, X3, X4 and X5 were added or strengthened on 2026-08-24 because item 14
-  could not fail as written**, and each was proven falsifiable the same day: a watchdog with
-  its kill branch deleted (14 and X2 both FAIL), the dispatcher's per-machine ceiling
-  neutralised (X3 FAIL), the disk allowance raised past the free space (X4 FAIL), and
-  `cards` removed from the report schema (X5 FAIL).
+  **Items 14 and X2–X7 were added or strengthened on 2026-08-24 because item 14 could not
+  fail as written**, and each was proven falsifiable the same day by feeding it the defect
+  it exists to catch: a watchdog with its kill branch deleted (14 and X2 both FAIL), the
+  dispatcher's per-machine ceiling neutralised (X3 FAIL), the disk allowance raised past the
+  free space (X4 FAIL), `cards` removed from the report schema (X5 FAIL), the selector's
+  no-track refusal changed to exit 0 (X6 FAIL), and the `Stop` layer removed from the
+  committed `settings.json` (X7 FAIL).
 
 ---
 
@@ -171,3 +173,17 @@ found in what it does ask for.
   generalisation of X1 one level up: a field in the template but not the schema cannot come
   back from a `bg` worker, and a field the schema requires but the template omits fails
   validation on every dispatch.
+- **X6 — the scope selector parses `tasks.md`, and refuses a file with no tracks.**
+  `/orchestrate` §1 asks `-Action next` which scope to run instead of reading `tasks.md`,
+  which makes the selector load-bearing: when it stops parsing, the orchestrator loses the
+  mechanism it chooses work with, and the failure is silent because an empty answer looks
+  like an idle fleet. Checks both halves — the real file must yield scopes that each contain
+  a card, and a file with no `## Track` headings must be refused rather than dispatched as
+  one scope containing the whole phase.
+- **X7 — the three edit-time guardrails are wired in the *committed* `settings.json`.**
+  Workers inherit L1–L3 from the repo, so `-Action sync` is the only thing that puts them on
+  box3 at all. A layer deleted, or moved into the gitignored `settings.local.json` to stop
+  it complaining — the drift CLAUDE.md §11 names explicitly — leaves a worker box editing
+  with no guardrails. This is the static half of what GUARD-01 probes: GUARD-01 proves L1
+  *fires* on box3 by taking a real refusal, and nothing but this proves all three are still
+  wired.
