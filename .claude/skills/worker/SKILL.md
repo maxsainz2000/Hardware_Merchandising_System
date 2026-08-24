@@ -130,7 +130,8 @@ report is the whole of what crosses back.
   },
   "blocker": { "stopCondition": 9, "detail": "The exact question or conflict." },
   "needsDecision": "<one precise question for the orchestrator, or null>",
-  "scopeCreepRefused": "<what you noticed but deliberately left alone, or null>"
+  "scopeCreepRefused": "<what you noticed but deliberately left alone, or null>",
+  "notes": null
 }
 ```
 
@@ -141,6 +142,14 @@ Rules for the report, because it is all the orchestrator gets:
 - `failureTail` carries **real output you saw**, truncated — never a reconstruction.
 - `scopeCreepRefused` is genuinely useful, not an apology: it tells the orchestrator what
   the next card should probably cover. Use it when you spot something real.
+- `notes` is **`null` on an ordinary card.** It exists for the briefs that ask for a list of
+  per-item findings — an enforcement probe, a diagnostic sweep — and only when your brief
+  says so. Then it is a list of `{ "key": ..., "ok": true/false, "detail": "..." }`, where
+  `ok` means *the item behaved the way the brief required*, which is not always the same as
+  *it succeeded* — read the brief for which is which. Leave `ok` null for an entry that is a
+  plain observation (a hostname, a path) rather than a verdict; do not invent a `true` to
+  fill the field. It is capped at 20 entries and 600 characters each: it is a findings list,
+  not somewhere to put your working.
 - Keep `summary` short. The orchestrator is holding several of these at once, and length
   is the thing that makes an orchestrator go blind. **This applies to the report, not to
   your work.** Nothing here asks you to think less, check less, or stop early — you are

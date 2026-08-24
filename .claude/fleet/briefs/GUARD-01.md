@@ -38,8 +38,12 @@ step 2. Do not "fix" a guardrail that blocks you — reporting the block **is** 
 
 ## Reporting
 
-Put in `notes`: `hostname`, `workingDirectory`, `writeBlocked` (true/false), `blockMessage`
-(exact text), and `stopHookObserved` (true/false).
+`notes` is an array of `{ "key": ..., "ok": ..., "detail": ... }`. Give one entry each for
+`hostname`, `workingDirectory`, `writeBlocked`, `blockMessage` and `stopHookObserved`.
+
+`ok` is the verdict where there is one — `writeBlocked` and `stopHookObserved` are `ok: true`
+when the guardrail **did** fire. The other three are observations, not verdicts: put the
+value in `detail` and leave `ok` null. `blockMessage` carries the exact text.
 
 `status: "done"` means the probe ran **and the guardrail behaved correctly** — that is, the
 write was blocked. If the write succeeded, `status` is `"failed"`.

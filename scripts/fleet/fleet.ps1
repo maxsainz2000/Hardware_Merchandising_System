@@ -234,6 +234,30 @@ switch ($Action) {
         if (Get-Prop $rep 'scopeCreepRefused') {
             Write-Host "  refused (out of scope): $($rep.scopeCreepRefused)"
         }
+        # Per-item findings, for the briefs that ask for them -- an enforcement probe, a
+        # diagnostic sweep. Rendered here because a field nothing prints is a field whose
+        # loss is silent: the worker fills it in, the orchestrator never learns of it.
+        #
+        # Truncated on purpose, and this is the same rule as everything else in this action:
+        # what prints is a DIGEST. The schema already caps notes at 20 x 600 characters, and
+        # this trims each line further still. Whoever needs the verbatim text -- normally the
+        # health check auditing a probe, not an orchestrator -- reads report.json for it.
+        $notes = @(Get-Prop $rep 'notes')
+        if ($notes.Count) {
+            # `ok` is optional, because an entry can be a plain OBSERVATION (a hostname, a
+            # working directory) rather than a verdict. Absent must therefore render as
+            # neither pass nor fail -- treating a missing verdict as a failure would make
+            # every diagnostic sweep look like a broken one.
+            $failed = @($notes | Where-Object { $null -ne (Get-Prop $_ 'ok') -and -not $_.ok }).Count
+            Write-Host "  notes ($($notes.Count)$(if ($failed) { ", $failed NOT ok" })):"
+            foreach ($n in ($notes | Select-Object -First 20)) {
+                $okVal  = Get-Prop $n 'ok'
+                $mark   = if ($null -eq $okVal) { '    ' } elseif ($okVal) { 'ok  ' } else { 'FAIL' }
+                $detail = Get-Prop $n 'detail'
+                if ($detail -and $detail.Length -gt 140) { $detail = $detail.Substring(0, 137) + '...' }
+                Write-Host "    [$mark] $($n.key)$(if ($detail) { " -- $detail" })"
+            }
+        }
         if (Get-Prop $r.env 'total_cost_usd') {
             Write-Host "  cost: `$$([Math]::Round($r.env.total_cost_usd, 3))"
         }

@@ -1,15 +1,38 @@
 # Fleet health check — run this in a FRESH session
 
-Copy everything between the `---` markers into a new Claude Code session started at the repo
-root. Start that session with:
+**This checklist is implemented.** Run it with:
 
 ```powershell
-claude --model opus --effort high
+claude --model opus --effort high      # a FRESH session, at the repo root
+/health-check
+```
+
+or, for the mechanical half alone, without a session at all:
+
+```powershell
+pwsh ./scripts/fleet/health-check.ps1
 ```
 
 `high`, not `xhigh`: this is verification, not orchestration, and it must not be the session
 that then goes on to run a mission. Run it when something feels wrong, after any edit to the
 fleet scripts or skills, and before the first real mission of a phase.
+
+**Why it is a script and not this prose.** Fourteen manual steps get executed unevenly. A
+step gets skipped, a step gets *read* instead of run, and the table still says `PASS` on the
+line nobody exercised — which is precisely the failure this document opens by warning about.
+Everything below that a script can decide, `scripts/fleet/health-check.ps1` decides, by
+running the command and keeping its output as the evidence. The items are numbered to match
+this file exactly, so the two read side by side. Items numbered `X*` are additions the
+script makes beyond this checklist and are labelled as such.
+
+Setup and teardown that the items below describe by hand — creating and deleting the damaged
+run directory in item 2, stopping the probe in item 5 — the script does itself, in a
+`finally`, so a failed check cannot leave the fleet dirtier than it found it.
+
+**What stays a reading, not a match:** item 9's judgement about whether a sentence *tells a
+model to economise*, and item 6's judgement about whether a model's wording constitutes a
+refusal. The script does the exhaustive search and hands both to you as `REVIEW`. `REVIEW`
+is not a result — resolve each one to `PASS` or `FAIL` in your report.
 
 ---
 
@@ -106,3 +129,12 @@ Produce the table. Then answer these three plainly:
   does not cover?**
 - Is there any check here that **cannot fail** as written? Say so — a check that always
   passes is worse than no check, because it buys false confidence.
+
+  This is answerable rather than rhetorical, and the answer must be earned the same way
+  everything else here is: break the thing on purpose in a scratch copy, confirm the check
+  notices, put it back. `-Only <ids>` re-runs one item, which is what makes that cheap.
+  Items 7, 8, 9, 10 and 11 have been proven falsifiable this way — each was fed a defect it
+  is meant to catch (§5 stripped of `raw.json` and of the scrollback prohibition,
+  `Get-Report` pointed at a session log, an economise-instruction added to a skill, the
+  prohibition section itself deleted, `medium` and `haiku` reintroduced into the §2 table,
+  the registry default drifted back to `medium`) and caught all of them.

@@ -88,3 +88,7 @@ tmp/
 # Fleet worker run logs - transcripts and raw JSON, never committed.
 # The registry, briefs, and mission ledger ARE committed; only the run output is noise.
 .claude/fleet/runs/
+
+# Health check results. Same reasoning: the checklist and the script are committed, a
+# particular run's verdict is a local observation about one machine at one moment.
+.claude/fleet/health/

@@ -29,6 +29,21 @@
       }
     },
     "needsDecision": { "type": ["string", "null"], "maxLength": 600 },
-    "scopeCreepRefused": { "type": ["string", "null"], "maxLength": 300 }
+    "scopeCreepRefused": { "type": ["string", "null"], "maxLength": 300 },
+
+    "notes": {
+      "type": ["array", "null"],
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key"],
+        "properties": {
+          "key":    { "type": "string", "maxLength": 60 },
+          "ok":     { "type": ["boolean", "null"] },
+          "detail": { "type": ["string", "null"], "maxLength": 600 }
+        }
+      }
+    }
   }
 }

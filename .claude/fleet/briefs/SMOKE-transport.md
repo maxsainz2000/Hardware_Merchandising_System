@@ -24,6 +24,8 @@ file other than the report file.
 ## Reporting
 
 Use `status: "done"` — for this probe, "done" means the four facts above were gathered.
-Put them in the `notes` field. `filesChanged` must be empty. Report `tests` and
+Put them in `notes`, which is an array of `{ "key": ..., "ok": ..., "detail": ... }` — one
+entry per fact, the value in `detail`. These are observations rather than verdicts, so leave
+`ok` null on all four. `filesChanged` must be empty. Report `tests` and
 `guardrails` as `"skipped"`, because they were, and saying otherwise would be a false
 claim about a run that never happened.

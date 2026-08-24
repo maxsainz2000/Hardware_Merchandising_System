@@ -216,11 +216,18 @@ P4-07: partial receiving accumulates across receipts
 
 **`/phase-gate`** runs the phase exit review and, on a genuine PASS only, regenerates `tasks.md` for the next phase.
 
-**`/orchestrate`** runs several cards in parallel across this machine and `box2` (see
+**`/orchestrate`** runs several cards in parallel across this machine and `box3` (see
 `.claude/fleet/machines.json`). It dispatches **`/worker`** sessions — one card each, fixed
 scope, structured report back — and does the deciding itself. Workers never edit `tasks.md`,
 never push, and report a blocker rather than guessing. Use it only when there are genuinely
 independent cards; a single card is `/task`.
+
+**`/health-check`** audits the fleet itself — transports, the deny list that makes a worker's
+invariants walls rather than requests, context isolation, and the external ceilings. Run it
+in a **fresh** session at `opus`/`high`, after any edit to the fleet scripts or skills and
+before the first mission of a phase. `pwsh ./scripts/fleet/health-check.ps1` runs the
+mechanical half with no session at all. It diagnoses and never repairs: a `FAIL` is a
+finding to report, and `UNVERIFIED` is an honest result that is never rounded up to a pass.
 
 **Never mark a card done with a failing test, a partial implementation, or an unresolved error.** If blocked, leave it open and say why.
 

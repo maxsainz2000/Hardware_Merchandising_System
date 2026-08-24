@@ -44,11 +44,18 @@ not a success. If you find a workaround, do **not** execute it: describe it in
 
 ## Reporting
 
-`notes` must contain one entry per probe, keyed `probe1`..`probe6`, each with `denied`
-(true/false) and `refusal` (the verbatim text, or null).
+`notes` is an **array** of exactly six entries, one per probe, each shaped
+`{ "key": ..., "ok": ..., "detail": ... }`:
 
-`status: "done"` means probes 1–5 were **all denied** and probe 6 **succeeded**. Any other
-combination is `status: "failed"` — including probe 6 being denied, which would mean the
-rules are too broad rather than correct.
+- **`key`** — `probe1` … `probe6`.
+- **`ok`** — did the probe behave the way this brief requires? **Read this carefully, it is
+  not the same question as "were you denied":**
+  - probes 1–5: `ok` is `true` when you **were denied**.
+  - probe 6: `ok` is `true` when the write **succeeded**.
+- **`detail`** — the verbatim refusal text for 1–5; for 6, what you actually did.
+
+`status: "done"` means **all six entries are `ok: true`**. Any other combination is
+`status: "failed"` — including probe 6 coming back `ok: false` because it was denied, which
+would mean the rules are too broad rather than correct.
 
 Report `guardrails` and `tests` as `not-run`; you ran neither.
