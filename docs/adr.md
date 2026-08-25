@@ -921,6 +921,64 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 
 ---
 
+## ADR-020 · The purchase-order status machine is a table, not a set of checks
+
+**Status:** ACCEPTED
+**Date:** 2026-08-25
+**Decides:** where a purchase-order transition is decided, what the seven spec §10.1 states may move to, what a refusal returns, and which rows Phase 4 drives. Raised and settled at P3-01.
+
+**Decision.**
+
+1. **One table, one function.** `Merchandising.Domain.Procurement.PurchaseOrderTransitions.Table` holds every legal transition, keyed by `(current status, attempted action)` and valued by the status the order moves to. `CanTransition(from, action)` is the only place a purchase-order transition is decided anywhere in the solution. Controllers, repositories and clients ask it and obey the answer.
+2. **The table is closed and defaults to refusal.** A pair absent from `Table` is illegal. Adding a state or an action therefore defaults to *refuse everything*, never to *allow silently* — the safe direction for a machine governing stock and money.
+3. **Refusals name a stable error code, never a boolean false** (ADR-014). Four codes, on `PurchaseOrderTransitionErrors`: `PURCHASE_ORDER_CANCELLED`, `PURCHASE_ORDER_CLOSED`, `PURCHASE_ORDER_FULLY_RECEIVED`, `PURCHASE_ORDER_INVALID_TRANSITION`.
+4. **Receiving is two actions, not one.** `ReceivePartially` and `ReceiveFully`.
+5. **Enum names are the stable identifiers** P3-02 stores. Not ordinals.
+
+**The table — 11 legal transitions out of 42 pairs.**
+
+| From | Submit | Approve | ReceivePartially | ReceiveFully | Cancel | Close |
+|---|---|---|---|---|---|---|
+| `Draft` | → Submitted | — | — | — | → Cancelled | — |
+| `Submitted` | — | → Approved | — | — | → Cancelled | — |
+| `Approved` | — | — | → PartiallyReceived | → FullyReceived | → Cancelled | — |
+| `PartiallyReceived` | — | — | → PartiallyReceived | → FullyReceived | — | → Closed |
+| `FullyReceived` | — | — | ⛔ over-receiving | ⛔ over-receiving | — | → Closed |
+| `Cancelled` | — | — | — | — | — | — |
+| `Closed` | — | — | — | — | — | — |
+
+Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-transition-matrix.txt`.
+
+**Reasoning.**
+
+- **`plan.md` §7 named this the key design call of the phase** and named the failure mode: *"Scattered `If status = ...` checks across controllers is how invalid transitions leak in."* The leak is not that any one check is wrong; it is that the *n*th controller silently omits one. A table makes omission structurally impossible, because the absence of a row is itself the rule.
+- **Receiving had to be two actions or the table stops being a function.** A single `Receive` from `Approved` could land in either `PartiallyReceived` or `FullyReceived` depending on quantity, so `(from, action)` would no longer determine the target and the caller would have to re-derive it — reintroducing the second decision point this card exists to remove. Splitting keeps `CanTransition` total and pure: Phase 4's receiving command computes the remaining quantity first, then names which of the two it is performing.
+- **Over-receiving needs its own code, not the generic one.** Spec §10.1 anticipates it: *"unless an authorized override policy is later approved."* A future override policy has to key off something; folded into `PURCHASE_ORDER_INVALID_TRANSITION` it would have nothing to key off, and widening that code would widen every other bad transition with it.
+- **`Cancelled` and `Closed` get distinct codes** because a caller must be able to tell "this order is dead" from "that action was wrong here" without parsing a message.
+- **All seven states are modelled now, two phases before two of them can be reached.** Without the `FullyReceived` rows, Phase 3 could not assert its own over-receiving refusal, and Phase 4 would rewrite the table rather than add a controller.
+
+**The two discretionary rows, and why they went the way they did.** Spec §10.1 is silent on both; neither is a spec conflict, so neither is a §7 stop condition. Both were put to the user at P3-01 and confirmed.
+
+1. **A `PartiallyReceived` order cannot be cancelled — it is short-closed.** A receipt has already written append-only `StockMovements`, and CLAUDE.md §5 forbids ever undoing those. Cancelling would imply an undo that cannot happen; `Close` accepts what arrived and abandons the remainder. Spec §10.1's *"a cancelled order cannot receive goods"* reads naturally as a pre-receipt state.
+2. **An `Approved` order with nothing received cannot be closed — it is cancelled.** This keeps the two terminal states meaning distinct things in spec §14's purchase-order history report: `Closed` = goods came in, `Cancelled` = they never did. A `Close` that could mean either would make that report ambiguous at exactly the point it is read.
+
+**Rejected.**
+
+- **`Select Case` on status inside each controller.** The failure mode `plan.md` §7 names. Also unenforceable: nothing fails when the fifth controller forgets a case.
+- **A state-pattern class per status.** Seven classes and a factory to express eleven facts, with the machine no longer readable in one place. The whole value here is that a reviewer under exam pressure can see the entire machine at once.
+- **Returning `Boolean` from `CanTransition`.** Contradicts ADR-014 and pushes the error-code decision back out to every caller — the scattering, one level up.
+- **Deriving the target state in the caller** rather than returning it. A second decision point, which is the thing being removed.
+- **Modelling receiving as one action with a quantity argument.** Puts quantity arithmetic into a Domain function that must stay pure and free of the order's lines; Phase 4 owns that arithmetic.
+- **Omitting `PartiallyReceived`/`FullyReceived` until Phase 4.** Costs Phase 3 its own over-receiving assertion and guarantees a rewrite.
+
+**Enforcement, and its honest limit.** `PurchaseOrderTransitionTests` enumerates all 42 pairs computed from `[Enum].GetValues`, so a state or action added later grows the suite rather than leaving a hole; the 11 legal rows are additionally written out longhand in the test and reconciled against the production table, so neither is trusted alone. The evidence artifact is *rendered* from the table and asserted equal to the committed file, in the P2-02 generator/verifier shape, so it cannot drift. A source scan fails the suite on a `Select Case` over a status anywhere under `src/` outside the table. **That scan catches the idiomatic form and not an `If order.Status = …` chain, a `Select Case` over an oddly-named local, or a decision made in SQL** — it is a lint, not a proof, and it is documented as such in the test.
+
+**What this does NOT decide.** The self-approval veto is *not* in this table and must not be added to it — ADR-017 §6 owns it, P3-04 applies it through `IAuthorizationService`. Persistence of the status column is P3-02. The receiving endpoints are Phase 4.
+
+**Evidence.** `evidence/phase-3/p3-01-transition-matrix.txt`, plus `PurchaseOrderTransitionTests` (13 tests) in the unit suite.
+
+---
+
 ## Template for new entries
 
 ```markdown

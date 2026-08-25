@@ -76,7 +76,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track A — The status machine, in Domain, before any endpoint exists
 
-### ⬜ P3-01 · The seven-state transition table and a single `CanTransition`
+### ✅ P3-01 · The seven-state transition table and a single `CanTransition`
 
 **Spec:** §10.1 · **Closes:** G-23 (begins) · **Decides:** ADR-020
 **Files:** `src/Merchandising.Domain/Procurement/`, `src/tests/Merchandising.Tests.Unit/PurchaseOrderTransitionTests.vb`
@@ -85,15 +85,17 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] All seven spec §10.1 states modelled: `Draft`, `Submitted`, `Approved`, `PartiallyReceived`, `FullyReceived`, `Cancelled`, `Closed` — including the two Phase 4 drives
-- [ ] One `CanTransition(from, action)` function is the only place a transition is decided; no `Select Case` on status anywhere else in the solution
-- [ ] The test enumerates **every** state × action pair — computed from the enums, not hand-listed, so a new state cannot be added without the suite growing
-- [ ] Each illegal pair names a stable error code (ADR-014), not a boolean false
-- [ ] `A cancelled order cannot proceed` and `a fully received order rejects further receiving` are rows in the table, not comments
-- [ ] ADR-020 records the table, the states Phase 4 drives, and why a table beat scattered checks
-- [ ] Unit suite green; `check-no-csharp.ps1` passes
+- [x] All seven spec §10.1 states modelled: `Draft`, `Submitted`, `Approved`, `PartiallyReceived`, `FullyReceived`, `Cancelled`, `Closed` — including the two Phase 4 drives
+- [x] One `CanTransition(from, action)` function is the only place a transition is decided; no `Select Case` on status anywhere else in the solution — ⚠ enforced by a **source-scan lint**, which catches the idiomatic `Select Case … Status` form and *not* an `If order.Status = …` chain or a decision made in SQL. Stated in the test's own summary and in ADR-020; not rounded up to a proof
+- [x] The test enumerates **every** state × action pair — computed from the enums, not hand-listed, so a new state cannot be added without the suite growing
+- [x] Each illegal pair names a stable error code (ADR-014), not a boolean false — four codes on `PurchaseOrderTransitionErrors`, and an unregistered code fails the suite
+- [x] `A cancelled order cannot proceed` and `a fully received order rejects further receiving` are rows in the table, not comments — both asserted over *every* action, not spot-checked
+- [x] ADR-020 records the table, the states Phase 4 drives, and why a table beat scattered checks
+- [x] Unit suite green; `check-no-csharp.ps1` passes — 37/37 unit (24 → 37), 136/136 integration, G-A–G-D pass, build 0 warnings
 
-**Evidence:** `evidence/phase-3/p3-01-transition-matrix.txt` — one row per state × action pair, legal and illegal
+**Evidence:** `evidence/phase-3/p3-01-transition-matrix.txt` — one row per state × action pair, legal and illegal ✅ *rendered from the table by `PurchaseOrderTransitionMatrixFormatter` and asserted equal to the committed file, so it cannot drift (the P2-02 shape)*
+
+> **Two rows the spec does not decide, confirmed with the user rather than assumed.** A `PartiallyReceived` order cannot be **cancelled** — a receipt has already written append-only `StockMovements`, so the route for abandoning the remainder is `Close` (short-close). An `Approved` order with nothing received cannot be **closed** — it is cancelled, which keeps `Closed` = *goods came in* and `Cancelled` = *they never did* distinct in spec §14's history report. Both are recorded in ADR-020 with their reasoning; **P3-05 implements them and must not re-decide them.**
 
 > **Write this card first and alone.** Every later card in the phase consumes it, and it is the one piece that can be fully proven with no database, no HTTP, and no fixture.
 

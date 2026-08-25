@@ -1,0 +1,68 @@
+P3-01 - Purchase-order transition matrix
+========================================
+
+Generated from Merchandising.Domain.Procurement.PurchaseOrderTransitions.Table.
+PurchaseOrderTransitionTests renders this content again and asserts this file is
+unchanged - do not hand-edit it. Change the table and regenerate instead.
+
+Spec section 10.1 states seven statuses and the rules in prose; ADR-020 records why
+they are a table rather than scattered checks, and which rows Phase 4 drives.
+
+Every pair below is decided. A pair with no row in the table is REFUSED, and names
+the stable error code (ADR-014) a caller keys off - never a bare false.
+
+FROM                ACTION              RESULT
+------------------  ------------------  ----------------------------------------
+Draft               Submit              ALLOWED  -> Submitted
+Draft               Approve             REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Draft               ReceivePartially    REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Draft               ReceiveFully        REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Draft               Cancel              ALLOWED  -> Cancelled
+Draft               Close               REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+
+Submitted           Submit              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Submitted           Approve             ALLOWED  -> Approved
+Submitted           ReceivePartially    REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Submitted           ReceiveFully        REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Submitted           Cancel              ALLOWED  -> Cancelled
+Submitted           Close               REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+
+Approved            Submit              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Approved            Approve             REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+Approved            ReceivePartially    ALLOWED  -> PartiallyReceived
+Approved            ReceiveFully        ALLOWED  -> FullyReceived
+Approved            Cancel              ALLOWED  -> Cancelled
+Approved            Close               REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+
+PartiallyReceived   Submit              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+PartiallyReceived   Approve             REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+PartiallyReceived   ReceivePartially    ALLOWED  -> PartiallyReceived
+PartiallyReceived   ReceiveFully        ALLOWED  -> FullyReceived
+PartiallyReceived   Cancel              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+PartiallyReceived   Close               ALLOWED  -> Closed
+
+FullyReceived       Submit              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+FullyReceived       Approve             REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+FullyReceived       ReceivePartially    REFUSED  PURCHASE_ORDER_FULLY_RECEIVED
+FullyReceived       ReceiveFully        REFUSED  PURCHASE_ORDER_FULLY_RECEIVED
+FullyReceived       Cancel              REFUSED  PURCHASE_ORDER_INVALID_TRANSITION
+FullyReceived       Close               ALLOWED  -> Closed
+
+Cancelled           Submit              REFUSED  PURCHASE_ORDER_CANCELLED
+Cancelled           Approve             REFUSED  PURCHASE_ORDER_CANCELLED
+Cancelled           ReceivePartially    REFUSED  PURCHASE_ORDER_CANCELLED
+Cancelled           ReceiveFully        REFUSED  PURCHASE_ORDER_CANCELLED
+Cancelled           Cancel              REFUSED  PURCHASE_ORDER_CANCELLED
+Cancelled           Close               REFUSED  PURCHASE_ORDER_CANCELLED
+
+Closed              Submit              REFUSED  PURCHASE_ORDER_CLOSED
+Closed              Approve             REFUSED  PURCHASE_ORDER_CLOSED
+Closed              ReceivePartially    REFUSED  PURCHASE_ORDER_CLOSED
+Closed              ReceiveFully        REFUSED  PURCHASE_ORDER_CLOSED
+Closed              Cancel              REFUSED  PURCHASE_ORDER_CLOSED
+Closed              Close               REFUSED  PURCHASE_ORDER_CLOSED
+
+Totals: 42 pairs (7 states x 6 actions), 11 allowed, 31 refused.
+
+Phase 4 drives ReceivePartially and ReceiveFully; no endpoint exists for them yet.
+The rows are present so that Phase 3's refusals are already complete.
