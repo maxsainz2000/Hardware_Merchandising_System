@@ -673,6 +673,14 @@ switch ($Action) {
     # next-scope.ps1 so the parsing lives in one place and can be run without fleet.ps1 at
     # all -- and so this file stays about RUNS, which is what everything else here is about.
     'next' {
+        # next-scope.ps1 ends on a Write-Host and never calls exit, so nothing
+        # sets $LASTEXITCODE -- and Set-StrictMode (line 34) turns reading an
+        # unset variable into a terminating error. The selector therefore
+        # printed a correct answer and then died on the way out, exiting 1,
+        # every time it ran in a fresh session. Seeding it keeps a genuine
+        # non-zero exit from next-scope.ps1 meaningful while defaulting the
+        # ordinary path to 0.
+        $global:LASTEXITCODE = 0
         & (Join-Path $PSScriptRoot 'next-scope.ps1') -Max $Max
         exit $LASTEXITCODE
     }
