@@ -54,30 +54,38 @@ Namespace Controllers
 
         Private ReadOnly _connectionFactory As ConnectionFactory
         Private ReadOnly _priceChangeService As PriceChangeService
+        Private ReadOnly _lifecycleService As ProductLifecycleService
 
-        Public Sub New(connectionFactory As ConnectionFactory, priceChangeService As PriceChangeService)
+        Public Sub New(connectionFactory As ConnectionFactory, priceChangeService As PriceChangeService, lifecycleService As ProductLifecycleService)
             _connectionFactory = connectionFactory
             _priceChangeService = priceChangeService
+            _lifecycleService = lifecycleService
         End Sub
 
         ''' <summary>
         ''' Free-text search against SKU, barcode, and product name (spec
         ''' section 10.3), paginated. An absent/blank <paramref name="q"/>
-        ''' returns every product.
+        ''' returns every product. <paramref name="includeInactive"/>
+        ''' defaults False - P2-09: ordinary lookup excludes inactive
+        ''' products (spec section 10.2), while GetProduct below stays
+        ''' unrestricted for the history/reports case spec section 12
+        ''' requires.
         ''' </summary>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ProductsRead)>
         <HttpGet>
         Public Async Function SearchProducts(
             <FromQuery(Name:="q")> q As String,
             <FromQuery> Optional page As Integer = 1,
-            <FromQuery> Optional pageSize As Integer = DefaultPageSize) As Task(Of IActionResult)
+            <FromQuery> Optional pageSize As Integer = DefaultPageSize,
+            <FromQuery> Optional includeInactive As Boolean = False) As Task(Of IActionResult)
 
             Dim effectivePage As Integer = If(page < 1, 1, page)
             Dim effectivePageSize As Integer = If(pageSize < 1, DefaultPageSize, Math.Min(pageSize, MaxPageSize))
 
             Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
 
-                Dim result = Await ProductRepository.SearchAsync(connection, q, effectivePage, effectivePageSize, HttpContext.RequestAborted)
+                Dim result = Await ProductRepository.SearchAsync(
+                    connection, q, effectivePage, effectivePageSize, includeInactive, HttpContext.RequestAborted)
 
                 Return Ok(New ProductSearchResponse With {
                     .Items = result.Items.Select(AddressOf ToResponse).ToList(),
@@ -365,6 +373,72 @@ Namespace Controllers
                         .Message = "Neither price nor cost differs from the product's current value.",
                         .CorrelationId = correlationId,
                         .Errors = New Dictionary(Of String, String()) From {{"price", New String() {"At least one supplied value must differ from the current one."}}}
+                    })
+
+            End Select
+
+        End Function
+
+        ''' <summary>
+        ''' Deactivates a product (spec section 12: "master data is
+        ''' deactivated where possible"; section 13's own named route).
+        ''' Never deletes a row - see ProductLifecycleService's own header.
+        ''' Deactivating an already-inactive product is a controlled 400,
+        ''' not a silent success.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ProductsManage)>
+        <AuditRequired>
+        <HttpPost("{id}/deactivate")>
+        Public Async Function DeactivateProduct(id As Integer) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As ProductLifecycleOutcome = Await _lifecycleService.DeactivateAsync(id, actorUserId, correlationId, HttpContext.RequestAborted)
+            Return LifecycleResult(outcome, id, correlationId, "PRODUCT_ALREADY_INACTIVE", "This product is already inactive.")
+
+        End Function
+
+        ''' <summary>
+        ''' Reactivates a previously deactivated product - the same row,
+        ''' same Id, no duplicate created (P2-09). Not a spec section 13
+        ''' route by name; symmetric with Deactivate above, gated by the
+        ''' same policy.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ProductsManage)>
+        <AuditRequired>
+        <HttpPost("{id}/reactivate")>
+        Public Async Function ReactivateProduct(id As Integer) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As ProductLifecycleOutcome = Await _lifecycleService.ReactivateAsync(id, actorUserId, correlationId, HttpContext.RequestAborted)
+            Return LifecycleResult(outcome, id, correlationId, "PRODUCT_ALREADY_ACTIVE", "This product is already active.")
+
+        End Function
+
+        Private Function LifecycleResult(
+            outcome As ProductLifecycleOutcome, id As Integer, correlationId As String,
+            noChangeErrorCode As String, noChangeMessage As String) As IActionResult
+
+            Select Case outcome.Kind
+
+                Case ProductLifecycleOutcomeKind.Success
+                    Return Ok(outcome.Response)
+
+                Case ProductLifecycleOutcomeKind.ProductNotFound
+                    Return NotFound(New ApiErrorResponse With {
+                        .ErrorCode = "PRODUCT_NOT_FOUND",
+                        .Message = $"No product with Id {id} exists.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case Else ' NoChange
+                    Return BadRequest(New ApiErrorResponse With {
+                        .ErrorCode = noChangeErrorCode,
+                        .Message = noChangeMessage,
+                        .CorrelationId = correlationId
                     })
 
             End Select

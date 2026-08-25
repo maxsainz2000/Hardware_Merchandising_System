@@ -158,23 +158,35 @@ Namespace Data
         ''' actually searches. Nothing/empty <paramref name="query"/> returns
         ''' every product, paginated. Results are ordered by Name for stable
         ''' paging.
+        ''' <paramref name="includeInactive"/> is False by default (spec
+        ''' section 10.2: an inactive product "cannot be newly sold or newly
+        ''' ordered", and P2-09 treats ordinary search/lookup as one of
+        ''' those paths) - True is for the history/reports case spec section
+        ''' 12 requires ("remain visible in history and reports").
         ''' </summary>
         Public Shared Async Function SearchAsync(
             connection As MySqlConnection,
             query As String,
             page As Integer,
             pageSize As Integer,
+            Optional includeInactive As Boolean = False,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of Product), TotalCount As Integer))
 
             Dim hasQuery As Boolean = Not String.IsNullOrWhiteSpace(query)
             Dim likePattern As String = If(hasQuery, "%" & query & "%", Nothing)
 
+            Dim conditions As New List(Of String)
+            If hasQuery Then
+                conditions.Add("(Sku LIKE @pattern OR Barcode LIKE @pattern OR Name LIKE @pattern)")
+            End If
+            If Not includeInactive Then
+                conditions.Add("IsActive = 1")
+            End If
+            Dim whereClause As String = If(conditions.Count > 0, " WHERE " & String.Join(" AND ", conditions), "")
+
             Dim totalCount As Integer
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText =
-                    If(hasQuery,
-                       "SELECT COUNT(*) FROM Products WHERE Sku LIKE @pattern OR Barcode LIKE @pattern OR Name LIKE @pattern;",
-                       "SELECT COUNT(*) FROM Products;")
+                command.CommandText = "SELECT COUNT(*) FROM Products" & whereClause & ";"
                 If hasQuery Then
                     command.Parameters.AddWithValue("@pattern", likePattern)
                 End If
@@ -184,9 +196,7 @@ Namespace Data
             Dim items As New List(Of Product)
             Using command As MySqlCommand = connection.CreateCommand()
                 command.CommandText =
-                    SelectColumns &
-                    If(hasQuery, " FROM Products WHERE Sku LIKE @pattern OR Barcode LIKE @pattern OR Name LIKE @pattern", " FROM Products") &
-                    " ORDER BY Name LIMIT @pageSize OFFSET @offset;"
+                    SelectColumns & " FROM Products" & whereClause & " ORDER BY Name LIMIT @pageSize OFFSET @offset;"
                 If hasQuery Then
                     command.Parameters.AddWithValue("@pattern", likePattern)
                 End If
@@ -306,6 +316,42 @@ Namespace Data
 
                 Return If(affectedRows = 1, ProductWriteOutcomeKind.Success, ProductWriteOutcomeKind.NotFound)
 
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P2-09: flips IsActive, carrying the "did this actually change
+        ''' anything" check inside the same statement as the mutation
+        ''' (ADR-006's conditional-update discipline, the same shape
+        ''' StockRepository.TryDecrementAsync uses) - never a separate
+        ''' read-then-decide-then-write. Returns False both when no such
+        ''' product exists and when it already held the target state; the
+        ''' caller (ProductLifecycleService) tells those apart with one
+        ''' more read only on the False path, where it no longer matters
+        ''' whether that read races anything - nothing is being written.
+        ''' </summary>
+        Public Shared Async Function SetActiveStateAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            productId As Integer,
+            targetIsActive As Boolean,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE Products " &
+                    "   SET IsActive = @targetIsActive, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id " &
+                    "   AND IsActive <> @targetIsActive;"
+                command.Parameters.AddWithValue("@targetIsActive", targetIsActive)
+                command.Parameters.AddWithValue("@id", productId)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
             End Using
 
         End Function

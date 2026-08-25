@@ -255,6 +255,9 @@ Public Module Program
         ' P2-08 / ADR-006: the atomic price/cost change (Products + PriceHistory + audit).
         builder.Services.AddScoped(Of PriceChangeService)()
 
+        ' P2-09: deactivate/reactivate (Products + audit, atomically).
+        builder.Services.AddScoped(Of ProductLifecycleService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

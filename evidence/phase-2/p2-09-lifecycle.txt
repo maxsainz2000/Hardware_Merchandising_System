@@ -1,0 +1,152 @@
+P2-09 - Active/inactive lifecycle preserves historical references - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (10.4.32-MariaDB
+via XAMPP 8.2.12-0).
+
+Files: src/Merchandising.Api/Catalog/ProductLifecycleService.vb,
+src/Merchandising.Api/Catalog/ProductLifecycleOutcome.vb,
+src/Merchandising.Infrastructure/Data/ProductRepository.vb
+(SetActiveStateAsync, and SearchAsync's new includeInactive parameter), plus
+the two new routes on the existing ProductsController.vb
+(POST /products/{id}/deactivate, POST /products/{id}/reactivate).
+src/Merchandising.Domain/Entities/Product.vb needed no change - IsActive
+has existed since P1-07.
+
+===============================================================================
+Done-when box 1 - deactivating a product referenced by a stock movement
+succeeds and the movement still resolves its product
+===============================================================================
+DeactivateAsync_ProductReferencedByStockMovement_MovementStillResolvesProduct:
+creates a real StockMovements row against the fixture product (via
+Inventory.StockService.DecrementAsync, the real P1-11 code path), deactivates
+the product, then re-reads:
+  - a JOIN from StockMovements to Products for that movement still resolves
+    the product's Name, and confirms IsActive is genuinely False at read
+    time (not merely "not yet checked").
+  - ProductRepository.GetByIdAsync - the same read GetProduct(id) uses -
+    still resolves the (inactive) product; nothing here is filtered by
+    IsActive.
+
+  Passed DeactivateAsync_ProductReferencedByStockMovement_MovementStillResolvesProduct [55 ms]
+
+===============================================================================
+Done-when box 2 - a DELETE of a referenced product is refused by foreign
+key, proven with the error
+===============================================================================
+EnsureFixtureHasStockMovement_ForForeignKeyProofInEvidence (run first, via
+the test suite) leaves the fixture product (Sku p2_09_fixture_sku) with a
+real StockBalances row and StockMovements rows referencing it - the same
+fixture the box-1 test above also uses.
+
+  Passed EnsureFixtureHasStockMovement_ForForeignKeyProofInEvidence [15 ms]
+
+$ mysql -u root -e "SELECT Id, Sku, IsActive FROM merchandising.products WHERE Sku='p2_09_fixture_sku'; SELECT COUNT(*) FROM merchandising.stockmovements WHERE ProductId=(SELECT Id FROM merchandising.products WHERE Sku='p2_09_fixture_sku');"
+Id  Sku                 IsActive
+70  p2_09_fixture_sku   1
+COUNT(*)
+6
+
+$ mysql -u root -e "DELETE FROM merchandising.products WHERE Id=70;"
+ERROR 1451 (23000): Cannot delete or update a parent row: a foreign key
+constraint fails (`merchandising`.`stockbalances`, CONSTRAINT
+`FK_StockBalances_Products` FOREIGN KEY (`ProductId`) REFERENCES
+`products` (`Id`))
+
+  [PASS] the delete is refused - proven by the actual ERROR 1451, not
+  inferred from the row still being present afterward. Run as root
+  deliberately (the only account this project ever uses for this kind of
+  direct proof, per p2-06-schema.txt's own precedent) rather than through
+  the automated test suite or merch_api: merch_api already gets a separate,
+  privilege-level 1142 denial on DELETE FROM products regardless of any FK
+  (0002_post-migration-grants.sql - "deactivate, do not delete"), which
+  would prove the grant, not the constraint. StockBalances' FK is what
+  MariaDB evaluated first here; StockMovements' own FK_StockMovements_
+  Products (0001_foundation.sql) references the same product and would
+  refuse it independently regardless of evaluation order - the COUNT above
+  confirms 6 real StockMovements rows exist against this product.
+
+===============================================================================
+Done-when box 3 - inactive products excluded from lookup/sale paths but
+remain visible in history and reports
+===============================================================================
+No sale/procurement endpoint exists yet (later phases) to prove the "cannot
+be newly sold/ordered" half directly - this proves the "lookup" half that
+does exist today: ProductsController.SearchProducts.
+
+SearchProducts_DefaultExcludesInactive_IncludeInactiveShowsIt, through the
+real HTTP pipeline (MerchandisingApiFactory): after deactivating the
+fixture product, GET /api/v1/products?q=<sku> (default) excludes it; the
+same query with &includeInactive=true includes it; GET /api/v1/products/{id}
+(detail/history view) resolves it regardless, unfiltered by IsActive either
+way.
+
+  Passed SearchProducts_DefaultExcludesInactive_IncludeInactiveShowsIt [765 ms]
+
+===============================================================================
+Done-when box 4 - reactivation restores availability without duplicating
+the record
+===============================================================================
+ReactivateAsync_Success_RestoresActiveAndAudits_NoDuplicateRow: deactivates
+then reactivates the SAME fixture product; asserts the response's Id is
+unchanged, IsActive is back to True, and a direct COUNT(*) WHERE Sku=... is
+exactly 1 - no second row was ever created.
+
+  Passed ReactivateAsync_Success_RestoresActiveAndAudits_NoDuplicateRow [20 ms]
+
+Also proven end-to-end through the real HTTP pipeline
+(DeactivateThenReactivate_ThroughHttp_BothSucceed): deactivate succeeds
+(200), a second deactivate attempt on the now-inactive product is refused
+(400 PRODUCT_ALREADY_INACTIVE, not a silent success), reactivate succeeds
+(200).
+
+  Passed DeactivateThenReactivate_ThroughHttp_BothSucceed [267 ms]
+
+===============================================================================
+Done-when box 5 - deactivation and reactivation are both audited
+===============================================================================
+DeactivateAsync_Success_SetsInactiveAndAudits and
+ReactivateAsync_Success_RestoresActiveAndAudits_NoDuplicateRow each assert
+exactly one AuditLogs row for the command's own CorrelationId, Action =
+"ProductDeactivated" / "ProductReactivated" respectively - written inside
+the same transaction as the Products UPDATE (spec section 11: "Product
+created/deactivated | Product master and audit event are committed
+together"), the same ADR-006 shape P2-08 reused for price changes.
+
+  Passed DeactivateAsync_Success_SetsInactiveAndAudits [361 ms]
+
+===============================================================================
+Supporting behavior (not its own done-when box)
+===============================================================================
+  Passed DeactivateAsync_AlreadyInactive_ReturnsNoChange [18 ms]
+  Passed DeactivateAsync_UnknownProduct_ReturnsProductNotFound [8 ms]
+  Passed ReactivateAsync_AlreadyActive_ReturnsNoChange [8 ms]
+    - deactivating an already-inactive product (or reactivating an
+      already-active one) is a controlled 400/NoChange, not a silent
+      no-op with an empty audit trail.
+
+===============================================================================
+A real bug caught while building this, worth recording
+===============================================================================
+ProductLifecycleService.SetActiveStateAsync originally read the "already in
+this state" product (to distinguish NoChange from ProductNotFound) BEFORE
+rolling back the open-but-now-empty transaction. MySqlConnector refused
+that read outright: "The transaction associated with this command is not
+the connection's active transaction" (InvalidOperationException), because
+ProductRepository.GetByIdAsync's SELECT never attaches the caller's
+transaction. DeactivateThenReactivate_ThroughHttp_BothSucceed caught this
+immediately as a 500 on the second (already-inactive) deactivate attempt,
+not as a design defect - the fix was reordering: RollbackAsync +
+DisposeAsync the transaction first, then read plainly. Recorded because it
+is the same class of "which order these two calls happen in matters" lesson
+ADR-017's own header records for a different bug.
+
+===============================================================================
+Full run
+===============================================================================
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~ProductLifecycleTests"
+Total tests: 9
+     Passed: 9
+
+Full suite (pwsh ./scripts/run-tests.ps1): Unit 24/24, Integration 113/114 -
+the one failure is the same pre-existing, unrelated USB-backup-volume gap
+noted in p2-06/p2-07/p2-08's own evidence (BackupCommandTests.vb, P1-17).
+All four guardrails green.

@@ -271,7 +271,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ---
 
-### ⬜ P2-09 · Active/inactive lifecycle preserves historical references
+### ✅ P2-09 · Active/inactive lifecycle preserves historical references
 
 **Spec:** §12 · **Closes:** G-21 · **Files:** `src/Merchandising.Api/Catalog/`, `src/Merchandising.Domain/Entities/`
 
@@ -279,11 +279,11 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] Deactivating a product referenced by a stock movement succeeds and the movement still resolves its product
-- [ ] A **delete** of a referenced product is refused by foreign key, proven with the error, not asserted by inspection
-- [ ] Inactive products are excluded from lookup/sale paths but remain visible in history and reports
-- [ ] Reactivation restores availability without duplicating the record
-- [ ] Deactivation and reactivation are both audited
+- [x] Deactivating a product referenced by a stock movement succeeds and the movement still resolves its product
+- [x] A **delete** of a referenced product is refused by foreign key, proven with the error, not asserted by inspection
+- [x] Inactive products are excluded from lookup/sale paths but remain visible in history and reports — no sale/procurement endpoint exists yet to prove the "sale" half; proven for the "lookup" half that exists today (search), with `GetProduct(id)` deliberately unfiltered for history/reports
+- [x] Reactivation restores availability without duplicating the record
+- [x] Deactivation and reactivation are both audited
 
 **Evidence:** `evidence/phase-2/p2-09-lifecycle.txt`
 
