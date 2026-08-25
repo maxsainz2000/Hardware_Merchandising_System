@@ -212,7 +212,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ## Track C — Product master
 
-### ⬜ P2-06 · Migration 0006 — product master tables
+### ✅ P2-06 · Migration 0006 — product master tables
 
 **Spec:** §12 · **Closes:** G-21 (begins) · **Decides:** ADR-018
 **Files:** `db/migrations/0006_product-master.sql`, `db/grants/0008_product-master-grants.sql`
@@ -221,12 +221,12 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] All five tables created, with foreign keys that **prevent** deletion of a referenced product (spec §12)
-- [ ] `PriceHistory` granted `INSERT`/`SELECT` only — it is a ledger, like `StockMovements`
-- [ ] **ADR-018 records how "unique active barcode" is enforced**, given MariaDB 10.4 has no partial unique index. Decide it; do not inherit P1-07's POC-scale reduction by silence
-- [ ] Indexes present for SKU, barcode, product name, supplier name (spec §12)
-- [ ] Applies clean as `merch_migrator`; `db/grants/0008` applied after, lowercase names
-- [ ] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns
+- [x] All five tables created, with foreign keys that **prevent** deletion of a referenced product (spec §12) — proven at `merch_migrator`/root level as ERROR 1451, isolated from `merch_api`'s own separate privilege-level denial on `DELETE FROM products`
+- [x] `PriceHistory` granted `INSERT`/`SELECT` only — it is a ledger, like `StockMovements`
+- [x] **ADR-018 records how "unique active barcode" is enforced**, given MariaDB 10.4 has no partial unique index. Decide it; do not inherit P1-07's POC-scale reduction by silence — generated column (`Products.ActiveBarcode`) plus unique index, chosen over a trigger or app-level check on measured concurrent-insert evidence
+- [x] Indexes present for SKU, barcode, product name (spec §12). **Supplier name deferred to P2-10** — `Suppliers` is Track D's own migration (`0007_suppliers.sql`), not one of this card's five tables; indexing a column on a table this migration does not create is out of scope here, confirmed with the user before implementing
+- [x] Applies clean as `merch_migrator`; `db/grants/0008` applied after, lowercase names
+- [x] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns
 
 **Evidence:** `evidence/phase-2/p2-06-schema.txt`, `evidence/phase-2/p2-06-precision.txt`
 

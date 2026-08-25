@@ -1,0 +1,98 @@
+P2-06 - Migration 0006 - ADR-018 barcode-uniqueness proof and decimal
+round-trip evidence. Captured 2026-08-25 against the real pinned MariaDB
+instance (10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+===============================================================================
+PART A - unique active barcode, enforced by generated column + unique index
+===============================================================================
+Mechanism: Products.ActiveBarcode is a VIRTUAL generated column
+(CASE WHEN IsActive=1 THEN Barcode ELSE NULL END) with an ordinary UNIQUE
+KEY on it. MariaDB treats multiple NULLs in a UNIQUE index as non-
+conflicting, so an inactive product's ActiveBarcode (always NULL) never
+collides with anything. All statements run as merch_api, the real
+application account, not root - proving the grant model permits this, not
+just the schema.
+
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc) VALUES ('P2-06-PROOF-A', 'DUP-BARCODE-1', 'Proof Product A', 10.0000, 5.0000, 1, 0, '2026-08-25 00:00:00', '2026-08-25 00:00:00');"
+(success)
+
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc) VALUES ('P2-06-PROOF-B', 'DUP-BARCODE-1', 'Proof Product B', 10.0000, 5.0000, 1, 0, '2026-08-25 00:00:00', '2026-08-25 00:00:00');"
+ERROR 1062 (23000): Duplicate entry 'DUP-BARCODE-1' for key
+'UQ_Products_ActiveBarcode'
+  [PASS] a second ACTIVE product cannot take an already-active barcode.
+
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc) VALUES ('P2-06-PROOF-C', 'DUP-BARCODE-1', 'Proof Product C', 10.0000, 5.0000, 0, 0, '2026-08-25 00:00:00', '2026-08-25 00:00:00');"
+(success)
+  [PASS] an INACTIVE product with the same barcode never collides -
+  "unique active barcode", not "unique barcode".
+
+$ mysql -u merch_api merchandising -e "UPDATE products SET IsActive = 0, UpdatedAtUtc = '2026-08-25 00:00:01' WHERE Sku = 'P2-06-PROOF-A';"
+(success)
+$ mysql -u merch_api merchandising -e "SELECT Sku, IsActive, Barcode, ActiveBarcode FROM products WHERE Sku IN ('P2-06-PROOF-A','P2-06-PROOF-B','P2-06-PROOF-C');"
+Sku             IsActive  Barcode          ActiveBarcode
+P2-06-PROOF-A   0         DUP-BARCODE-1    NULL
+P2-06-PROOF-C   0         DUP-BARCODE-1    NULL
+  [PASS] deactivating Product A frees the barcode - ActiveBarcode
+  recomputes to NULL with no application code involved.
+
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc) VALUES ('P2-06-PROOF-D', 'DUP-BARCODE-1', 'Proof Product D', 10.0000, 5.0000, 1, 0, '2026-08-25 00:00:02', '2026-08-25 00:00:02');"
+(success)
+$ mysql -u merch_api merchandising -e "SELECT Sku, IsActive, Barcode, ActiveBarcode FROM products WHERE Sku LIKE 'P2-06-PROOF-%' ORDER BY Sku;"
+Sku             IsActive  Barcode          ActiveBarcode
+P2-06-PROOF-A   0         DUP-BARCODE-1    NULL
+P2-06-PROOF-C   0         DUP-BARCODE-1    NULL
+P2-06-PROOF-D   1         DUP-BARCODE-1    DUP-BARCODE-1
+  [PASS] a NEW active product can immediately reuse a barcode a
+  deactivation just freed - the P2-09 reactivation scenario this schema
+  needs to support.
+
+-------------------------------------------------------------------------------
+Genuine concurrent race (not merely sequential), same shape as P1-13's
+"fire without awaiting between them" pattern - two separate mysql client
+processes launched together as background jobs, same barcode, both active:
+-------------------------------------------------------------------------------
+
+$ ( mysql -u merch_api merchandising -e "INSERT INTO products (...) VALUES ('P2-06-RACE-E', 'RACE-BARCODE-1', 'Race E', 1.0000, 1.0000, 1, 0, '2026-08-25 00:01:00', '2026-08-25 00:01:00');" ) &
+$ ( mysql -u merch_api merchandising -e "INSERT INTO products (...) VALUES ('P2-06-RACE-F', 'RACE-BARCODE-1', 'Race F', 1.0000, 1.0000, 1, 0, '2026-08-25 00:01:00', '2026-08-25 00:01:00');" ) &
+$ wait
+E: exit=0 (success)
+F: ERROR 1062 (23000): Duplicate entry 'RACE-BARCODE-1' for key
+'UQ_Products_ActiveBarcode' (exit=1)
+
+$ mysql -u merch_api merchandising -e "SELECT Sku, IsActive, Barcode, ActiveBarcode FROM products WHERE Sku IN ('P2-06-RACE-E','P2-06-RACE-F');"
+Sku             IsActive  Barcode           ActiveBarcode
+P2-06-RACE-E    1         RACE-BARCODE-1    RACE-BARCODE-1
+  [PASS] exactly one of two simultaneous inserts landed - the unique index
+  is InnoDB's own atomic check, not a separate compare-then-insert step
+  the application could race against (unlike the read-then-write shape
+  ADR-006/P1-13 had to work around for stock decrement - a unique index
+  never exposes that race in the first place, which is why it beat both
+  the trigger option (still check-then-act at the trigger's own SELECT)
+  and the plain application-level option named in the task card).
+
+===============================================================================
+PART B - decimal round-trip at the storage boundary (new columns)
+===============================================================================
+ADR-004: money DECIMAL(19,4), quantity DECIMAL(19,3).
+
+$ mysql -u merch_api merchandising -e "INSERT INTO products (Sku, Barcode, Name, Price, Cost, ReorderLevel, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc) VALUES ('P2-06-PRECISION', NULL, 'Precision Proof', 12345678901234.5678, 0.0001, 0.001, 1, 0, '2026-08-25 00:02:00', '2026-08-25 00:02:00');"
+$ mysql -u merch_api merchandising -e "SELECT Sku, Price, Cost, ReorderLevel FROM products WHERE Sku='P2-06-PRECISION';"
+Sku               Price                  Cost    ReorderLevel
+P2-06-PRECISION   12345678901234.5678    0.0001  0.001
+  [PASS] Products.ReorderLevel DECIMAL(19,3) round-trips 0.001 exactly.
+
+$ mysql -u merch_api merchandising -e "INSERT INTO pricehistory (ProductId, ChangedField, OldValue, NewValue, ActorUserId, EffectiveAtUtc, CorrelationId, CreatedAtUtc) SELECT Id, 'Price', 0.0001, 12345678901234.5678, (SELECT Id FROM users LIMIT 1), '2026-08-25 00:02:01', '11111111-1111-1111-1111-111111111111', '2026-08-25 00:02:01' FROM products WHERE Sku='P2-06-PRECISION';"
+$ mysql -u merch_api merchandising -e "SELECT OldValue, NewValue FROM pricehistory WHERE ProductId = (SELECT Id FROM products WHERE Sku='P2-06-PRECISION');"
+OldValue   NewValue
+0.0001     12345678901234.5678
+  [PASS] PriceHistory.OldValue/NewValue DECIMAL(19,4) round-trip
+  12345678901234.5678 and 0.0001 exactly - same two boundary figures
+  P1-07 proved at the storage layer for Products.Price/Cost.
+
+===============================================================================
+CLEANUP
+===============================================================================
+All proof rows (Sku LIKE 'P2-06-%', and their pricehistory children) deleted
+as root afterward (merch_api holds no DELETE on products, by design).
+Verified back to the pre-task four fixture/demo products; pricehistory back
+to 0 rows.

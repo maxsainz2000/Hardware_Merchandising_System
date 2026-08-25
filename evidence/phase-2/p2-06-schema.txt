@@ -1,0 +1,94 @@
+P2-06 - Migration 0006 (product master tables) - schema evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+Baseline before this task: 14 tables, migrations 0001-0005 applied.
+
+=== 0. Baseline ===
+$ mysql -u root -e "SHOW TABLES FROM merchandising; SELECT MigrationId, Succeeded FROM merchandising.schemamigrations ORDER BY MigrationId;"
+14 tables (auditlogs, backuplogs, idempotencykeys, maintenancelocks,
+permissionpolicies, products, roles, schemamigrations, sessions,
+stockbalances, stockmovements, systemsettings, userroles, users)
+0001_foundation 1 / 0002_authentication 1 / 0003_backup 1 / 0004_maintenance 1
+/ 0005_identity 1
+
+=== 1. Apply migration 0006_product-master as merch_migrator ===
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --configuration Release -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0006_product-master
+
+=== 2. Apply db/grants/0008_product-master-grants.sql as root ===
+$ mysql -u root < db/grants/0008_product-master-grants.sql
+(no output - GRANT and FLUSH PRIVILEGES are silent on success)
+
+=== 3. Shape check ===
+$ mysql -u root -e "SHOW TABLES FROM merchandising; DESCRIBE merchandising.products; DESCRIBE merchandising.categories; DESCRIBE merchandising.brands; DESCRIBE merchandising.units; DESCRIBE merchandising.productbarcodes; DESCRIBE merchandising.pricehistory; SHOW INDEX FROM merchandising.products;"
+
+19 tables (14 baseline + brands, categories, pricehistory, productbarcodes,
+units).
+
+products: Id, Sku(UNI), Barcode(index), Name(index), Description(TEXT NULL),
+CategoryId(FK, nullable), BrandId(FK, nullable), UnitId(FK, nullable),
+Price DECIMAL(19,4), Cost DECIMAL(19,4), ReorderLevel DECIMAL(19,3) DEFAULT
+0.000, IsActive, RowVersion BIGINT DEFAULT 0, CreatedAtUtc, UpdatedAtUtc,
+ActiveBarcode (VIRTUAL GENERATED, UNIQUE).
+
+categories / brands: Id, Name(UNI), CreatedAtUtc, UpdatedAtUtc.
+units: Id, Name(UNI, 50 chars), CreatedAtUtc, UpdatedAtUtc.
+productbarcodes: Id, ProductId(FK), Barcode(UNI), CreatedAtUtc.
+pricehistory: Id, ProductId(FK), ChangedField, OldValue DECIMAL(19,4),
+NewValue DECIMAL(19,4), ActorUserId(FK), EffectiveAtUtc, CorrelationId,
+CreatedAtUtc.
+
+products indexes: PRIMARY(Id), UQ_Products_Sku(Sku),
+UQ_Products_ActiveBarcode(ActiveBarcode), FK_Products_Categories(CategoryId),
+FK_Products_Brands(BrandId), FK_Products_Units(UnitId),
+IX_Products_Barcode(Barcode), IX_Products_Name(Name).
+
+  [PASS] all five spec section 12 product-master tables present
+         (Categories, Brands, Units, ProductBarcodes, PriceHistory), plus
+         the Products columns P1-07 deliberately left out.
+  [PASS] indexes present for SKU, barcode, product name (this migration's
+         own tables - "supplier name" belongs to Suppliers, db/migrations/
+         0007_suppliers.sql, Track D / P2-10, not built here).
+
+=== 4. Foreign keys prevent deletion of a referenced product (as root, to
+       isolate the FK constraint from merch_api's own privilege-level
+       denial on DELETE FROM products, which is a separate, pre-existing
+       guarantee from 0002_post-migration-grants.sql) ===
+$ mysql -u root -e "DELETE FROM merchandising.products WHERE Sku='P2-06-PRECISION';"
+ERROR 1451 (23000): Cannot delete or update a parent row: a foreign key
+constraint fails (`merchandising`.`pricehistory`, CONSTRAINT
+`FK_PriceHistory_Products` FOREIGN KEY (`ProductId`) REFERENCES `products`
+(`Id`))
+  [PASS] a product referenced by PriceHistory cannot be deleted - proven by
+  the error, not asserted by inspection.
+
+=== 5. PriceHistory proven append-only by privilege (merch_api) ===
+$ mysql -u merch_api merchandising -e "UPDATE pricehistory SET OldValue=0 WHERE Id=1;"
+ERROR 1142 (42000): UPDATE command denied to user 'merch_api'@'localhost' for
+table `merchandising`.`pricehistory`
+$ mysql -u merch_api merchandising -e "DELETE FROM pricehistory WHERE Id=1;"
+ERROR 1142 (42000): DELETE command denied to user 'merch_api'@'localhost' for
+table `merchandising`.`pricehistory`
+  [PASS] pricehistory is a ledger, granted INSERT only - same treatment as
+  stockmovements/auditlogs.
+
+=== 6. Migration recorded exactly once; second run applies nothing ===
+$ mysql -u root -e "SELECT MigrationId, Succeeded FROM merchandising.schemamigrations WHERE MigrationId='0006_product-master';"
+0006_product-master 1
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --configuration Release -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+No new migrations to apply.
+  [PASS] P1-06 idempotent-runner behaviour unchanged.
+
+=== 7. Cleanup ===
+All proof rows (Sku LIKE 'P2-06-%' in products, and their pricehistory
+children) deleted afterward as root, same reasoning as P1-07's cleanup -
+merch_api has no DELETE on products by design (0002's "deactivate, do not
+delete"). Row counts confirmed back at 0 for all proof data; the four
+pre-existing fixture/demo products from earlier phases (p1_11_fixture_sku,
+p1_13_fixture_sku, DEMO-HAMMER-01, p2_03_fixture_sku) are untouched.
+
+See p2-06-precision.txt for the barcode-uniqueness-under-concurrency proof
+(ADR-018) and the decimal round-trip proof.

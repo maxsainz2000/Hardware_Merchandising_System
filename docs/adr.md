@@ -860,6 +860,36 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 
 ---
 
+## ADR-018 · Unique active barcode, without a partial index
+
+**Status:** ACCEPTED
+**Date:** 2026-08-25
+**Decides:** how spec section 12's "unique active barcode" integrity rule is enforced on `Products.Barcode`, given MariaDB 10.4 has no partial/filtered unique index (added 10.5+) — the gap P1-07 flagged and deliberately did not solve for its one-POC-product slice (`0001_foundation.sql`'s comment; `tasks.md` P0-07-adjacent note pointing here).
+
+**Decision.**
+
+1. **A `VIRTUAL` generated column plus an ordinary `UNIQUE KEY` on it**, not a trigger and not application-level enforcement. `Products.ActiveBarcode GENERATED ALWAYS AS (CASE WHEN IsActive = 1 THEN Barcode ELSE NULL END) VIRTUAL`, with `UNIQUE KEY UQ_Products_ActiveBarcode (ActiveBarcode)`. MariaDB's unique index treats every `NULL` as distinct from every other `NULL` (the same "unique when present" behavior `0001_foundation.sql` already relied on for the old unconditional `UQ_Products_Barcode`), so an inactive product's `ActiveBarcode` is always `NULL` and never collides with anything — active or inactive.
+2. **0001's unconditional `UQ_Products_Barcode` is dropped**, replaced by a plain non-unique `IX_Products_Barcode` for ordinary lookup. The old constraint blocked two *inactive* products from ever sharing a barcode value, which spec section 12 does not ask for and which would have blocked the P2-09 reactivation scenario: deactivating a product must free its barcode for reuse by a new active product, proven directly in `evidence/phase-2/p2-06-precision.txt` Part A (deactivate A holding `DUP-BARCODE-1` → insert D with the same barcode, active, succeeds immediately).
+3. **`Products.Barcode` stays the single canonical field this rule governs.** The new `ProductBarcodes` table (spec section 12's own separate entity) holds *additional* scannable codes for a product beyond its primary barcode — each globally unique across the table regardless of the owning product's active state, since spec section 12's "unique active barcode" wording names the product's own barcode attribute (echoed in section 11 as "optional barcode"), not a supplementary lookup table.
+
+**Reasoning.** The task card names three honest options and asks that the rejected two be recorded, not merely the winner:
+
+- *Why a generated column, measured, not assumed:* a unique index's duplicate check is InnoDB's own atomic operation inside the `INSERT`/`UPDATE` itself — there is no separate read-then-decide step for the application (or a trigger) to race against. `evidence/phase-2/p2-06-precision.txt` Part A's last section fires two `INSERT`s on the same active barcode from two independent client processes launched together, unawaited between them (the same "fire without awaiting" shape ADR-006/P1-13 used to prove the stock-decrement conditional `UPDATE`) — exactly one lands, the other returns `ERROR 1062` every time. This is the same class of guarantee ADR-006 relies on for stock, just expressed through a unique index instead of a conditional `UPDATE`, because uniqueness (unlike a quantity threshold) is something a unique index alone can express.
+- *Why not a trigger:* a `BEFORE INSERT`/`BEFORE UPDATE` trigger enforcing "no other active row has this barcode" still has to run a `SELECT` and then decide — the identical check-then-act shape P1-13 already proved unsafe for stock decrement (two concurrent trigger invocations can both `SELECT` before either has committed a conflicting row, unless the trigger itself takes a table-level lock, which would serialize every product write in the system for a rule that only needs to serialize on one column). A generated column's unique index needs no such workaround because the atomicity is InnoDB's, not the trigger author's.
+- *Why not application-level enforcement with a documented race window:* this is precisely what P1-13's own conclusion rules out — "application-level uniqueness under concurrency is precisely what P1-13 proved you cannot assume" (the task card's own wording). Accepting a race window here would mean two concurrent `POST /products` calls could both pass an API-side existence check and both insert an active product against the same barcode, the same class of defect ADR-006 exists to prevent for stock.
+- *Why `ProductBarcodes` is a separate concept rather than the enforcement surface:* spec section 12 lists `Products` and `ProductBarcodes` as two distinct entities in the same "Product master" group, and section 11's prose treats a product's barcode as a singular, optional attribute of `Products` itself ("Products contain SKU, name, description, category, brand, unit, optional barcode, ..."). Folding the uniqueness rule into `ProductBarcodes` instead would mean a product's *primary* lookup barcode has no fixed column, complicating every POS/inventory search path (spec section 10: "search by SKU, optional barcode, or product name") for a normalization benefit nothing in the spec asks for at this scale.
+
+**Rejected.**
+
+- *Trigger-based enforcement* — check-then-act, the same race class P1-13 already disproved for a different table; rejected on that precedent rather than re-measuring a known-bad pattern.
+- *Application-level enforcement with a documented race window* — explicitly the option the task card and P1-13 both rule out; a real duplicate-active-barcode window is not an acceptable trade for this system's own stated guarantees (CLAUDE.md section 5: "every stock-changing operation is atomic" — the same standard extends to any DB-level uniqueness this project claims).
+- *Filtered/partial unique index* (`CREATE INDEX ... WHERE IsActive = 1`) — MariaDB 10.4 does not support it; added in 10.5, and ADR-002/ADR-003 pin this project to the measured 10.4.32 instance, not a later version.
+- *Making `ProductBarcodes` the sole home of barcode data, dropping `Products.Barcode` entirely* — considered, and would remove the generated-column/trigger/app-level tradeoff onto a table this migration does not otherwise need to specialize for uniqueness. Not adopted because spec section 11 already treats the primary barcode as a `Products` attribute; revisited only if a later card demonstrates a real need for a product to have more than one *uniqueness-governed* barcode.
+
+**Evidence.** `evidence/phase-2/p2-06-schema.txt`, `evidence/phase-2/p2-06-precision.txt`.
+
+---
+
 ## ADR-NNN · Short title
 
 **Status:** PENDING | ACCEPTED | SUPERSEDED by ADR-MMM
