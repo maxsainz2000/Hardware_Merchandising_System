@@ -80,9 +80,9 @@ These are carried, not reopened. Each says which gate now owns it.
 - [x] `git log` shows an initial commit
 - [x] `pwsh ./scripts/install-hooks.ps1` run; pre-commit hook installed
 - [x] A test commit confirms the hook fires
-- [ ] Folder structure matches `plan.md` §2 — seven `docs/*.md` documents remain, each assigned to a later phase
+- [ ] Folder structure matches `plan.md` §2 — five `docs/*.md` documents remain, each assigned to a later phase
 
-> **Deliberately spans phases, and that is real information about the project's shape.** `plan.md` §7 assigns each remaining document to the phase whose subject matter it records: `role-permission-matrix.md` + `database-design.md` (first draft) → **Phase 2, and P2-12 below writes both**; `api-specification.md` → Phase 3; `database-design.md` finalised → Phase 4; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7. The box ticks when the last one is written.
+> **Deliberately spans phases, and that is real information about the project's shape.** `plan.md` §7 assigns each remaining document to the phase whose subject matter it records: ~~`role-permission-matrix.md` + `database-design.md` (first draft) → Phase 2~~ **written by P2-12**; `api-specification.md` → Phase 3; `database-design.md` finalised → Phase 4; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7. The box ticks when the last one is written.
 
 ---
 
@@ -332,7 +332,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ---
 
-### ⬜ P2-12 · Phase 2 documents
+### ✅ P2-12 · Phase 2 documents
 
 **Spec:** §20 · **Files:** `docs/role-permission-matrix.md`, `docs/database-design.md`
 
@@ -340,11 +340,11 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] `role-permission-matrix.md` matches the policy registration cell for cell, checked mechanically
-- [ ] `database-design.md` documents every table, key, index, and the append-only grant model with ADR-013 cited
-- [ ] Both state the academic-prototype framing required by `plan.md` §5's standing constraint
-- [ ] ADR-017 and ADR-018 are ACCEPTED, not PENDING
-- [ ] Two of P0-07's seven remaining documents are struck from its list
+- [x] `role-permission-matrix.md` matches the policy registration cell for cell, checked mechanically
+- [x] `database-design.md` documents every table, key, index, and the append-only grant model with ADR-013 cited
+- [x] Both state the academic-prototype framing required by `plan.md` §5's standing constraint
+- [x] ADR-017 and ADR-018 are ACCEPTED, not PENDING
+- [x] Two of P0-07's seven remaining documents are struck from its list
 
 **Evidence:** the two documents
 

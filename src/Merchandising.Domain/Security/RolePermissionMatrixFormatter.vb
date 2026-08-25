@@ -45,6 +45,11 @@ Namespace Security
             lines.Add("area table has no ""Users"" row - accounts are created only through the")
             lines.Add("`Merchandising.Maintenance` CLI's `create-user` (P1-08), never over HTTP.")
             lines.Add(String.Empty)
+            lines.Add("**Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP")
+            lines.Add("because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as")
+            lines.Add("intended for development environments. Nothing in this document should be read as a")
+            lines.Add("production-readiness claim.")
+            lines.Add(String.Empty)
 
             For Each roleName As String In New String() {
                 RoleNames.SuperAdmin,

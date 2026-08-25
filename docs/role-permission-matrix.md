@@ -9,6 +9,11 @@ Out of scope: user/role management has no HTTP policy at all. Spec section 13's 
 area table has no "Users" row - accounts are created only through the
 `Merchandising.Maintenance` CLI's `create-user` (P1-08), never over HTTP.
 
+**Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP
+because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as
+intended for development environments. Nothing in this document should be read as a
+production-readiness claim.
+
 ## SuperAdmin
 
 - `Products.Read` - View product master data.
