@@ -20,6 +20,7 @@ Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Security
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Maintenance
+Imports Merchandising.Domain.Security
 Imports Merchandising.Infrastructure.Data
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Http
@@ -81,7 +82,7 @@ Namespace Controllers
         ''' only - narrower than the rest of AdminController, because this
         ''' stops the store trading.
         ''' </summary>
-        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Roles:="SuperAdmin")>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.MaintenancePerform)>
         <HttpPost("enter")>
         Public Async Function Enter(<FromBody> request As EnterMaintenanceRequest) As Task(Of IActionResult)
 
@@ -141,7 +142,7 @@ Namespace Controllers
         ''' rather than quietly reopening a system whose data they do not
         ''' trust. The escape hatch is a second restore, not a shrug.
         ''' </remarks>
-        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Roles:="SuperAdmin")>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.MaintenancePerform)>
         <HttpPost("release")>
         Public Async Function Release(<FromBody> request As ReleaseMaintenanceRequest) As Task(Of IActionResult)
 

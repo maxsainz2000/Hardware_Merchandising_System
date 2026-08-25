@@ -13,12 +13,13 @@ Imports System.Security.Claims
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Mvc
 Imports Merchandising.Api.Security
+Imports Merchandising.Domain.Security
 
 Namespace Controllers
 
     <ApiController>
     <Route("api/v1/admin")>
-    <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Roles:="Admin,SuperAdmin")>
+    <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.DiagnosticsAdminPing)>
     Public Class AdminController
         Inherits ControllerBase
 

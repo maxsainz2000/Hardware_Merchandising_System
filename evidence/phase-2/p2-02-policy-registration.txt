@@ -1,0 +1,85 @@
+P2-02 - spec section 9 role matrix as ASP.NET Core authorization policies - evidence
+Captured 2026-08-25.
+
+=== 1. Zero role-string authorization sites remain in the codebase ===
+$ grep -rn "Roles:=" src/ | grep -v "/obj/"
+(no matches)
+
+Before this task, four sites used `Roles:="..."`:
+  AdminController.vb        Roles:="Admin,SuperAdmin"          -> Policy:=PolicyRegistry.Names.DiagnosticsAdminPing
+  MaintenanceController.vb  Roles:="SuperAdmin" (Enter)         -> Policy:=PolicyRegistry.Names.MaintenancePerform
+  MaintenanceController.vb  Roles:="SuperAdmin" (Release)        -> Policy:=PolicyRegistry.Names.MaintenancePerform
+  InventoryController.vb    Roles:="Admin,SuperAdmin,InventoryClerk" -> Policy:=PolicyRegistry.Names.AdjustmentsRequest
+Each new policy's registered role set is identical to the role string it replaced -
+see ADR-017 point 7 and section 4 of this file for the regression proof.
+
+=== 2. Every PolicyRegistry.Definitions entry resolves to exactly one registered policy ===
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~AuthorizationPolicyRegistrationTests"
+  Passed EveryDefinition_ResolvesToExactlyOneRegisteredPolicy [15 ms]
+  Passed RestorePolicy_DoesNotGrantAdmin [1 ms]
+  Passed RestorePolicy_IsNotTheSamePolicyObjectAsConfigurationManage [1 ms]
+  Passed OnlyTheTwoApprovalPolicies_CarrySelfApprovalRequirement [1 ms]
+Test Run Successful. Total tests: 4, Passed: 4
+
+29 policies registered from Merchandising.Domain.Security.PolicyRegistry.Definitions,
+one AddPolicy call each, driven entirely by the registry - see
+Merchandising.Api.Security.AuthorizationPolicyRegistration.Configure. Full list and
+role sets: docs/role-permission-matrix.md ("Every policy" table).
+
+=== 3. Self-approval prohibition is a server-side requirement, not a controller If ===
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~SelfApprovalHandlerTests"
+  Passed ActorIsRequester_Fails [14 ms]
+  Passed ActorIsNotRequester_Succeeds [1 ms]
+Test Run Successful. Total tests: 2, Passed: 2
+
+SelfApprovalHandler compares context.User's ClaimTypes.NameIdentifier to
+IOwnershipResource.RequestedByUserId and calls context.Fail() on a match - an
+explicit veto, not a withheld Succeed(). Wired onto PurchaseOrders.Approve and
+Adjustments.Approve in AuthorizationPolicyRegistration.Configure (confirmed by
+OnlyTheTwoApprovalPolicies_CarrySelfApprovalRequirement above). Neither policy has
+a live endpoint yet - Phase 3 builds PurchaseOrder/StockAdjustment and is expected
+to implement IOwnershipResource on them, per CLAUDE.md's "Phase 3 and Phase 5
+consume these - they do not add their own" (ADR-017 point 6).
+
+=== 4. Restore stays behind its own policy, separate from Admin ===
+RestorePolicy_DoesNotGrantAdmin (section 2 above) asserts Restore.Perform's role
+set does not include "Admin". RestorePolicy_IsNotTheSamePolicyObjectAsConfigurationManage
+asserts Restore.Perform and Configuration.Manage are two independently registered
+AuthorizationPolicy instances, not the same policy reused under two names - see
+ADR-017 point 5.
+
+=== 5. docs/role-permission-matrix.md is generated from, and verified against, the registration ===
+$ dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj --filter "FullyQualifiedName~RolePermissionMatrixDocumentationTests"
+  Passed CommittedMatrixDocument_MatchesRenderedRegistry [17 ms]
+Test Run Successful. Total tests: 1, Passed: 1
+
+The committed file is RolePermissionMatrixFormatter.Render(PolicyRegistry.Definitions)'s
+literal output, produced by running the generator once (a temporary test method,
+removed before this commit - see ADR-017's case-insensitivity note for why a
+literal transcription would have been unsafe to hand-write). Any future edit to
+PolicyRegistry without regenerating the file fails this test.
+
+=== 6. No regression on pre-existing endpoints whose attribute changed ===
+$ pwsh ./scripts/run-tests.ps1
+=== Guardrails ===  G-A/B/C/D pass
+=== Build ===       0 Warning(s), 0 Error(s)
+=== Unit tests ===  Passed! - Failed: 0, Passed: 24, Skipped: 0, Total: 24
+=== Integration tests (real MariaDB) ===
+                     Failed: 1, Passed: 67, Skipped: 0, Total: 68
+
+The single failure is Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+(BackupCommandTests.vb) - the same pre-existing "no MERCHBACKUP USB drive attached"
+environmental precondition recorded at P2-01 (evidence/phase-2/p2-01-migration.log
+section 9), unrelated to authorization. AuthenticationTests, MaintenanceModeTests
+(which exercises MaintenanceController.Enter/Release through the real HTTP
+pipeline, now behind Maintenance.Perform) and StockDecrementTests (which exercises
+InventoryController, now behind Adjustments.Request) all pass unchanged - the
+attribute swap changed no observable behavior.
+
+=== 7. check-no-csharp.ps1 ===
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.

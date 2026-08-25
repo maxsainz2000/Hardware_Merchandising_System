@@ -125,7 +125,7 @@ These are carried, not reopened. Each says which gate now owns it.
 
 ---
 
-### ⬜ P2-02 · The spec §9 role matrix as ASP.NET Core authorization policies
+### ✅ P2-02 · The spec §9 role matrix as ASP.NET Core authorization policies
 
 **Spec:** §9 · **Closes:** G-19 · **Decides:** ADR-017
 **Files:** `src/Merchandising.Api/Security/`, `src/Merchandising.Domain/Security/`, `docs/role-permission-matrix.md`
@@ -134,12 +134,12 @@ These are carried, not reopened. Each says which gate now owns it.
 
 **Done when:**
 
-- [ ] Every role × operation cell resolves to exactly one named policy
-- [ ] Self-approval prohibition is a policy requirement with the actor and the target's owner compared server-side, not a controller `If`
-- [ ] Restore stays behind its own policy, separate from Admin, per spec §9
-- [ ] No endpoint authorizes by role string comparison; policies only
-- [ ] `docs/role-permission-matrix.md` is generated from or verified against the registration, so the document cannot silently drift from the code
-- [ ] ADR-017 records the policy-naming scheme and where the matrix lives
+- [x] Every role × operation cell resolves to exactly one named policy
+- [x] Self-approval prohibition is a policy requirement with the actor and the target's owner compared server-side, not a controller `If`
+- [x] Restore stays behind its own policy, separate from Admin, per spec §9
+- [x] No endpoint authorizes by role string comparison; policies only
+- [x] `docs/role-permission-matrix.md` is generated from or verified against the registration, so the document cannot silently drift from the code
+- [x] ADR-017 records the policy-naming scheme and where the matrix lives
 
 **Evidence:** `evidence/phase-2/p2-02-policy-registration.txt`
 

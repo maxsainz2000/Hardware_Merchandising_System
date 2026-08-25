@@ -18,6 +18,7 @@ Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Infrastructure.Security
 Imports Microsoft.AspNetCore.Authentication
+Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Builder
 Imports Microsoft.AspNetCore.Hosting
 Imports Microsoft.AspNetCore.Server.Kestrel.Core
@@ -258,7 +259,15 @@ Public Module Program
             AddScheme(Of AuthenticationSchemeOptions, SessionAuthenticationHandler)(
                 SessionAuthenticationHandler.SchemeName, Nothing)
 
-        builder.Services.AddAuthorization()
+        ' P2-02 / ADR-017: every named policy comes from PolicyRegistry.Definitions,
+        ' the same list docs/role-permission-matrix.md is rendered from - see
+        ' AuthorizationPolicyRegistration's own header.
+        builder.Services.AddAuthorization(AddressOf AuthorizationPolicyRegistration.Configure)
+
+        ' PurchaseOrders.Approve and Adjustments.Approve carry a
+        ' SelfApprovalRequirement (spec section 9's self-approval
+        ' prohibitions); this is what the framework calls to evaluate it.
+        builder.Services.AddSingleton(Of IAuthorizationHandler, SelfApprovalHandler)()
 
         Dim app = builder.Build()
 

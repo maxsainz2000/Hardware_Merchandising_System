@@ -19,6 +19,7 @@ Imports Merchandising.Api.Security
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Domain
+Imports Merchandising.Domain.Security
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Mvc
 Imports System.Security.Claims
@@ -27,7 +28,7 @@ Namespace Controllers
 
     <ApiController>
     <Route("api/v1/inventory")>
-    <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Roles:="Admin,SuperAdmin,InventoryClerk")>
+    <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.AdjustmentsRequest)>
     Public Class InventoryController
         Inherits ControllerBase
 
