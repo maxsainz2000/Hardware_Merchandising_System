@@ -1,0 +1,73 @@
+P2-08 - forced-failure atomicity proof, P1-12 shape - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (10.4.32-MariaDB
+via XAMPP 8.2.12-0), Debug configuration (the #If DEBUG-gated fault-injection
+seam is compiled out of Release entirely - see PriceChangeService.vb's own
+header, identical mechanism to Inventory.StockService's P1-12 seam).
+
+Mechanism: PriceChangeService.ChangePriceAsync takes an optional
+testOnlyFaultAfterAuditInsert delegate. By the point it is invoked, the
+Products UPDATE, the PriceHistory INSERT, and the AuditLogs INSERT have all
+already been sent to the server - still uncommitted, inside one open
+transaction. Throwing there and letting the exception propagate out of
+ChangePriceAsync (never caught inside the method - see its header) is the
+proof: the enclosing `Using connection` block's Dispose() severs the
+connection on the way out, and MariaDB rolls back whatever transaction was
+still open on that connection. No explicit RollbackAsync call is exercised
+by this path - the proof is that an ordinary connection drop is enough,
+exactly as ADR-006's Reasoning section commits to.
+
+Test: ChangePriceAsync_FaultInjectedBeforeCommit_RollsBackProductPriceHistoryAndAuditRows
+(src/tests/Merchandising.Tests.Integration/PriceChangeTests.vb). Fixture
+product's Price is reset to the known baseline (10.0000) before the test;
+before/after counts for Products.Price, PriceHistory rows (scoped to this
+attempt's own fresh CorrelationId), and AuditLogs rows (same CorrelationId)
+are all read and compared.
+
+===============================================================================
+Test output
+===============================================================================
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~ChangePriceAsync_FaultInjectedBeforeCommit" --logger "console;verbosity=detailed"
+
+  Passed ChangePriceAsync_FaultInjectedBeforeCommit_RollsBackProductPriceHistoryAndAuditRows [46 ms]
+  Standard Output Messages:
+ P2-08 before/after - price: 10.0000 -> 10.0000; PriceHistory rows: 0 -> 0; audit rows: 0 -> 0
+
+  [PASS] faultInjected asserted True first - the fault-injection delegate
+  genuinely fired; this is not a test that trivially passes because nothing
+  ran.
+  [PASS] Products.Price: 10.0000 -> 10.0000 - the attempted change to
+  20.0000 never took effect. Left untouched, not merely "restored".
+  [PASS] PriceHistory rows for this attempt's CorrelationId: 0 -> 0 - the
+  row the method inserted before the fault never survives to be read back.
+  [PASS] AuditLogs rows for this attempt's CorrelationId: 0 -> 0 - same for
+  the audit row, even though AuditLogWriter.WriteAsync's own INSERT
+  completed (against the server, inside the transaction) before the fault
+  fired.
+
+===============================================================================
+Cross-check against the real database, run immediately after this test in
+isolation (before any later test in the class reused the same shared
+fixture row and legitimately moved its price again)
+===============================================================================
+$ mysql -u root -e "SELECT COUNT(*) FROM merchandising.pricehistory WHERE ChangedField='Price' AND NewValue=20.0000;"
+0
+
+  [PASS] no row anywhere in PriceHistory records the attempted 20.0000
+  value - not just absent from this attempt's own correlation Id, absent
+  from the table entirely. (The fixture product's Price itself is not
+  cross-checked here by absolute value: PriceChangeTests reuses one
+  permanent fixture row across many test methods, each resetting it to the
+  10.0000 baseline in its own TestInitialize, so a later test's legitimate
+  change is expected to move it again after this one runs - the in-test
+  before/after comparison above, scoped to this attempt's own transaction,
+  is the real proof, not a cross-run snapshot.)
+
+===============================================================================
+SUMMARY
+===============================================================================
+Done-when box 1 (all three effects commit together or not at all, proven by
+a forced-failure test in the shape of P1-12): PASS. Products, PriceHistory,
+and AuditLogs all rolled back together from one injected fault, the same
+connection-drop mechanism ADR-006 already relies on for the stock decrement
+- no new atomicity mechanism was invented for this card, the frozen pattern
+was reused exactly as the task card asked.

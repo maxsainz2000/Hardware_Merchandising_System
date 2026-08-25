@@ -75,6 +75,70 @@ Namespace Data
 
         End Function
 
+        ''' <summary>
+        ''' P2-08: reads a product's current Price/Cost inside the caller's
+        ''' transaction, locking the row with <c>FOR UPDATE</c> - the same
+        ''' discipline SystemSettingsRepository.ReadForUpdateAsync uses - so
+        ''' the "old value" a PriceHistory row records is the value this
+        ''' write actually replaced, not a stale read from before a
+        ''' concurrent change. Found = False when no such product exists.
+        ''' </summary>
+        Public Shared Async Function ReadPriceForUpdateAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            productId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Found As Boolean, Price As Decimal, Cost As Decimal))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT Price, Cost FROM Products WHERE Id = @id FOR UPDATE;"
+                command.Parameters.AddWithValue("@id", productId)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    If Not Await reader.ReadAsync(cancellationToken).ConfigureAwait(False) Then
+                        Return (Found:=False, Price:=0D, Cost:=0D)
+                    End If
+                    Return (Found:=True, Price:=reader.GetDecimal(0), Cost:=reader.GetDecimal(1))
+                End Using
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P2-08: writes new Price/Cost values inside the caller's
+        ''' transaction, advancing RowVersion. Always called after
+        ''' <see cref="ReadPriceForUpdateAsync"/> has already locked and
+        ''' confirmed the row within the same transaction, so the affected-
+        ''' row count here is a defensive check, not the mechanism that
+        ''' prevents a lost update - the row lock is.
+        ''' </summary>
+        Public Shared Async Function UpdatePriceCostAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            productId As Integer,
+            newPrice As Decimal,
+            newCost As Decimal,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE Products " &
+                    "   SET Price = @price, " &
+                    "       Cost = @cost, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id;"
+                command.Parameters.AddWithValue("@price", newPrice)
+                command.Parameters.AddWithValue("@cost", newCost)
+                command.Parameters.AddWithValue("@id", productId)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
+            End Using
+
+        End Function
+
         Public Shared Async Function CategoryExistsAsync(connection As MySqlConnection, id As Integer, Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
             Return Await ScalarExistsAsync(connection, "SELECT 1 FROM Categories WHERE Id = @id;", id, cancellationToken).ConfigureAwait(False)
         End Function

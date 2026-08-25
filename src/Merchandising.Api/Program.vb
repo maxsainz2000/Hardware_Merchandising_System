@@ -11,6 +11,7 @@
 ' InternalsVisibleTo half of that seam belongs to P1-19, not here.
 
 Imports System.Net
+Imports Merchandising.Api.Catalog
 Imports Merchandising.Api.Hosting
 Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
@@ -250,6 +251,9 @@ Public Module Program
 
         ' P1-11 / ADR-006: the atomic stock decrement.
         builder.Services.AddScoped(Of StockService)()
+
+        ' P2-08 / ADR-006: the atomic price/cost change (Products + PriceHistory + audit).
+        builder.Services.AddScoped(Of PriceChangeService)()
 
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.

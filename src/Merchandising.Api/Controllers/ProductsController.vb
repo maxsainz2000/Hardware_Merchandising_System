@@ -1,15 +1,19 @@
 ' Merchandising.Api.Controllers.ProductsController
 '
 ' P2-07: spec section 13 `GET/POST /api/v1/products`, `PUT /api/v1/products/
-' {id}` - create, read, update, search. Two endpoints section 13 also lists
-' under "Products" are deliberately NOT here: `POST /products/{id}/
-' deactivate` is P2-09's card (the lifecycle/history-preservation logic is
-' its own piece of work, not a flag on this controller), and there is no
-' price/cost change endpoint here at all - PolicyRegistry's own comment
-' scopes Products.Manage to "excluding price/cost", and P2-08 owns that
-' atomic PriceHistory+audit transaction. UpdateProductRequest simply has no
-' Price/Cost/IsActive/Sku properties, so there is no code path here that
-' could touch them.
+' {id}` - create, read, update, search. `POST /products/{id}/deactivate` is
+' deliberately NOT here: it is P2-09's card, its own lifecycle/history-
+' preservation logic rather than a flag on this controller.
+'
+' P2-08 adds ChangePrice, `PUT /api/v1/products/{id}/price` - not spec
+' section 13's literal route table (which lists only GET/POST/PUT/deactivate
+' under "Products"), but PolicyRegistry's own comment already scopes
+' Products.Manage to "excluding price/cost", so a distinct route gated by
+' Products.ChangePrice is what makes that separation real rather than
+' aspirational. UpdateProductRequest (the PUT above) still has no Price/Cost
+' properties at all - this is the only code path in this controller that
+' can touch them, and Catalog.PriceChangeService is the only code path that
+' writes PriceHistory.
 '
 ' Uniqueness is enforced at both layers (plan.md section 7's exit
 ' criterion): a pre-check SELECT here gives a fast, friendly 409 in the
@@ -22,6 +26,7 @@ Imports System.Collections.Generic
 Imports System.Linq
 Imports System.Security.Claims
 Imports System.Threading.Tasks
+Imports Merchandising.Api.Catalog
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Security
 Imports Merchandising.Contracts.Errors
@@ -48,9 +53,11 @@ Namespace Controllers
         Private Const MaxPageSize As Integer = 100
 
         Private ReadOnly _connectionFactory As ConnectionFactory
+        Private ReadOnly _priceChangeService As PriceChangeService
 
-        Public Sub New(connectionFactory As ConnectionFactory)
+        Public Sub New(connectionFactory As ConnectionFactory, priceChangeService As PriceChangeService)
             _connectionFactory = connectionFactory
+            _priceChangeService = priceChangeService
         End Sub
 
         ''' <summary>
@@ -296,9 +303,78 @@ Namespace Controllers
 
         End Function
 
+        ''' <summary>
+        ''' Changes a product's Price and/or Cost, atomically with a
+        ''' PriceHistory row per changed field and an audit row (spec
+        ''' section 11, P2-08). Never folded into UpdateProduct above -
+        ''' Products.ChangePrice is a distinct policy from Products.Manage
+        ''' (ADR-017), and this is the only route gated by it.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ProductsChangePrice)>
+        <AuditRequired>
+        <HttpPut("{id}/price")>
+        Public Async Function ChangePrice(id As Integer, <FromBody> request As ChangeProductPriceRequest) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            If request Is Nothing OrElse (Not request.Price.HasValue AndAlso Not request.Cost.HasValue) Then
+                fieldErrors("price") = {"At least one of price or cost must be supplied."}
+            Else
+
+                If request.Price.HasValue Then
+                    ValidateMoney(request.Price.Value, "price", fieldErrors)
+                End If
+                If request.Cost.HasValue Then
+                    ValidateMoney(request.Cost.Value, "cost", fieldErrors)
+                End If
+
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return BadRequest(New ApiErrorResponse With {
+                    .ErrorCode = "VALIDATION_FAILED",
+                    .Message = "The price change could not be applied because of a validation failure.",
+                    .CorrelationId = correlationId,
+                    .Errors = fieldErrors
+                })
+            End If
+
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PriceChangeOutcome =
+                Await _priceChangeService.ChangePriceAsync(
+                    id, request.Price, request.Cost, actorUserId, correlationId,
+                    cancellationToken:=HttpContext.RequestAborted)
+
+            Select Case outcome.Kind
+
+                Case PriceChangeOutcomeKind.Success
+                    Return Ok(outcome.Response)
+
+                Case PriceChangeOutcomeKind.ProductNotFound
+                    Return NotFound(New ApiErrorResponse With {
+                        .ErrorCode = "PRODUCT_NOT_FOUND",
+                        .Message = $"No product with Id {id} exists.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case Else ' NoChange
+                    Return BadRequest(New ApiErrorResponse With {
+                        .ErrorCode = "VALIDATION_FAILED",
+                        .Message = "Neither price nor cost differs from the product's current value.",
+                        .CorrelationId = correlationId,
+                        .Errors = New Dictionary(Of String, String()) From {{"price", New String() {"At least one supplied value must differ from the current one."}}}
+                    })
+
+            End Select
+
+        End Function
+
         ' --------------------------------------------------------------- helpers
 
-        Private Shared Function ToResponse(product As Product) As ProductResponse
+        ''' <summary>Friend, not Private - Catalog.PriceChangeService (same assembly) reuses this rather than duplicating the mapping.</summary>
+        Friend Shared Function ToResponse(product As Product) As ProductResponse
             Return New ProductResponse With {
                 .Id = product.Id,
                 .Sku = product.Sku,

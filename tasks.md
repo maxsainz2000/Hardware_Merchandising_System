@@ -253,7 +253,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ---
 
-### ⬜ P2-08 · Price change writes `PriceHistory` and audit atomically
+### ✅ P2-08 · Price change writes `PriceHistory` and audit atomically
 
 **Spec:** §11, §12 · **Closes:** G-21 · **Files:** `src/Merchandising.Api/Catalog/`, `src/Merchandising.Infrastructure/Data/`
 
@@ -261,11 +261,11 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] All three effects commit together or not at all, proven by a forced-failure test in the shape of P1-12
-- [ ] `PriceHistory` captures old value, new value, actor, effective timestamp UTC, correlation ID
-- [ ] A Cashier is refused (403); an Admin succeeds — asserted in the P2-03 matrix
-- [ ] `PriceHistory` proven append-only by privilege: `UPDATE` and `DELETE` as `merch_api` both return `ERROR 1142`
-- [ ] Historical rows are never rewritten by a later change
+- [x] All three effects commit together or not at all, proven by a forced-failure test in the shape of P1-12
+- [x] `PriceHistory` captures old value, new value, actor, effective timestamp UTC, correlation ID
+- [x] A Cashier is refused (403); an Admin succeeds — asserted in the P2-03 matrix
+- [x] `PriceHistory` proven append-only by privilege: `UPDATE` and `DELETE` as `merch_api` both return `ERROR 1142`
+- [x] Historical rows are never rewritten by a later change
 
 **Evidence:** `evidence/phase-2/p2-08-price-history.txt`, `evidence/phase-2/p2-08-atomicity.txt`
 

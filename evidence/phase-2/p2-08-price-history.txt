@@ -1,0 +1,107 @@
+P2-08 - Price change writes PriceHistory and audit atomically - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (10.4.32-MariaDB
+via XAMPP 8.2.12-0).
+
+Files: src/Merchandising.Api/Catalog/PriceChangeService.vb,
+src/Merchandising.Api/Catalog/PriceChangeOutcome.vb,
+src/Merchandising.Infrastructure/Data/PriceHistoryWriter.vb,
+src/Merchandising.Infrastructure/Data/ProductRepository.vb (ReadPriceForUpdateAsync/
+UpdatePriceCostAsync additions), plus the new PUT /api/v1/products/{id}/price
+action on the existing ProductsController.vb and Merchandising.Contracts.
+Products.ChangeProductPriceRequest.
+
+===============================================================================
+Done-when box 2 - PriceHistory captures old value, new value, actor,
+effective timestamp UTC, correlation ID
+===============================================================================
+ChangePriceAsync_PriceOnly_UpdatesProductWritesOnePriceHistoryRowAndAudit
+changes only Price, asserts the resulting row's ChangedField="Price",
+OldValue=baseline, NewValue=the new price, ActorUserId=the caller, a real
+current EffectiveAtUtc, and the same CorrelationId the caller supplied -
+plus exactly one AuditLogs row for the same correlation Id.
+
+  Passed ChangePriceAsync_PriceOnly_UpdatesProductWritesOnePriceHistoryRowAndAudit [41 ms]
+
+ChangePriceAsync_PriceAndCost_WritesTwoPriceHistoryRows: a single command
+changing both fields writes one row per field, not one merged row - a
+future report reading "what changed and when" never has to guess which
+field a row is about.
+
+  Passed ChangePriceAsync_PriceAndCost_WritesTwoPriceHistoryRows [14 ms]
+
+Live snapshot after the full PriceChangeTests run (fixture product Id 49,
+Sku p2_08_fixture_sku; several rows because the same fixture is reset and
+re-changed across many test methods and repeated runs during development -
+every row is a genuine, distinct write, not a fixture artifact):
+
+$ mysql -u root -e "SELECT Id, ProductId, ChangedField, OldValue, NewValue, ActorUserId, EffectiveAtUtc, CorrelationId FROM merchandising.pricehistory WHERE ProductId = 49 ORDER BY Id;"
+Id  ProductId  ChangedField  OldValue  NewValue  ActorUserId  EffectiveAtUtc              CorrelationId
+4   49         Price         10.0000   12.5000   37           2026-08-25 03:07:38.289183  4d4f5a22-...
+5   49         Price         10.0000   15.0000   37           2026-08-25 03:07:38.346555  b9ac8895-...
+6   49         Cost          5.0000    7.5000    37           2026-08-25 03:07:38.346555  b9ac8895-...
+  [PASS] rows 5 and 6 share one CorrelationId - the "both changed in one
+  command" case above, proven live, not only in the test assertion.
+
+===============================================================================
+Done-when box 3 - a Cashier is refused (403); an Admin succeeds - asserted
+in the P2-03 matrix
+===============================================================================
+Added as ProductsChangePrice_MatrixMatchesPolicyRegistry in
+AuthorizationMatrixTests.vb, the same generic five-role-loop shape as
+ConfigurationManage_MatrixMatchesPolicyRegistry: every one of the five spec
+section 9 roles attempts PUT /api/v1/products/{id}/price against the real
+HTTP pipeline; the product's price is reset to a known baseline before each
+ALLOWED attempt so the request always represents a genuine change (never
+collides with PriceChangeService's own NoChange outcome). Roles not in
+Products.ChangePrice's AdminAndAbove list (ProcurementOfficer, InventoryClerk,
+Cashier) must get 403 with a clean FORBIDDEN body (AssertCellAsync/
+AssertCleanErrorBodyAsync - no stack trace, SQL, or credential fragment,
+per ADR-014); SuperAdmin and Admin must get 2xx. An anonymous request must
+get 401.
+
+  Passed ProductsChangePrice_MatrixMatchesPolicyRegistry [1 s]
+
+===============================================================================
+Done-when box 4 - PriceHistory proven append-only by privilege
+===============================================================================
+PriceHistory_UpdateAndDeleteAsMerchApi_BothDenied: after a real
+ChangePriceAsync write, both UPDATE and DELETE against the new row, run as
+merch_api (the real application account, not root), each raise
+MySqlException with Number = 1142 - db/grants/0008_product-master-grants.sql
+grants merch_api INSERT only on pricehistory, same treatment as
+stockmovements/auditlogs.
+
+  Passed PriceHistory_UpdateAndDeleteAsMerchApi_BothDenied [15 ms]
+
+===============================================================================
+Done-when box 5 - historical rows are never rewritten by a later change
+===============================================================================
+ChangePriceAsync_TwoSequentialChanges_FirstRowNeverRewritten: changes Price
+twice in sequence (40.0000 -> re-read first row unchanged -> 45.0000). The
+first change's row still shows OldValue=baseline/NewValue=40.0000 after the
+second change commits; the second change's row shows OldValue=40.0000 (what
+the first change actually left behind) /NewValue=45.0000 - a fresh row that
+picks up where the last one left off, never an edit to the first.
+
+  Passed ChangePriceAsync_TwoSequentialChanges_FirstRowNeverRewritten [17 ms]
+
+===============================================================================
+Supporting behavior (not its own done-when box)
+===============================================================================
+  Passed ChangePriceAsync_SameAsCurrentValue_ReturnsNoChangeAndWritesNoRows [14 ms]
+    - a request where nothing would actually change is refused (400
+      VALIDATION_FAILED via the controller), not silently accepted with an
+      empty audit trail - an <AuditRequired> 2xx with nothing audited is
+      not a real option under P2-04's enforcement filter.
+  Passed ChangePriceAsync_UnknownProduct_ReturnsProductNotFound [7 ms]
+
+===============================================================================
+Full run
+===============================================================================
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~PriceChangeTests|FullyQualifiedName~ProductsChangePrice_MatrixMatchesPolicyRegistry"
+Total tests: 8
+     Passed: 8
+ Total time: 3.1318 Seconds
+
+See p2-08-atomicity.txt for the forced-failure rollback proof (done-when
+box 1).

@@ -43,6 +43,7 @@ Imports Merchandising.Contracts.Auth
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Maintenance
+Imports Merchandising.Contracts.Products
 Imports Merchandising.Contracts.Settings
 Imports Merchandising.Domain.Security
 Imports Merchandising.Infrastructure.Data
@@ -317,6 +318,53 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>P2-08's price-change endpoint - Products.ChangePrice's first live endpoint. Admin succeeds, Cashier (and every other non-Admin/SuperAdmin role) is refused 403.</summary>
+    <TestMethod>
+    Public Async Function ProductsChangePrice_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.ProductsChangePrice)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim priceOffset As Integer = 0
+            For Each roleName As String In AllFiveRoles
+
+                Dim isAllowed As Boolean = allowedRoles.Contains(roleName)
+                priceOffset += 1
+
+                ' Reset to a known baseline before every ALLOWED attempt, so
+                ' the request below always represents a real change - a
+                ' second consecutive allowed attempt sending the same target
+                ' price the first one already committed would otherwise hit
+                ' PriceChangeService's own NoChange outcome (400), not the
+                ' 2xx this cell expects.
+                If isAllowed Then
+                    Await ResetProductPriceDirectlyAsync(productId, 1.0000D, 0.5000D)
+                End If
+
+                Dim token As String = Await LoginAsync(client, roleName)
+                Dim body As New ChangeProductPriceRequest With {.Price = 1.0000D + priceOffset}
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Put, $"/api/v1/products/{productId}/price", token, body)
+                    Await AssertCellAsync("Products.ChangePrice", roleName, isAllowed, response)
+                End Using
+
+            Next
+
+            Dim anonymousBody As New ChangeProductPriceRequest With {.Price = 99.0000D}
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Put, $"/api/v1/products/{productId}/price", token:=Nothing, requestBody:=anonymousBody)
+                Await AssertUnauthenticatedAsync("Products.ChangePrice", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -488,6 +536,21 @@ Public Class AuthorizationMatrixTests
                 command.CommandText =
                     "UPDATE StockBalances SET Quantity = @quantity, UpdatedAtUtc = UTC_TIMESTAMP(6) WHERE ProductId = @productId;"
                 command.Parameters.AddWithValue("@quantity", quantity)
+                command.Parameters.AddWithValue("@productId", productId)
+                Await command.ExecuteNonQueryAsync()
+            End Using
+        End Using
+
+    End Function
+
+    Private Async Function ResetProductPriceDirectlyAsync(productId As Integer, price As Decimal, cost As Decimal) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "UPDATE Products SET Price = @price, Cost = @cost, UpdatedAtUtc = UTC_TIMESTAMP(6) WHERE Id = @productId;"
+                command.Parameters.AddWithValue("@price", price)
+                command.Parameters.AddWithValue("@cost", cost)
                 command.Parameters.AddWithValue("@productId", productId)
                 Await command.ExecuteNonQueryAsync()
             End Using
