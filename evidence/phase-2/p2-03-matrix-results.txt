@@ -1,0 +1,99 @@
+P2-03 - every negative cell of the matrix has a passing test - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance, through the
+real ASP.NET Core pipeline (MerchandisingApiFactory / WebApplicationFactory,
+not a substitute), via AuthorizationMatrixTests.vb.
+
+=== 1. Coverage: every controller action declares its authorization intent ===
+$ dotnet test ... --filter "FullyQualifiedName~AuthorizationMatrixTests"
+  Passed EveryControllerAction_DeclaresAllowAnonymousOrARegisteredPolicy [484 ms]
+
+Every ControllerActionDescriptor in the API assembly was classified as
+exactly one of: AllowAnonymous (HealthController.GetHealth,
+AuthController.Login, MaintenanceController.GetStatus), a named Policy
+present in PolicyRegistry.Definitions (AdminController.Ping,
+MaintenanceController.Enter/Release, InventoryController.DecrementStock),
+or the explicit "authenticated, no policy" allowlist
+(AuthController.GetCurrentUser, AuthController.Logout - spec section 13:
+"/me" is any authenticated role). Zero actions fell outside all three -
+had any existed, this test would have failed by name. A future endpoint
+added without authorization, or naming a policy PolicyRegistry does not
+register, fails this test rather than shipping untested (done-when box 4).
+
+=== 2. Behavioral matrix - one row per cell, positive and negative ===
+
+--- Diagnostics.AdminPing (GET /api/v1/admin/ping) - allowed: SuperAdmin, Admin ---
+Diagnostics.AdminPing | SuperAdmin         | expected 2xx | got 200 OK          [POSITIVE]
+Diagnostics.AdminPing | Admin              | expected 2xx | got 200 OK          [POSITIVE]
+Diagnostics.AdminPing | ProcurementOfficer | expected 403 | got 403 Forbidden   [NEGATIVE]
+Diagnostics.AdminPing | InventoryClerk     | expected 403 | got 403 Forbidden   [NEGATIVE]
+Diagnostics.AdminPing | Cashier            | expected 403 | got 403 Forbidden   [NEGATIVE]
+Diagnostics.AdminPing | (anonymous)        | expected 401 | got 401 Unauthorized
+
+--- Maintenance.Perform (POST .../maintenance/enter, POST .../maintenance/release) - allowed: SuperAdmin only ---
+Maintenance.Perform (enter)   | Admin              | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (release) | Admin              | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (enter)   | ProcurementOfficer | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (release) | ProcurementOfficer | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (enter)   | InventoryClerk     | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (release) | InventoryClerk     | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (enter)   | Cashier            | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (release) | Cashier            | expected 403 | got 403 Forbidden   [NEGATIVE]
+Maintenance.Perform (enter)   | SuperAdmin         | expected 2xx | got 200 OK          [POSITIVE]
+Maintenance.Perform (release) | SuperAdmin         | expected 2xx | got 200 OK          [POSITIVE]
+Maintenance.Perform (enter)   | (anonymous)        | expected 401 | got 401 Unauthorized
+Maintenance.Perform (release) | (anonymous)        | expected 401 | got 401 Unauthorized
+
+--- Adjustments.Request (POST /api/v1/inventory/stock/decrement) - allowed: SuperAdmin, Admin, InventoryClerk ---
+Adjustments.Request | SuperAdmin         | expected 2xx | got 200 OK          [POSITIVE]
+Adjustments.Request | Admin              | expected 2xx | got 200 OK          [POSITIVE]
+Adjustments.Request | ProcurementOfficer | expected 403 | got 403 Forbidden   [NEGATIVE]
+Adjustments.Request | InventoryClerk     | expected 2xx | got 200 OK          [POSITIVE]
+Adjustments.Request | Cashier            | expected 403 | got 403 Forbidden   [NEGATIVE]
+Adjustments.Request | (anonymous)        | expected 401 | got 401 Unauthorized
+
+24 cells total: 8 positive, 12 negative (403), 4 anonymous (401 - one per
+protected route, Enter and Release counted separately). Every expectation
+was read from PolicyRegistry.Definitions' AllowedRoles at test run time,
+not duplicated by hand - a role added to or removed from a policy changes
+what this suite expects automatically.
+
+$ dotnet test ... --filter "FullyQualifiedName~AuthorizationMatrixTests"
+  Passed EveryControllerAction_DeclaresAllowAnonymousOrARegisteredPolicy [499 ms]
+  Passed DiagnosticsAdminPing_MatrixMatchesPolicyRegistry [958 ms]
+  Passed MaintenancePerform_MatrixMatchesPolicyRegistry [655 ms]
+  Passed AdjustmentsRequest_MatrixMatchesPolicyRegistry [621 ms]
+Test Run Successful. Total tests: 4, Passed: 4
+
+=== 3. Error bodies carry a correlation ID and leak no internals (ADR-014) ===
+Every 403 and 401 response above was additionally asserted (inline, not
+shown per-row) to: deserialize as ApiErrorResponse with ErrorCode
+"FORBIDDEN"/"UNAUTHORIZED"; carry a non-empty CorrelationId; and contain
+none of {"Exception", "   at ", ".vb:line", "SELECT ", "INSERT ", "UPDATE ",
+"DELETE ", "Server=", "Uid=", "Pwd=", "Password="} anywhere in the raw body.
+All 16 checked responses (12 negative + 4 anonymous) passed - had any
+failed, its assertion message would have named the leaked fragment and the
+full body, and the test run above would show a failure instead of a pass.
+
+=== 4. Full suite green against pinned MariaDB ===
+$ pwsh ./scripts/run-tests.ps1
+=== Guardrails ===  G-A/B/C/D pass
+=== Build ===       0 Warning(s), 0 Error(s)
+=== Unit tests ===  Passed! - Failed: 0, Passed: 24, Skipped: 0, Total: 24
+=== Integration tests (real MariaDB) ===
+                     Failed: 1, Passed: 71, Skipped: 0, Total: 72
+
+The single failure is Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+(BackupCommandTests.vb) - the same pre-existing "no MERCHBACKUP USB drive
+attached" environmental precondition recorded at P2-01/P2-02, unrelated to
+authorization. All 4 AuthorizationMatrixTests pass, plus the pre-existing
+67 integration tests (AuthenticationTests, MaintenanceModeTests,
+StockDecrementTests among them) - no regression from HealthController's new
+explicit AllowAnonymous attribute or from anything in P2-01/P2-02.
+
+=== 5. check-no-csharp.ps1 ===
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.

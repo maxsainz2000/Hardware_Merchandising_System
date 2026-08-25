@@ -145,7 +145,7 @@ These are carried, not reopened. Each says which gate now owns it.
 
 ---
 
-### ⬜ P2-03 · Every negative cell of the matrix has a passing test
+### 🟡 P2-03 · Every negative cell of the matrix has a passing test
 
 **Spec:** §9, §19 · **Closes:** G-19 · **Files:** `src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb`
 
@@ -153,12 +153,14 @@ These are carried, not reopened. Each says which gate now owns it.
 
 **Done when:**
 
-- [ ] Every positive cell asserted 200/2xx with the right role
-- [ ] **Every negative cell asserted 403** — not 401, not 404, not a redirect
-- [ ] Unauthenticated access to each protected endpoint asserted 401
-- [ ] The matrix test is data-driven from the same source as the registration, so a new endpoint without a policy fails the suite rather than passing untested
-- [ ] Error bodies carry a correlation ID and no stack trace, SQL, or internals (ADR-014)
-- [ ] Full suite green against pinned MariaDB
+- [x] Every positive cell asserted 200/2xx with the right role
+- [x] **Every negative cell asserted 403** — not 401, not 404, not a redirect
+- [x] Unauthenticated access to each protected endpoint asserted 401
+- [x] The matrix test is data-driven from the same source as the registration, so a new endpoint without a policy fails the suite rather than passing untested
+- [x] Error bodies carry a correlation ID and no stack trace, SQL, or internals (ADR-014)
+- [ ] Full suite green against pinned MariaDB — **71/72 pass.** Same pre-existing, unrelated failure as P2-01/P2-02 (`Backup_Succeeds_WritesDumpWithChecksumThatVerifies`, no `MERCHBACKUP` USB drive attached to this machine). All 4 `AuthorizationMatrixTests` and every pre-existing test pass. Left unticked on principle — re-run with the USB drive attached to close it.
+
+Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostics.AdminPing`, `Maintenance.Perform` ×2 routes, `Adjustments.Request`) — every cell for those 4 is covered above. The other 25 have no endpoint until later Phase 2/3 cards; the discovery test (done-when box 4) is what forces each of those cards to extend this suite as it adds its endpoint, rather than this card front-loading tests for routes that do not exist yet.
 
 **Evidence:** `evidence/phase-2/p2-03-matrix-results.txt` — one row per cell, positive and negative
 

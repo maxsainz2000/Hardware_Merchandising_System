@@ -4,6 +4,7 @@
 Imports System
 Imports System.Globalization
 Imports System.Reflection
+Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace Controllers
@@ -44,6 +45,18 @@ Namespace Controllers
         ''' HTTP 200 with <c>status</c>, <c>version</c> and <c>utcTime</c>, and
         ''' nothing else.
         ''' </returns>
+        ''' <remarks>
+        ''' P2-03: <c>AllowAnonymous</c> made explicit rather than relying on
+        ''' the absence of an <c>[Authorize]</c> attribute - the behavior is
+        ''' unchanged (no global fallback policy is configured, so an
+        ''' unattributed action was already anonymous), but
+        ''' AuthorizationMatrixTests' endpoint-discovery coverage check
+        ''' classifies every action as AllowAnonymous, Policy-gated, or an
+        ''' explicit "authenticated, no policy" exception - this makes Health
+        ''' fall into the first bucket on purpose rather than needing a
+        ''' fourth, silent one.
+        ''' </remarks>
+        <AllowAnonymous>
         <HttpGet>
         Public Function GetHealth() As IActionResult
 
