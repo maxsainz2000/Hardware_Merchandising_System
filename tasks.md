@@ -234,7 +234,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ---
 
-### ⬜ P2-07 · Product CRUD with uniqueness enforced at DB **and** API
+### ✅ P2-07 · Product CRUD with uniqueness enforced at DB **and** API
 
 **Spec:** §10, §12 · **Closes:** G-21 · **Files:** `src/Merchandising.Api/Controllers/ProductsController.vb`, `src/Merchandising.Infrastructure/Data/ProductRepository.vb`
 
@@ -242,12 +242,12 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] Duplicate SKU rejected with a stable error code and a field-level validation detail (ADR-014)
-- [ ] Duplicate SKU rejected by the **database** too, proven by a concurrent double-insert test that bypasses the API check
-- [ ] Barcode uniqueness enforced per ADR-018's decision, with the same two-layer proof
-- [ ] Money and quantity scale validated at the API boundary before binding (ADR-004.1) — a stored value that looks right proves nothing
-- [ ] Every mutation audited through P2-04
-- [ ] Integration tests green
+- [x] Duplicate SKU rejected with a stable error code and a field-level validation detail (ADR-014)
+- [x] Duplicate SKU rejected by the **database** too, proven by a concurrent double-insert test that bypasses the API check
+- [x] Barcode uniqueness enforced per ADR-018's decision, with the same two-layer proof
+- [x] Money and quantity scale validated at the API boundary before binding (ADR-004.1) — a stored value that looks right proves nothing
+- [x] Every mutation audited through P2-04
+- [x] Integration tests green
 
 **Evidence:** `evidence/phase-2/p2-07-uniqueness.txt`
 

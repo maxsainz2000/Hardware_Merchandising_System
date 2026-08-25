@@ -1,0 +1,132 @@
+P2-07 - Product CRUD with uniqueness enforced at DB and API - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (10.4.32-MariaDB
+via XAMPP 8.2.12-0), through the real ASP.NET Core pipeline
+(MerchandisingApiFactory, the same seam P1-19/P2-05 use).
+
+Files: src/Merchandising.Api/Controllers/ProductsController.vb,
+src/Merchandising.Infrastructure/Data/ProductRepository.vb, plus supporting
+Merchandising.Domain.Entities.Product and Merchandising.Contracts.Products.*
+(Create/Update/ProductResponse/ProductSearchResponse) - not named on the
+card individually, but required to compile it.
+
+===============================================================================
+Done-when box 1 - duplicate SKU rejected with a stable error code and
+field-level validation detail (ADR-014)
+===============================================================================
+CreateProduct_DuplicateSku_RejectedWithStableErrorCodeAndFieldDetail:
+creates a product, then POSTs a second with the same Sku. 409 Conflict,
+errorCode "DUPLICATE_SKU", errors["sku"] present, non-empty correlationId.
+
+  Passed CreateProduct_DuplicateSku_RejectedWithStableErrorCodeAndFieldDetail [271 ms]
+
+===============================================================================
+Done-when box 2 - duplicate SKU rejected by the DATABASE too, proven by a
+concurrent double-insert that BYPASSES the API check
+===============================================================================
+InsertAsync_TwoConcurrentInsertsSameSku_ExactlyOneSucceeds calls
+ProductRepository.InsertAsync directly - not through ProductsController, so
+the API's own pre-check SELECT never runs - from two independent
+connections/transactions, fired without awaiting between them (the same
+"underway before either is awaited" shape P1-13/P2-06 use), sharing one Sku.
+
+$ dotnet test ... --filter "FullyQualifiedName~InsertAsync_TwoConcurrentInsertsSameSku"
+ P2-07 concurrent SKU insert -> DuplicateSku | Success
+  Passed InsertAsync_TwoConcurrentInsertsSameSku_ExactlyOneSucceeds [316 ms]
+
+  [PASS] exactly one Success, the other a controlled DuplicateSku outcome
+  (ProductRepository catches the real ERROR 1062 from UQ_Products_Sku and
+  translates it - it does not propagate as an unhandled exception).
+
+===============================================================================
+Done-when box 3 - barcode uniqueness enforced per ADR-018's decision, same
+two-layer proof
+===============================================================================
+API layer:
+CreateProduct_DuplicateActiveBarcode_RejectedWithStableErrorCodeAndFieldDetail
+- same shape as box 1, for Barcode. 409, errorCode "DUPLICATE_BARCODE",
+errors["barcode"] present.
+
+  Passed CreateProduct_DuplicateActiveBarcode_RejectedWithStableErrorCodeAndFieldDetail [175 ms]
+
+Database layer, bypassing the API check:
+InsertAsync_TwoConcurrentInsertsSameActiveBarcode_ExactlyOneSucceeds - same
+concurrent-InsertAsync shape as box 2, sharing one active Barcode (distinct
+Skus, so only the barcode's own unique index - UQ_Products_ActiveBarcode,
+ADR-018's generated column - is under test).
+
+$ dotnet test ... --filter "FullyQualifiedName~InsertAsync_TwoConcurrentInsertsSameActiveBarcode"
+ P2-07 concurrent barcode insert -> Success | DuplicateBarcode
+  Passed InsertAsync_TwoConcurrentInsertsSameActiveBarcode_ExactlyOneSucceeds [10 ms]
+
+  [PASS] exactly one Success, the other a controlled DuplicateBarcode
+  outcome - the same real unique-index guarantee ADR-018 measured at the
+  schema level (p2-06-precision.txt), now exercised through the
+  application's own insert path.
+
+===============================================================================
+Done-when box 4 - money and quantity scale validated at the API boundary
+before binding (ADR-004.1)
+===============================================================================
+CreateProduct_OverScalePrice_RejectedBeforeAnyRowWritten: Price=1.99999 (5
+dp, DECIMAL(19,4) storage). 400, errorCode "VALIDATION_FAILED",
+errors["price"] present. Row confirmed NOT written afterward
+(ProductRepository.FindBySkuAsync returns Nothing) - "a stored value that
+looks right proves nothing" is moot here because nothing was stored at all.
+
+  Passed CreateProduct_OverScalePrice_RejectedBeforeAnyRowWritten [162 ms]
+
+CreateProduct_OverScaleReorderLevel_RejectedBeforeAnyRowWritten:
+ReorderLevel=1.9999 (4 dp, DECIMAL(19,3) storage). 400, errorCode
+"VALIDATION_FAILED", errors["reorderLevel"] present.
+
+  Passed CreateProduct_OverScaleReorderLevel_RejectedBeforeAnyRowWritten [160 ms]
+
+===============================================================================
+Done-when box 5 - every mutation audited through P2-04
+===============================================================================
+CreateProduct_Success_WritesAuditRow / UpdateProduct_Success_WritesAuditRow:
+each POST/PUT carries a fresh correlation Id; afterward exactly one
+AuditLogs row exists with that CorrelationId and Action = "ProductCreated" /
+"ProductUpdated" respectively. Both actions carry <AuditRequired> -
+AuditPipelineTests.EveryMutatingAction_DeclaresAuditRequired (run as part of
+the full suite below) independently confirms every mutating action in the
+assembly, including these two, declares the attribute.
+
+  Passed CreateProduct_Success_WritesAuditRow [186 ms]
+  Passed UpdateProduct_Success_WritesAuditRow [193 ms]
+
+===============================================================================
+Supporting behavior (not its own done-when box, proven so CRUD/search/role-
+gating are not merely assumed)
+===============================================================================
+  Passed Create_ThenGet_ThenUpdate_RoundTrips [1 s]
+    - create -> Active, RowVersion 0; GET returns it; PUT renames + sets
+      ReorderLevel, RowVersion advances to 1, Price unchanged (PUT has no
+      Price field at all - see UpdateProductRequest's own header).
+  Passed GetProduct_UnknownId_ReturnsControlled404 [152 ms]
+  Passed SearchProducts_ByExactSku_FindsIt [189 ms]
+    - spec section 10.3 "search by SKU, optional barcode, or product name".
+  Passed CreateProduct_AsCashier_Refused403 [161 ms]
+    - Cashier is not in Products.Manage's InventoryAndAbove list
+      (PolicyRegistry, ADR-017). Role-gating's general correctness is
+      AuthorizationMatrixTests' own coverage test's job; this confirms the
+      concrete case at the HTTP layer.
+
+===============================================================================
+Done-when box 6 - integration tests green
+===============================================================================
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --configuration Debug --no-build --nologo --filter "FullyQualifiedName~ProductsControllerTests"
+Total tests: 12
+     Passed: 12
+ Total time: 3.7813 Seconds
+
+Full suite (pwsh ./scripts/run-tests.ps1), including the 12 new tests above:
+Unit tests:        Passed: 24, Failed: 0
+Integration tests: Passed: 96, Failed: 1 (of 97)
+
+The one failure, Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+(BackupCommandTests.vb, P1-17), is pre-existing and unrelated to this card:
+it requires a physical USB volume labelled MERCHBACKUP attached to the host
+for the off-host backup copy, not present in this session. Nothing in this
+card touches backup code; git status confirms only this card's own files
+changed. All four guardrails (G-A through G-D) pass.
