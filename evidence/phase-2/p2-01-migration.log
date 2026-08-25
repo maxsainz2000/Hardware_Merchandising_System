@@ -1,0 +1,85 @@
+P2-01 - Migration 0005 (PermissionPolicies, identity model completion) - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+Baseline before this task: 13 tables, migrations 0001-0004 applied.
+
+=== 0. Baseline ===
+$ mysql -u root -e "SHOW TABLES FROM merchandising; SELECT MigrationId, Succeeded FROM merchandising.schemamigrations ORDER BY MigrationId;"
+auditlogs, backuplogs, idempotencykeys, maintenancelocks, products, roles,
+schemamigrations, sessions, stockbalances, stockmovements, systemsettings,
+userroles, users  (13 tables)
+0001_foundation 1 / 0002_authentication 1 / 0003_backup 1 / 0004_maintenance 1
+
+=== 1. Apply migration 0005_identity as merch_migrator ===
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --configuration Release -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0005_identity
+
+=== 2. Apply db/grants/0007_identity-grants.sql as root ===
+$ mysql -u root < db/grants/0007_identity-grants.sql
+(no output - the file contains no GRANT for permissionpolicies, only
+FLUSH PRIVILEGES, which is silent on success - see p2-01-grants.txt)
+
+=== 3. Shape check ===
+$ mysql -u root -e "SHOW TABLES FROM merchandising; DESCRIBE merchandising.permissionpolicies;"
+14 tables (13 baseline + permissionpolicies)
+Id            int(11)       PRI  auto_increment
+PolicyName    varchar(100)  UNI
+Description   varchar(500)
+CreatedAtUtc  datetime(6)
+
+=== 4. Five roles still present, stable ids unchanged ===
+$ mysql -u root -e "SELECT Id, Name FROM merchandising.roles ORDER BY Id;"
+1 SuperAdmin
+2 Admin
+3 ProcurementOfficer
+4 InventoryClerk
+5 Cashier
+  [PASS] unchanged from 0001_foundation - 0005 added no role rows, only the
+         PermissionPolicies table. UserRoles' (UserId, RoleId) composite PK
+         (from 0001) already permits a user to hold more than one role;
+         no second membership table was needed or added.
+
+=== 5. Migration recorded exactly once ===
+$ mysql -u root -e "SELECT MigrationId, Succeeded FROM merchandising.schemamigrations WHERE MigrationId='0005_identity';"
+0005_identity 1
+
+=== 6. Second run applies nothing (P1-06 behaviour unchanged) ===
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --configuration Release -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+No new migrations to apply.
+
+=== 7. Grant boundary proof (real table, as merch_api) - see p2-01-grants.txt ===
+
+=== 8. check-no-csharp.ps1 ===
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== 9. Full guardrail + build + test run ===
+$ pwsh ./scripts/run-tests.ps1
+=== Guardrails ===  G-A/B/C/D pass
+=== Build ===       0 Warning(s), 0 Error(s)
+=== Unit tests ===  Passed! - Failed: 0, Passed: 23, Skipped: 0, Total: 23
+=== Integration tests (real MariaDB) ===
+                     Failed: 1, Passed: 61, Skipped: 0, Total: 62
+
+The single failure is Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+(BackupCommandTests.vb), asserting BackupOutcome.Succeeded but getting
+Partial: "no ready volume labelled 'MERCHBACKUP' is attached". Confirmed
+via Get-Volume that no USB drive is attached to this machine at all right
+now. This is P1-17's off-host-copy precondition, unrelated to identity
+schema work - 0005_identity and 0007 touch neither BackupLogs nor any
+backup code path. All 61 other integration tests pass, including the full
+MigrationRunnerTests suite (5 tests) against the real runner mechanism, so
+this migration introduces no regression. Re-run with a MERCHBACKUP USB
+drive attached to get a fully green suite; not re-run here because that
+precondition is out of this card's scope.
+
+Steady state after this task: 14 tables, 5 seeded roles (unchanged),
+permissionpolicies empty (0 rows - P2-02/ADR-017 decides the naming
+scheme and populates it), migrations 0001-0005 all Succeeded=1.

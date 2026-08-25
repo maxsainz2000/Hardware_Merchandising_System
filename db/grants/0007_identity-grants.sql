@@ -1,0 +1,30 @@
+-- =============================================================================
+-- 0007_identity-grants.sql
+--
+-- Run as root, AFTER migration 0005_identity.sql has created
+-- PermissionPolicies. Same table-must-exist-first ordering constraint as
+-- every prior migration -> grants pair (ADR-013, ERROR 1146 if reversed).
+--
+-- Re-runnable: GRANT is idempotent.
+--
+-- -----------------------------------------------------------------------------
+-- THE TABLE THAT IS ABSENT FROM THIS FILE IS THE POINT OF THIS FILE.
+--
+-- `permissionpolicies` receives no GRANT at all - not INSERT, not UPDATE,
+-- not DELETE. merch_api already holds database-level SELECT (ADR-013), so
+-- it can read the catalog; nothing yet writes to it, and no P2-01 done-when
+-- box or later card has justified a write in writing. Same treatment as
+-- `schemamigrations` in 0002_post-migration-grants.sql: called out here by
+-- comment so the omission reads as a decision, not an oversight.
+--
+-- If a later card needs merch_api to write PermissionPolicies (P2-02's
+-- ADR-017 registration, most likely), that card adds the GRANT here or in
+-- its own numbered grants file, and says why.
+-- -----------------------------------------------------------------------------
+--
+-- Table names are lowercase because @@lower_case_table_names = 1 on Windows
+-- (ADR-003.1): `PermissionPolicies` in the migration is stored as
+-- `permissionpolicies`.
+-- =============================================================================
+
+FLUSH PRIVILEGES;

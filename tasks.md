@@ -105,7 +105,7 @@ These are carried, not reopened. Each says which gate now owns it.
 
 ## Track A — Identity model and the authorization matrix
 
-### ⬜ P2-01 · Migration 0005 — `PermissionPolicies` and identity model completion
+### 🟡 P2-01 · Migration 0005 — `PermissionPolicies` and identity model completion
 
 **Spec:** §9, §12 · **Closes:** G-19 (begins) · **Files:** `db/migrations/0005_identity.sql`, `db/grants/0007_identity-grants.sql`
 
@@ -113,13 +113,13 @@ These are carried, not reopened. Each says which gate now owns it.
 
 **Done when:**
 
-- [ ] Migration applies clean as `merch_migrator` on a database already carrying 0001–0004
-- [ ] `db/grants/0007` applied **after**, naming lowercase tables; `PermissionPolicies` gets no `UPDATE`/`DELETE` for `merch_api` unless a card justifies it in writing
-- [ ] All five roles present with stable identifiers that the policy layer keys on
-- [ ] A user may hold more than one role, and the schema permits it without a second membership table
-- [ ] Runner applies it exactly once; second run applies nothing (P1-06 behaviour unchanged)
-- [ ] Integration test green against pinned MariaDB
-- [ ] `check-no-csharp.ps1` passes
+- [x] Migration applies clean as `merch_migrator` on a database already carrying 0001–0004
+- [x] `db/grants/0007` applied **after**, naming lowercase tables; `PermissionPolicies` gets no `UPDATE`/`DELETE` for `merch_api` unless a card justifies it in writing
+- [x] All five roles present with stable identifiers that the policy layer keys on
+- [x] A user may hold more than one role, and the schema permits it without a second membership table
+- [x] Runner applies it exactly once; second run applies nothing (P1-06 behaviour unchanged)
+- [ ] Integration test green against pinned MariaDB — **61/62 pass.** The one failure (`Backup_Succeeds_WritesDumpWithChecksumThatVerifies`) is a pre-existing environmental precondition (no `MERCHBACKUP` USB drive attached to this machine right now — confirmed via `Get-Volume`), unrelated to this card: `0005_identity`/`0007` touch neither `BackupLogs` nor any backup code path, and the full `MigrationRunnerTests` suite (5 tests) passes. Left unticked on principle rather than rounded up — re-run with the USB drive attached to close it.
+- [x] `check-no-csharp.ps1` passes
 
 **Evidence:** `evidence/phase-2/p2-01-migration.log`, `evidence/phase-2/p2-01-grants.txt`
 

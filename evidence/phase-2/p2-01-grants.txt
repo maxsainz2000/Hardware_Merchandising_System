@@ -1,0 +1,35 @@
+P2-01 - db/grants/0007_identity-grants.sql - grant boundary evidence
+Captured 2026-08-25, against the real pinned MariaDB instance, as merch_api
+(not root, not merch_migrator) - the same account the API runs under.
+
+Sequence: db/migrations/0005_identity.sql already applied (p2-01-migration.log
+section 1), then db/grants/0007_identity-grants.sql applied as root (section 2).
+This file proves the resulting privilege boundary against the REAL
+permissionpolicies table.
+
+=== 1. merch_api: SELECT succeeds (database-level grant from ADR-013) ===
+$ mysql -u merch_api merchandising -e "SELECT COUNT(*) FROM permissionpolicies;"
+COUNT(*)
+0
+  [PASS] readable - merch_api holds database-level SELECT regardless of any
+         per-table grant (ADR-013), so no explicit GRANT was needed for this.
+
+=== 2. merch_api: INSERT denied ===
+$ mysql -u merch_api merchandising -e "INSERT INTO permissionpolicies (PolicyName, Description, CreatedAtUtc) VALUES ('x','x',UTC_TIMESTAMP(6));"
+ERROR 1142 (42000) at line 1: INSERT command denied to user 'merch_api'@'localhost' for table `merchandising`.`permissionpolicies`
+  [PASS] denied, exactly as 0007 intends - no INSERT was granted
+
+=== 3. merch_api: UPDATE denied ===
+$ mysql -u merch_api merchandising -e "UPDATE permissionpolicies SET Description='x';"
+ERROR 1142 (42000) at line 1: UPDATE command denied to user 'merch_api'@'localhost' for table `merchandising`.`permissionpolicies`
+  [PASS] denied - matches the P2-01 done-when box: "PermissionPolicies gets
+         no UPDATE/DELETE for merch_api unless a card justifies it in writing"
+
+Table left empty (0 rows) - no proof-of-write attempt left anything behind
+to clean up, unlike the earlier P1-07 sanity-check rows.
+
+Summary: permissionpolicies is readable and fully write-protected for
+merch_api, by omission from db/grants/0007_identity-grants.sql rather than
+by an explicit deny - consistent with schemamigrations' treatment in
+db/grants/0002_post-migration-grants.sql. A future card that needs merch_api
+to write this table must add the GRANT explicitly and say why.
