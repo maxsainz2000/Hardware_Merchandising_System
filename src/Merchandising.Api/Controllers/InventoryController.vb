@@ -49,6 +49,7 @@ Namespace Controllers
         ''' conditional UPDATE's WHERE clause cannot and need not tell them
         ''' apart.
         ''' </summary>
+        <AuditRequired>
         <HttpPost("stock/decrement")>
         Public Async Function DecrementStock(<FromBody> request As StockDecrementRequest) As Task(Of IActionResult)
 

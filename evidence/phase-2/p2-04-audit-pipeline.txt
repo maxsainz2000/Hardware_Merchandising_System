@@ -1,0 +1,85 @@
+P2-04: Audit becomes one server-side pipeline component
+Captured 2026-08-25 01:45:21 UTC, pwsh ./scripts/run-tests.ps1 against the real pinned MariaDB instance.
+
+New components:
+  - Merchandising.Domain.Security.AuditRequiredAttribute (marker, no ASP.NET Core dependency)
+  - Merchandising.Infrastructure.Data.AuditLogWriter: BeginDeclarationScope()/Declared, backed by
+    an AsyncLocal(Of DeclarationState) holding one shared mutable instance per request - see the
+    file's own header for why AsyncLocal(Of Boolean) was tried first and empirically failed.
+  - Merchandising.Api.Middleware.AuditPipelineFilter (global IAsyncActionFilter, registered in
+    Program.vb): for every [AuditRequired] action, rejects (500 AUDIT_NOT_RECORDED) a 2xx result
+    that never called AuditLogWriter.WriteAsync, before the result reaches the wire.
+  - [AuditRequired] added to the 5 mutating actions that exist today: AuthController.Login/Logout,
+    MaintenanceController.Enter/Release, InventoryController.DecrementStock - all 5 already audited
+    their success path, so this is a no-op behaviorally, proven by the unchanged matrix results below.
+  - New Merchandising.Tests.Integration.AuditPipelineTests:
+      EveryMutatingAction_DeclaresAuditRequired          - coverage sweep, done-when box 4
+      ActionWithoutAuditRequired_PassesThroughEvenWithoutAudit
+      AuditRequired_ActionDeclaresAudit_ResultPassesThroughUnmodified (real DB write)
+      AuditRequired_ActionForgetsToAudit_ResultIsReplacedWith500
+      AuditRequired_ActionReturnsNonSuccessResult_NotForcedToAudit
+      DeclarationScope_ResetsBetweenScopes (real DB write)
+
+=== pwsh ./scripts/check-no-csharp.ps1 ===
+
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:07.42
+
+=== Unit tests ===
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    24, Skipped:     0, Total:    24, Duration: 220 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+  Failed Backup_Succeeds_WritesDumpWithChecksumThatVerifies [442 ms]
+  Error Message:
+   Assert.AreEqual failed. Expected:<Succeeded>. Actual:<Partial>. 'expected' expression: 'BackupOutcome.Succeeded', 'actual' expression: 'result.Outcome'. Backup did not succeed. Detail: Dump written and verified, but the off-host copy did not happen: no ready volume labelled 'MERCHBACKUP' is attached. The local dump is the only copy.
+  Stack Trace:
+     at Microsoft.VisualStudio.TestTools.UnitTesting.Assert.ThrowAssertAreEqualFailed(Object expected, Object actual, String userMessage) in /_/src/TestFramework/TestFramework/Assertions/Assert.AreEqual.cs:line 665
+   at Microsoft.VisualStudio.TestTools.UnitTesting.Assert.AreEqual[T](T expected, T actual, IEqualityComparer`1 comparer, String message, String expectedExpression, String actualExpression) in /_/src/TestFramework/TestFramework/Assertions/Assert.AreEqual.cs:line 492
+   at Microsoft.VisualStudio.TestTools.UnitTesting.Assert.AreEqual[T](T expected, T actual, String message, String expectedExpression, String actualExpression) in /_/src/TestFramework/TestFramework/Assertions/Assert.AreEqual.cs:line 405
+   at Merchandising.Tests.Integration.BackupCommandTests.Backup_Succeeds_WritesDumpWithChecksumThatVerifies() in C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\BackupCommandTests.vb:line 79
+   at Microsoft.VisualStudio.TestPlatform.MSTest.TestAdapter.Execution.TestMethodInfo.<>c__DisplayClass55_1.<<ExecuteInternalAsync>b__1>d.MoveNext() in /_/src/Adapter/MSTestAdapter.PlatformServices/Execution/TestMethodInfo.cs:line 424
+--- End of stack trace from previous location ---
+   at Microsoft.VisualStudio.TestPlatform.MSTest.TestAdapter.Execution.TestMethodInfo.ExecuteInternalAsync(Object[] arguments, CancellationTokenSource timeoutTokenSource) in /_/src/Adapter/MSTestAdapter.PlatformServices/Execution/TestMethodInfo.cs:line 442
+
+Failed!  - Failed:     1, Passed:    77, Skipped:     0, Total:    78, Duration: 11 s - Merchandising.Tests.Integration.dll (net10.0)
+
+Integration tests failed.

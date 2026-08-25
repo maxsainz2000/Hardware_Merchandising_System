@@ -231,7 +231,12 @@ Public Module Program
         ' and lean hardest on the Request Delegate Generator, which is a C#
         ' only source generator. Controllers are verbose and reliable, which
         ' is the right trade here. CLAUDE.md section 3.
-        builder.Services.AddControllers()
+        ' P2-04: the audit pipeline's enforcement half. A global action
+        ' filter so every [AuditRequired] action is wrapped without any
+        ' per-controller wiring - see AuditPipelineFilter's own header for
+        ' why this is an MVC filter and not raw middleware.
+        builder.Services.AddControllers(
+            Sub(mvcOptions) mvcOptions.Filters.Add(Of AuditPipelineFilter)())
 
         ' Database access, wired into DI for the first time at P1-08 - P1-05
         ' built ConnectionFactory/DatabaseOptions but nothing yet needed it

@@ -11,6 +11,7 @@ Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Security
 Imports Merchandising.Contracts.Auth
 Imports Merchandising.Contracts.Errors
+Imports Merchandising.Domain.Security
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Mvc
 
@@ -34,6 +35,7 @@ Namespace Controllers
         ''' use this endpoint to enumerate valid usernames.
         ''' </summary>
         <AllowAnonymous>
+        <AuditRequired>
         <HttpPost("login")>
         Public Async Function Login(<FromBody> request As LoginRequest) As Task(Of IActionResult)
 
@@ -102,6 +104,7 @@ Namespace Controllers
         ''' row - a client can only log itself out, never another session.
         ''' </summary>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName)>
+        <AuditRequired>
         <HttpPost("logout")>
         Public Async Function Logout() As Task(Of IActionResult)
 

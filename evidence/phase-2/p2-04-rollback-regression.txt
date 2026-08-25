@@ -1,0 +1,30 @@
+P2-04 done-when box 6: P1-11 through P1-14 proofs re-run green, unperturbed by the audit pipeline.
+Captured 2026-08-25 01:45:35 UTC.
+
+Why this is a clean regression proof rather than a re-derivation: StockDecrementTests calls
+StockService.DecrementAsync directly (no HTTP round trip), so it never passes through
+AuditPipelineFilter - the new global action filter this card adds. StockService.vb and
+AuditLogWriter.WriteAsync's transaction-participation behavior (the Optional transaction
+parameter) are both unmodified by this card; only AuditLogWriter's declaration-tracking
+addition (BeginDeclarationScope/Declared) touches that file, and it is additive - a no-op
+for any caller, including this one, that never begins a declaration scope.
+
+=== dotnet test --filter FullyQualifiedName~StockDecrementTests --no-build ===
+
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+  Passed Decrement_Success_CreatesOneMovementOneAuditRowAndCorrectBalance [350 ms]
+  Passed Decrement_Success_RecordsCorrelationIdOnMovementAndAudit [18 ms]
+  Passed Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows [15 ms]
+  Passed Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten [13 ms]
+  Passed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [22 ms]
+  Passed Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound [47 ms]
+  Passed Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses [33 ms]
+  Passed Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements [14 ms]
+  Passed Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement [15 ms]
+  Passed Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry [16 ms]
+
+Test Run Successful.
+Total tests: 10
+     Passed: 10
+ Total time: 1.5391 Seconds

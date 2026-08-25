@@ -168,7 +168,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ## Track B — Audit as a pipeline, not a habit
 
-### ⬜ P2-04 · Audit becomes one server-side pipeline component 🎯
+### ✅ P2-04 · Audit becomes one server-side pipeline component 🎯
 
 **Spec:** §9, §11, §17 · **Closes:** G-19 · **Decides:** ADR-017
 **Files:** `src/Merchandising.Api/Middleware/`, `src/Merchandising.Infrastructure/Data/AuditLogWriter.vb`
@@ -179,12 +179,12 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] One component writes every audit row: actor, timestamp, action, target, result, correlation ID (spec §9)
-- [ ] It participates in the **caller's** transaction — an audit row committing when the operation rolled back is a defect, and P1-12's rollback proof must still pass unchanged
-- [ ] The three existing call sites route through it; none writes `AuditLogs` directly
-- [ ] A sensitive endpoint that fails to declare its audit intent is rejected — by a failing test, a startup check, or a required parameter. "Remember to call it" is not a mechanism
-- [ ] `AuditLogs` remains append-only by grant; no card adds `UPDATE`/`DELETE`
-- [ ] P1-11 through P1-14 proofs re-run green — the transaction pattern is frozen (ADR-006) and this must not perturb it
+- [x] One component writes every audit row: actor, timestamp, action, target, result, correlation ID (spec §9)
+- [x] It participates in the **caller's** transaction — an audit row committing when the operation rolled back is a defect, and P1-12's rollback proof must still pass unchanged
+- [x] The three existing call sites route through it; none writes `AuditLogs` directly
+- [x] A sensitive endpoint that fails to declare its audit intent is rejected — by a failing test, a startup check, or a required parameter. "Remember to call it" is not a mechanism
+- [x] `AuditLogs` remains append-only by grant; no card adds `UPDATE`/`DELETE`
+- [x] P1-11 through P1-14 proofs re-run green — the transaction pattern is frozen (ADR-006) and this must not perturb it
 
 **Evidence:** `evidence/phase-2/p2-04-audit-pipeline.txt`, `evidence/phase-2/p2-04-rollback-regression.txt`
 

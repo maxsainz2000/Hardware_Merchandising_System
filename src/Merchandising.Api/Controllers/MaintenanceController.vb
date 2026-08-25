@@ -83,6 +83,7 @@ Namespace Controllers
         ''' stops the store trading.
         ''' </summary>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.MaintenancePerform)>
+        <AuditRequired>
         <HttpPost("enter")>
         Public Async Function Enter(<FromBody> request As EnterMaintenanceRequest) As Task(Of IActionResult)
 
@@ -143,6 +144,7 @@ Namespace Controllers
         ''' trust. The escape hatch is a second restore, not a shrug.
         ''' </remarks>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.MaintenancePerform)>
+        <AuditRequired>
         <HttpPost("release")>
         Public Async Function Release(<FromBody> request As ReleaseMaintenanceRequest) As Task(Of IActionResult)
 
