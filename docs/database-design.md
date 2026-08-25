@@ -1,11 +1,12 @@
 # Database Design
 
-**Status: first complete draft (P2-12).** Covers every table that exists after migrations
-`0001_foundation.sql` through `0007_suppliers.sql` — 20 tables, all applied and grant-verified
-against the real pinned MariaDB instance. This document is finalised in Phase 4, once
-Procurement (Phase 3) and Inventory/POS (Phase 5) have added their own tables; until then, the
-Procurement/Inventory/POS entity groups spec section 12 names (`PurchaseOrders`, `StockCounts`,
-`Sales`, …) do not exist yet and are called out below as not-yet-built, not omitted by mistake.
+**Status: first complete draft (P2-12), extended at P3-02.** Covers every table that exists after
+migrations `0001_foundation.sql` through `0008_purchase-orders.sql` — 22 tables, all applied and
+grant-verified against the real pinned MariaDB instance. This document is finalised in Phase 4,
+once the rest of Procurement (receiving, returns) and Inventory/POS (Phase 5) have added their
+own tables; until then, the entity groups spec section 12 names that are still unbuilt
+(`GoodsReceipts`, `StockCounts`, `Sales`, …) are called out below as not-yet-built, not omitted
+by mistake.
 
 **Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP
 because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as intended
@@ -34,8 +35,8 @@ These hold for every table below; they are stated once here rather than repeated
 
 ## 2. Entity-relationship diagram
 
-Every table that exists as of `0007_suppliers.sql`. `PurchaseOrders`/`GoodsReceipts`/`StockCounts`/
-`Sales`/etc. (spec section 12's Procurement/Inventory/POS rows) are Phase 3/5 and are not shown —
+Every table that exists as of `0008_purchase-orders.sql`. `GoodsReceipts`/`StockCounts`/`Sales`/etc.
+(the rest of spec section 12's Procurement/Inventory/POS rows) are Phase 4/5 and are not shown —
 they do not exist in the schema yet.
 
 ```mermaid
@@ -56,6 +57,12 @@ erDiagram
     Products ||--o{ StockMovements : "ledger for"
     Products ||--o{ PriceHistory : "history for"
     Products ||--o{ ProductBarcodes : "alternate codes"
+
+    Suppliers ||--o{ PurchaseOrders : "supplies"
+    Users ||--o{ PurchaseOrders : "requests"
+    Users ||--o{ PurchaseOrders : "approves"
+    PurchaseOrders ||--o{ PurchaseOrderLines : "has lines"
+    Products ||--o{ PurchaseOrderLines : "ordered as"
 
     Users {
         int Id PK
@@ -178,10 +185,32 @@ erDiagram
         tinyint IsActive
         bigint RowVersion
     }
+    PurchaseOrders {
+        int Id PK
+        varchar OrderNumber UK
+        int SupplierId FK
+        varchar Status
+        int RequestedByUserId FK
+        int ApprovedByUserId FK
+        datetime SubmittedAtUtc
+        datetime ApprovedAtUtc
+        bigint RowVersion
+    }
+    PurchaseOrderLines {
+        int Id PK
+        int PurchaseOrderId FK
+        int LineNumber UK
+        int ProductId FK
+        decimal OrderedQuantity
+        decimal PurchaseCost
+        decimal ReceivedQuantity
+        bigint RowVersion
+    }
 ```
 
-`Suppliers` carries no foreign key yet — nothing in the schema through `0007` references it.
-`PurchaseOrders` (Phase 3) is its first consumer (ADR pending that phase).
+`Suppliers` gained its first consumer at `0008`: `PurchaseOrders.SupplierId`, an unadorned
+foreign key, so MariaDB's default `RESTRICT` prevents deleting a supplier any order references
+(`ERROR 1451`, proven in `evidence/phase-3/p3-02-schema.txt`).
 
 ---
 
@@ -224,20 +253,27 @@ the grants file that gave `merch_api` its runtime privileges (§4 explains the g
 | `MaintenanceLocks` | `0004` → `0005` (INSERT+UPDATE, no DELETE) | PK `Id`; FK `RequestedByUserId`/`ReleasedByUserId` → `Users`; UK `IsActive` (generated) | **Not** append-only — a release is an `UPDATE` of the acquiring row (operational state, not a ledger; the immutable trail lives in `AuditLogs`). "One active lock at a time" is enforced by a `PERSISTENT` generated column (`1` while held, `NULL` once released) under a plain `UNIQUE KEY` — MariaDB's unique index treats every `NULL` as distinct, so released rows never collide and a second concurrent acquisition is refused by the database itself (measured: `ERROR 1062` on a second unreleased row), not by a check-then-insert race. |
 | `IdempotencyKeys` | `0001` → `0002` (INSERT+UPDATE+DELETE) | PK `Id`; UK (`Scope`,`KeyValue`) | ADR-007: insert-first strategy — a command claims its key before doing work, and the committed response payload is stored and replayed verbatim on a repeat. `DELETE` is granted for an eventual expiry sweep. |
 
-### 3.4 Procurement — spec section 12, not yet built
+### 3.4 Procurement — spec section 12, partly built
 
-`Suppliers` is the only table in this group that exists after `0007`:
+Three tables in this group exist after `0008`:
 
 | Table | Migration → Grants | Key columns | Notes |
 |---|---|---|---|
-| `Suppliers` | `0007` → `0009` (INSERT+UPDATE, no DELETE) | PK `Id`; UK `Name` | Same lifecycle shape as `Products`: `IsActive` + `RowVersion`, deactivation is the only removal story. Contact fields (`ContactName`/`Phone`/`Email`/`Address`) are free-text and nullable — a supplier record created before every detail is known must still be usable. No FK references it yet; `PurchaseOrders` (Phase 3) is its first consumer. |
+| `Suppliers` | `0007` → `0009` (INSERT+UPDATE, no DELETE) | PK `Id`; UK `Name` | Same lifecycle shape as `Products`: `IsActive` + `RowVersion`, deactivation is the only removal story. Contact fields (`ContactName`/`Phone`/`Email`/`Address`) are free-text and nullable — a supplier record created before every detail is known must still be usable. `PurchaseOrders` (`0008`) is its first consumer. |
+| `PurchaseOrders` | `0008` → `0010` (INSERT+UPDATE, no DELETE) | PK `Id`; UK `OrderNumber`; FK `SupplierId` → `Suppliers`, `RequestedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `CreatedAtUtc` | **Not** append-only, and the grants file argues why rather than assuming it: a ledger records what *happened*, a purchase order records what is *intended*, and spec §10.1's status machine is a sequence of in-place changes to one row. The immutable trail lives in `AuditLogs`. `Status` stores the **enum name** (ADR-020 §5) under a `CHECK` over the seven spec §10.1 states — and carries `COLLATE utf8mb4_bin`, the one binary-collated column in the schema, because under the table's case-insensitive `utf8mb4_unicode_ci` the `CHECK` accepts `'draft'` and stores it verbatim. `RequestedByUserId` and `ApprovedByUserId` are deliberately two columns: ADR-017 §6's self-approval veto compares them. |
+| `PurchaseOrderLines` | `0008` → `0010` (INSERT+UPDATE, no DELETE) | PK `Id`; UK (`PurchaseOrderId`,`LineNumber`); FK → `PurchaseOrders`, `Products` | `OrderedQuantity`/`ReceivedQuantity` `DECIMAL(19,3)`, `PurchaseCost` `DECIMAL(19,4)` captured on the line so a later cost change never restates what was agreed. `ReceivedQuantity` starts at `0.000` and accumulates across partial receipts in Phase 4. `CHECK (ReceivedQuantity <= OrderedQuantity)` enforces spec §12's "receipt quantity bounded by ordered quantity" at the server; spec §10.1's future over-receiving override would need a new migration to relax it. The same product may appear on two lines, so there is deliberately no UK on (`PurchaseOrderId`,`ProductId`). **Removing a line from a `Draft` has no route** — no `DELETE` grant, and no Phase 3 card needs one; see the `0010` header. |
 
-`PurchaseOrders`, `PurchaseOrderItems`, `GoodsReceipts`, `GoodsReceiptItems`, `PurchaseReturns`,
-`PurchaseReturnItems` (Phase 3), `StockCounts`, `StockCountItems`, `StockAdjustments` (Phase 5's
-Inventory half), and `Sales`, `SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`,
-`CashierSessions`, `CashierClosings` (Phase 5's POS half) do not exist in the schema yet. Listed
-here so this document's absence of them reads as "not built", not "forgotten" — this draft is
-finalised in Phase 4, after Phase 3 adds the first of them.
+**On the name `PurchaseOrderLines`.** Spec §12's entity list writes `PurchaseOrderItems`; spec
+§10.1's prose, `plan.md` §7 and the P3-02/P3-03/P3-06 cards all write *purchase-order lines*.
+Spec §12 opens by delegating exactly this — *"Exact columns, names, and indexes are finalized in
+the database design deliverable"* — so this document is where it is settled, and it is settled as
+`PurchaseOrderLines`. Confirmed with the user at P3-02.
+
+`GoodsReceipts`, `GoodsReceiptItems`, `PurchaseReturns`, `PurchaseReturnItems` (Phase 4),
+`StockCounts`, `StockCountItems`, `StockAdjustments` (Phase 5's Inventory half), and `Sales`,
+`SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`, `CashierClosings`
+(Phase 5's POS half) do not exist in the schema yet. Listed here so this document's absence of
+them reads as "not built", not "forgotten" — this draft is finalised in Phase 4.
 
 ---
 

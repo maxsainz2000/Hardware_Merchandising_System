@@ -103,7 +103,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track B — Schema
 
-### ⬜ P3-02 · Migration 0008 — `PurchaseOrders`, `PurchaseOrderLines`, and grants 0010
+### ✅ P3-02 · Migration 0008 — `PurchaseOrders`, `PurchaseOrderLines`, and grants 0010
 
 **Spec:** §10.1, §12 · **Files:** `db/migrations/0008_purchase-orders.sql`, `db/grants/0010_purchase-order-grants.sql`
 
@@ -111,16 +111,28 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Both tables created; foreign keys to `Suppliers` and `Products` **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection
-- [ ] `RequestedByUserId` and `ApprovedByUserId` are separate columns — the self-approval rule compares them and cannot if they are one field
-- [ ] Order number is unique, enforced at the database, proven by a concurrent double-insert that bypasses any API check (the P2-07 shape)
-- [ ] Status stored as a stable identifier the Domain enum maps to — not a display string, not an ordinal that renumbers when a state is added
-- [ ] Applies clean as `merch_migrator` on a database already carrying `0001`–`0007`; runner applies it exactly once
-- [ ] `db/grants/0010` applied **after**, lowercase table names; no `UPDATE`/`DELETE` granted beyond what a card justifies in writing
-- [ ] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns
-- [ ] Integration suite green against pinned MariaDB
+- [x] Both tables created; foreign keys to `Suppliers` and `Products` **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection — three of them, counting the header a line points at; attempted as `merch_migrator`, the one identity that holds `DELETE`, so the refusal is the constraint and not the grant
+- [x] `RequestedByUserId` and `ApprovedByUserId` are separate columns — the self-approval rule compares them and cannot if they are one field. Two separate FKs to `Users`; approver nullable, requester not. Asserted from `information_schema`, not from reading the migration
+- [x] Order number is unique, enforced at the database, proven by a concurrent double-insert that bypasses any API check (the P2-07 shape) — `success | ERROR 1062`
+- [x] Status stored as a stable identifier the Domain enum maps to — not a display string, not an ordinal that renumbers when a state is added. All seven names walked from `[Enum].GetNames`, ordinal `'3'` refused — ⚠ needed `COLLATE utf8mb4_bin` on that one column: under the table's case-insensitive collation the `CHECK` accepted `'draft'` and stored it verbatim. Found by the test, not by review
+- [x] Applies clean as `merch_migrator` on a database already carrying `0001`–`0007`; runner applies it exactly once — ⚠ applied twice in fact: the first application was rolled back under stop condition 6, with the user's authorisation, to fix the collation above. Recorded in the evidence rather than re-run quietly
+- [x] `db/grants/0010` applied **after**, lowercase table names; no `UPDATE`/`DELETE` granted beyond what a card justifies in writing — `INSERT, UPDATE` on both, **no `DELETE` on either**, argued in the grants file's own header
+- [x] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns — plus the declared column types read back from `information_schema`, because CLAUDE.md §6.3 means a correctly stored value proves the value and never the column
+- [x] Integration suite green against pinned MariaDB — 150/150 (136 → 150), 37/37 unit, G-A–G-D pass, build 0 warnings
 
-**Evidence:** `evidence/phase-3/p3-02-schema.txt`, `evidence/phase-3/p3-02-grants.txt`
+**Evidence:** `evidence/phase-3/p3-02-schema.txt`, `evidence/phase-3/p3-02-grants.txt` ✅
+
+> **Two things this card settled that later cards must not re-decide.** The line table is
+> **`PurchaseOrderLines`**, not spec §12's `PurchaseOrderItems` — §12 delegates exact names to the
+> database-design deliverable, and `docs/database-design.md` now says so. And
+> `CK_PurchaseOrderLines_ReceivedQuantity` enforces spec §12's ordered-quantity bound **at the
+> server**, so spec §10.1's future over-receiving override would need a new numbered migration to
+> relax it. Both confirmed with the user at P3-02.
+
+> **One gap named rather than papered over: removing a line from a `Draft` order has no route.**
+> No `DELETE` grant on `purchaseorderlines`, and no Phase 3 card needs one — P3-03 creates and
+> reads, P3-04 submits and approves, P3-05 cancels and closes. If a later card needs it, the
+> choice is a soft-delete column or a narrowly justified `DELETE` grant in a **new** grants file.
 
 > **A purchase order is not a ledger.** Unlike `StockMovements`, `AuditLogs` and `PriceHistory`, a `Draft` order is legitimately editable, so this table does need `UPDATE`. Grant it deliberately and say so in the grants file — the append-only default (ADR-013) is the reason that sentence has to be written rather than assumed.
 

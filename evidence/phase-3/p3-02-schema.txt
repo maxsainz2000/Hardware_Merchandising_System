@@ -1,0 +1,316 @@
+P3-02 - Migration 0008 (PurchaseOrders, PurchaseOrderLines) - schema evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+Baseline before this task: 20 tables, migrations 0001-0007 applied.
+After this task:           22 tables, migrations 0001-0008 applied.
+
+Grants evidence is a separate file: p3-02-grants.txt.
+
+WHAT PROVES WHAT IN THIS FILE. Sections 0-3 are a captured transcript - they
+show the state of this server once. Section 4 is the part that keeps being
+true: PurchaseOrderSchemaTests re-proves every behavioural claim below on
+every run of scripts/run-tests.ps1, on any machine, after any restore. Where
+the two overlap, the test is the authority and the transcript is the
+illustration. P2-06 proved migration 0006 by transcript alone; this card's
+done-when boxes demand claims that must survive a clean clone, so they are
+executable here.
+
+
+===============================================================================
+0. Baseline
+===============================================================================
+
+$ mysql -u root -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='merchandising';"
+20
+
+$ mysql -u root -e "SELECT MigrationId, Succeeded FROM merchandising.SchemaMigrations ORDER BY MigrationId;"
+0001_foundation 1 / 0002_authentication 1 / 0003_backup 1 / 0004_maintenance 1
+/ 0005_identity 1 / 0006_product-master 1 / 0007_suppliers 1
+
+
+===============================================================================
+1. Apply migration 0008_purchase-orders as merch_migrator
+===============================================================================
+
+$ dotnet run --project src/Merchandising.Maintenance/Merchandising.Maintenance.vbproj --configuration Release -- migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0008_purchase-orders
+
+  [PASS] applies clean on a database already carrying 0001-0007
+         (done-when box 5, first half).
+
+$ mysql -u root -e "SELECT MigrationId, LEFT(Checksum,16), Succeeded FROM merchandising.SchemaMigrations ORDER BY MigrationId;"
+0001_foundation       43d946bee7a7d849  1
+0002_authentication   0a766f2d357fca90  1
+0003_backup           bfc9f02fbaa0e8ab  1
+0004_maintenance      24092a56d4af2657  1
+0005_identity         8895e6660b1d0259  1
+0006_product-master   dec848845838a15f  1
+0007_suppliers        b0224c9c9c51df5a  1
+0008_purchase-orders  c3ad038aeb326b62  1
+
+  [PASS] recorded exactly once, with a SHA-256 checksum, on top of its seven
+         predecessors rather than in place of them (done-when box 5, second
+         half). Re-asserted every run by
+         Migration0008_IsRecordedExactlyOnce_AfterMigrations0001To0007.
+
+
+-------------------------------------------------------------------------------
+1b. THE FIRST APPLICATION OF 0008 WAS ROLLED BACK AND REISSUED. Recorded here
+    rather than quietly re-run, because the checksum above is not the one this
+    server first saw.
+-------------------------------------------------------------------------------
+
+The first draft of 0008 declared Status as plain VARCHAR(20), inheriting the
+table's utf8mb4_unicode_ci. That collation is CASE-INSENSITIVE, so
+
+    SELECT 'draft' = 'Draft';  ->  1
+
+which means CK_PurchaseOrders_Status ACCEPTED the string 'draft' and MariaDB
+then stored it verbatim. The column would have held a value that no
+PurchaseOrderStatus enum name matches - exactly the drift done-when box 4
+exists to prevent, arriving through the collation instead of through an
+ordinal. StatusColumn_RefusesAnOrdinalAndAnUnknownName caught it; review had
+not.
+
+The fix is one clause - COLLATE utf8mb4_bin on that single column - and
+applying it meant editing a migration that had already been applied, which is
+CLAUDE.md section 7 stop condition 6. It was put to the user rather than
+decided unilaterally. The rollback was authorised on the specific grounds
+that 0008 was uncommitted, ten minutes old, present on this machine alone,
+and holding nothing but the test suite's own fixtures - no clone anywhere had
+ever seen its checksum.
+
+$ mysql -u root merchandising -e "DROP TABLE PurchaseOrderLines; DROP TABLE PurchaseOrders; DELETE FROM SchemaMigrations WHERE MigrationId = '0008_purchase-orders';"
+$ mysql -u root merchandising -e "SELECT COUNT(*) FROM SchemaMigrations WHERE MigrationId = '0008_purchase-orders';"
+0
+
+...then 0008 was corrected and reapplied, producing the checksum c3ad038a...
+recorded in section 1. THE RULE STILL STANDS for every future card: 0008 is
+committed now, so the next correction to it is a new numbered migration.
+
+
+===============================================================================
+2. Shape check - PurchaseOrders
+===============================================================================
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE PurchaseOrders\G"
+
+CREATE TABLE `purchaseorders` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `OrderNumber` varchar(50) NOT NULL,
+  `SupplierId` int(11) NOT NULL,
+  `Status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `RequestedByUserId` int(11) NOT NULL,
+  `ApprovedByUserId` int(11) DEFAULT NULL,
+  `SubmittedAtUtc` datetime(6) DEFAULT NULL,
+  `ApprovedAtUtc` datetime(6) DEFAULT NULL,
+  `RowVersion` bigint(20) NOT NULL DEFAULT 0,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  `UpdatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  UNIQUE KEY `UQ_PurchaseOrders_OrderNumber` (`OrderNumber`),
+  KEY `FK_PurchaseOrders_Suppliers` (`SupplierId`),
+  KEY `FK_PurchaseOrders_Requester` (`RequestedByUserId`),
+  KEY `FK_PurchaseOrders_Approver` (`ApprovedByUserId`),
+  KEY `IX_PurchaseOrders_Status` (`Status`),
+  KEY `IX_PurchaseOrders_CreatedAtUtc` (`CreatedAtUtc`),
+  CONSTRAINT `FK_PurchaseOrders_Approver`  FOREIGN KEY (`ApprovedByUserId`)  REFERENCES `users` (`Id`),
+  CONSTRAINT `FK_PurchaseOrders_Requester` FOREIGN KEY (`RequestedByUserId`) REFERENCES `users` (`Id`),
+  CONSTRAINT `FK_PurchaseOrders_Suppliers` FOREIGN KEY (`SupplierId`)        REFERENCES `suppliers` (`Id`),
+  CONSTRAINT `CK_PurchaseOrders_Status` CHECK (`Status` in ('Draft','Submitted','Approved','PartiallyReceived','FullyReceived','Cancelled','Closed'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] RequestedByUserId and ApprovedByUserId are TWO separate columns with
+         two separate foreign keys to Users (done-when box 2). ADR-017
+         section 6's self-approval veto compares them at P3-04 and could not
+         if they were one field. ApprovedByUserId is nullable because a Draft
+         has no approver; RequestedByUserId is not, because an order without
+         a requester could never have been created.
+
+  [PASS] Status is a stable identifier, not a display string and not an
+         ordinal (done-when box 4). ADR-020 section 5.
+
+  [PASS] every timestamp DATETIME(6); COLLATE utf8mb4_unicode_ci stated on
+         the table rather than inherited from the server's general_ci
+         default (ADR-003).
+
+
+===============================================================================
+3. Shape check - PurchaseOrderLines
+===============================================================================
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE PurchaseOrderLines\G"
+
+CREATE TABLE `purchaseorderlines` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `PurchaseOrderId` int(11) NOT NULL,
+  `LineNumber` int(11) NOT NULL,
+  `ProductId` int(11) NOT NULL,
+  `OrderedQuantity` decimal(19,3) NOT NULL,
+  `PurchaseCost` decimal(19,4) NOT NULL,
+  `ReceivedQuantity` decimal(19,3) NOT NULL DEFAULT 0.000,
+  `RowVersion` bigint(20) NOT NULL DEFAULT 0,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  `UpdatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  UNIQUE KEY `UQ_PurchaseOrderLines_OrderLine` (`PurchaseOrderId`,`LineNumber`),
+  KEY `FK_PurchaseOrderLines_Products` (`ProductId`),
+  CONSTRAINT `FK_PurchaseOrderLines_Products`       FOREIGN KEY (`ProductId`)       REFERENCES `products` (`Id`),
+  CONSTRAINT `FK_PurchaseOrderLines_PurchaseOrders` FOREIGN KEY (`PurchaseOrderId`) REFERENCES `purchaseorders` (`Id`),
+  CONSTRAINT `CK_PurchaseOrderLines_OrderedQuantity`  CHECK (`OrderedQuantity` > 0),
+  CONSTRAINT `CK_PurchaseOrderLines_PurchaseCost`     CHECK (`PurchaseCost` >= 0),
+  CONSTRAINT `CK_PurchaseOrderLines_ReceivedQuantity` CHECK (`ReceivedQuantity` >= 0 and `ReceivedQuantity` <= `OrderedQuantity`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] money DECIMAL(19,4), quantities DECIMAL(19,3) (ADR-004). No
+         floating-point type anywhere in either table.
+
+  [PASS] spec section 12's "receipt quantity bounded by ordered quantity by
+         default" is enforced by the server, not only by the Phase 4 API.
+         Its cost is recorded in the migration header: spec section 10.1's
+         future over-receiving override policy would need a new numbered
+         migration to relax CK_PurchaseOrderLines_ReceivedQuantity. That is
+         the intended trade, confirmed with the user at P3-02 - the MVP
+         default is put where it cannot be forgotten and the exception is
+         made expensive.
+
+
+===============================================================================
+4. Behaviour - PurchaseOrderSchemaTests, 14/14 against the pinned server
+===============================================================================
+
+$ dotnet test ... --filter "FullyQualifiedName~PurchaseOrderSchemaTests"
+Passed!  - Failed: 0, Passed: 14, Skipped: 0, Total: 14
+
+Console output from the run, unedited:
+
+  P3-02 supplier delete -> ERROR 1451: Cannot delete or update a parent row:
+    a foreign key constraint fails (`merchandising`.`purchaseorders`,
+    CONSTRAINT `FK_PurchaseOrders_Suppliers` FOREIGN KEY (`SupplierId`)
+    REFERENCES `suppliers` (`Id`))
+
+  P3-02 product delete  -> ERROR 1451: Cannot delete or update a parent row:
+    a foreign key constraint fails (`merchandising`.`purchaseorderlines`,
+    CONSTRAINT `FK_PurchaseOrderLines_Products` FOREIGN KEY (`ProductId`)
+    REFERENCES `products` (`Id`))
+
+  P3-02 concurrent order-number insert -> success | ERROR 1062
+
+  P3-02 status '3'         -> ERROR 4025
+  P3-02 status 'Approvedd' -> ERROR 4025
+  P3-02 status 'draft'     -> ERROR 4025
+  P3-02 status ''          -> ERROR 4025
+
+  P3-02 round trip -> OrderedQuantity=0.001 PurchaseCost=12345678901234.5678
+                      ReceivedQuantity=0.000
+
+  P3-02 over-receive -> ERROR 4025
+
+-------------------------------------------------------------------------------
+
+  [PASS] DONE-WHEN BOX 1 - foreign keys PREVENT deletion, proven with
+         ERROR 1451 rather than asserted by inspection. Three of them:
+         supplier, product, and the order header a line points at. All three
+         attempted as merch_migrator, the one identity that actually holds
+         DELETE - attempting them as merch_api would earn ERROR 1142 (no
+         privilege) and never reach 1451, proving the grant model instead of
+         the constraint. Spec section 12: "Foreign-key behavior must prevent
+         accidental deletion of records referenced by sales, receipts,
+         returns, movements, or audit events."
+
+  [PASS] DONE-WHEN BOX 3 - order number unique at the DATABASE, under a
+         genuine race. Two inserts fired without awaiting between them, on
+         two separate connections, sharing one order number: exactly one
+         succeeded and the other was refused 1062 by
+         UQ_PurchaseOrders_OrderNumber. The P2-07 shape. There is no API
+         check to bypass at this card, which is the point - uniqueness has
+         to be a fact about the server before P3-03 relies on it.
+
+  [PASS] DONE-WHEN BOX 4 - status is the enum NAME. All seven names from
+         [Enum].GetNames(GetType(PurchaseOrderStatus)) round-trip verbatim,
+         walked from the Domain enum itself rather than a hand-typed list -
+         so a status added to the enum without a matching migration fails
+         this suite instead of failing in production. The ordinal '3' is
+         refused 4025, which is the representation ADR-020 rejects: if '3'
+         were storable, renumbering the enum would silently rewrite history.
+         'draft' is refused too, and that assertion is not cosmetic - see
+         section 1b, it is the one that found the collation defect.
+
+  [PASS] DONE-WHEN BOX 7 - decimal round trip, exact. 0.001 is the smallest
+         representable quantity at DECIMAL(19,3); 12345678901234.5678
+         exercises all 18 significant digits of DECIMAL(19,4). Compared as
+         Decimal, never as Double (CLAUDE.md section 5). The declared column
+         types are separately asserted from information_schema, because
+         CLAUDE.md section 6.3 is explicit that scale is silently rounded
+         even under strict mode - a correctly stored value proves the value
+         and never the column.
+
+  [PASS] spec section 12's over-receiving bound: 10.001 against an ordered
+         10.000 is refused 4025, and exactly 10.000 is accepted - the bound
+         is inclusive.
+
+The 14 tests:
+
+  Migration0008_IsRecordedExactlyOnce_AfterMigrations0001To0007
+  DeletingASupplierReferencedByAnOrder_IsRefusedWith1451
+  DeletingAProductReferencedByAnOrderLine_IsRefusedWith1451
+  DeletingAnOrderReferencedByALine_IsRefusedWith1451
+  RequestedByAndApprovedBy_AreTwoDistinctUserColumns
+  TwoConcurrentInsertsSameOrderNumber_ExactlyOneSucceeds
+  StatusColumn_AcceptsEveryDomainStatusName
+  StatusColumn_RefusesAnOrdinalAndAnUnknownName
+  DecimalColumns_RoundTripBoundaryValuesExactly
+  MoneyAndQuantityColumns_AreDeclaredAtTheRequiredPrecision
+  ReceivedQuantityAboveOrdered_IsRefusedByTheDatabase
+  MerchApi_CanInsertAndUpdate_BothTables
+  MerchApi_HasNoDeleteGrant_OnEitherTable
+  MerchApi_CannotAlterOrDropTheNewTables
+
+
+===============================================================================
+5. Full verification pass
+===============================================================================
+
+$ pwsh ./scripts/run-tests.ps1
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed!  - Failed: 0, Passed: 37, Skipped: 0, Total: 37
+
+  === Integration tests (real MariaDB) ===
+  Passed!  - Failed: 0, Passed: 150, Skipped: 0, Total: 150
+
+  All checks passed.
+
+Integration count 136 -> 150 (+14, this card). Unit count unchanged at 37 -
+P3-02 adds no Domain code, only schema.
+
+
+===============================================================================
+6. What this card did NOT do
+===============================================================================
+
+No controller, no repository, no contract type, no client. P3-03 builds the
+first purchase-order endpoint; until it exists, nothing in the running API
+reads or writes either table.
+
+The P2-03 authorization matrix suite is NOT extended by this card and its
+count is unchanged. That box belongs to the cards that add routes. P3-02
+adds none, so there is no policy cell to assert - and the suite being
+data-driven from PolicyRegistry.Definitions is exactly why an endpoint added
+later without a policy will fail it.
+
+Removing a line from a Draft order has no route and no grant. Named
+deliberately in db/grants/0010_purchase-order-grants.sql rather than
+discovered later; no Phase 3 card needs it.

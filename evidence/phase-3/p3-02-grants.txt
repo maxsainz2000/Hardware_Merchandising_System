@@ -1,0 +1,137 @@
+P3-02 - db/grants/0010_purchase-order-grants.sql - grant evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Schema evidence is a separate file: p3-02-schema.txt.
+
+Done-when box 6: "db/grants/0010 applied AFTER, lowercase table names; no
+UPDATE/DELETE granted beyond what a card justifies in writing."
+
+
+===============================================================================
+1. Ordering - grants AFTER migration, never before
+===============================================================================
+
+Migration 0008 was applied first (p3-02-schema.txt section 1), then:
+
+$ mysql -u root < db/grants/0010_purchase-order-grants.sql
+(no output - GRANT and FLUSH PRIVILEGES are silent on success)
+exit=0
+
+The ordering is not a convention. MariaDB 10.4 rejects a table-level GRANT
+naming a table that does not exist:
+
+    ERROR 1146 (42S02): Table '...' doesn't exist
+
+That constraint (ADR-013, verified on this server at P1-04) is why grants
+live in their own numbered files rather than at the foot of a migration, and
+it has held for every migration -> grants pair since 0001 -> 0002.
+
+Table names in the grants file are LOWERCASE - `purchaseorders`, not
+`PurchaseOrders` - because @@lower_case_table_names = 1 on Windows
+(ADR-003.1). The migration's mixed-case CREATE TABLE is stored lowercased.
+
+
+===============================================================================
+2. What merch_api actually holds, read back from the server
+===============================================================================
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';"
+
+GRANT SELECT ON `merchandising`.* TO `merch_api`@`localhost`
+...
+GRANT INSERT, UPDATE ON `merchandising`.`purchaseorders`     TO `merch_api`@`localhost`
+GRANT INSERT, UPDATE ON `merchandising`.`purchaseorderlines` TO `merch_api`@`localhost`
+
+  [PASS] INSERT and UPDATE on both new tables, and nothing else. No DELETE.
+         No DDL. The database-level line is still SELECT only - ADR-013's
+         split is not weakened by adding two tables to it.
+
+
+===============================================================================
+3. Proven, not just granted
+===============================================================================
+
+Three tests in PurchaseOrderSchemaTests assert the grant boundary on every
+run rather than trusting section 2's transcript:
+
+  MerchApi_CanInsertAndUpdate_BothTables
+      As merch_api: INSERT an order, UPDATE its Status to 'Submitted' and
+      bump RowVersion, INSERT a line, UPDATE the line's quantity. All four
+      succeed. This is what P3-03/P3-04/P3-05 will need and it works today.
+
+  MerchApi_HasNoDeleteGrant_OnEitherTable
+      As merch_api:
+        DELETE FROM PurchaseOrderLines ...  ->  ERROR 1142
+        DELETE FROM PurchaseOrders ...      ->  ERROR 1142
+
+  MerchApi_CannotAlterOrDropTheNewTables
+      As merch_api:
+        ALTER TABLE PurchaseOrders ADD COLUMN ...  ->  ERROR 1142
+        DROP TABLE PurchaseOrderLines             ->  ERROR 1142
+
+  [PASS] 1142 is "command denied to this user for this table" - the grant
+         refusing, not the schema. Spec section 12: "Transactional records
+         are never physically deleted."
+
+
+===============================================================================
+4. THE JUSTIFICATION THE CARD DEMANDS IN WRITING
+===============================================================================
+
+The card's own note: "A purchase order is not a ledger. Unlike StockMovements,
+AuditLogs and PriceHistory, a Draft order is legitimately editable, so this
+table does need UPDATE. Grant it deliberately and say so in the grants file -
+the append-only default (ADR-013) is the reason that sentence has to be
+written rather than assumed."
+
+The full argument is in the header of
+db/grants/0010_purchase-order-grants.sql. In short:
+
+  WHY UPDATE IS GRANTED. merch_api holds no database-level write privilege at
+  all (0001), so every table here is append-only until a file like 0010 adds
+  writes back one table at a time. A ledger records that something HAPPENED
+  and can only be appended to; a purchase order records what is INTENDED, and
+  that intention legitimately changes while the order is a Draft. Spec
+  section 10.1's status machine is itself a sequence of in-place changes to
+  one row - Draft -> Submitted -> Approved -> ... Modelling those as new rows
+  would make "the current state of order 41" a query over history rather than
+  a fact, and would leave ADR-006's conditional-update pattern nothing to
+  update.
+
+    purchaseorders      Status, ApprovedByUserId, SubmittedAtUtc,
+                        ApprovedAtUtc, RowVersion - P3-04 and P3-05.
+    purchaseorderlines  editing a Draft's quantities and costs (P3-03), and
+                        accumulating ReceivedQuantity across partial receipts
+                        (Phase 4, spec section 10.1).
+
+  NO HISTORY IS LOST BY GRANTING IT. Every transition is audited through the
+  P2-04 pipeline into auditlogs, which remains INSERT-only. The mutable row
+  is the current state; the append-only ledger is the record of how it got
+  there. That split is the design, and it is why granting UPDATE here does
+  not weaken the guarantee that protects stockmovements and auditlogs.
+
+  WHY NO DELETE, TO ANYONE. Spec section 12: "Transactional records are never
+  physically deleted." A purchase order is one from the moment it exists.
+  P3-05's cancelled and closed orders stay fully readable in history, and
+  ADR-020's status machine already gives every abandonment a terminal state
+  to sit in - Cancelled if nothing arrived, Closed if something did. No
+  operation in this system removes a purchase order, so there is no grant
+  for one.
+
+
+===============================================================================
+5. One gap, named rather than papered over
+===============================================================================
+
+REMOVING A LINE FROM A DRAFT ORDER has no route today. With no DELETE grant
+on purchaseorderlines, a line added by mistake to a Draft cannot be taken off
+it.
+
+Nothing in Phase 3 is blocked by this: P3-03 creates and reads, P3-04 submits
+and approves, P3-05 cancels and closes. None of them removes a line.
+
+If a later card needs it, the choice is between a soft-delete column and a
+narrowly justified DELETE grant on purchaseorderlines alone, in a NEW
+numbered grants file. It is recorded here and in the 0010 header so that it
+is a decision someone makes, not an omission someone discovers.

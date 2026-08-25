@@ -1,0 +1,79 @@
+-- =============================================================================
+-- 0010_purchase-order-grants.sql
+--
+-- Run as root, AFTER migration 0008_purchase-orders.sql has created
+-- PurchaseOrders and PurchaseOrderLines. Same table-must-exist-first ordering
+-- constraint as every prior migration -> grants pair (ADR-013, ERROR 1146 if
+-- reversed).
+--
+-- Re-runnable: GRANT is idempotent.
+--
+-- Table names are lowercase because @@lower_case_table_names = 1 on Windows
+-- (ADR-003.1): `PurchaseOrders` in the migration is stored as
+-- `purchaseorders`.
+--
+-- -----------------------------------------------------------------------------
+-- WHY UPDATE IS GRANTED HERE, WHICH IS THE SENTENCE ADR-013 EXISTS TO FORCE
+--
+-- merch_api holds no database-level write privilege at all (0001), so every
+-- table in this schema is append-only until a file like this one adds writes
+-- back, one table at a time. That default is deliberate and it is what makes
+-- StockMovements and AuditLogs genuinely immutable rather than merely
+-- policed. Adding UPDATE to a table is therefore a decision that has to be
+-- argued, not a formality.
+--
+-- A PURCHASE ORDER IS NOT A LEDGER. Unlike StockMovements, AuditLogs and
+-- PriceHistory - which record that something HAPPENED, and so can only ever
+-- be appended to - a purchase order records what is INTENDED, and that
+-- intention legitimately changes while the order is still a Draft. Spec
+-- section 10.1's status machine is itself a sequence of in-place changes to
+-- one row: Draft -> Submitted -> Approved -> ... Modelling those as new rows
+-- would make "the current state of order 41" a query over history rather
+-- than a fact, and would give the ADR-006 conditional-update pattern nothing
+-- to update.
+--
+-- Concretely, UPDATE is needed for:
+--   purchaseorders       Status, ApprovedByUserId, SubmittedAtUtc,
+--                        ApprovedAtUtc, RowVersion - P3-04 and P3-05.
+--   purchaseorderlines   editing a Draft's quantities and costs (P3-03), and
+--                        accumulating ReceivedQuantity across partial
+--                        receipts (Phase 4, spec section 10.1).
+--
+-- The history of those changes is NOT lost by granting UPDATE: every
+-- transition is audited through the P2-04 pipeline into auditlogs, which
+-- remains INSERT-only. The mutable row is the current state; the append-only
+-- ledger is the record of how it got there. That split is the whole design.
+-- -----------------------------------------------------------------------------
+-- WHAT IS DELIBERATELY NOT GRANTED
+--
+-- DELETE, on either table, to anyone. Spec section 12: "Transactional records
+-- are never physically deleted." A purchase order is a transactional record
+-- from the moment it exists. P3-05's cancelled and closed orders stay fully
+-- readable in history rather than disappearing, and the status machine
+-- (ADR-020) already gives every abandonment a terminal state to sit in -
+-- Cancelled if nothing arrived, Closed if something did. There is no
+-- operation in this system that removes a purchase order, so there is no
+-- grant for one.
+--
+-- That does leave one gap named rather than papered over: REMOVING A LINE
+-- FROM A DRAFT ORDER has no route today. No Phase 3 card asks for one -
+-- P3-03 creates and reads, P3-04 submits and approves, P3-05 cancels and
+-- closes - so nothing is blocked by its absence. If a later card needs it,
+-- the choice is a soft-delete column or a narrowly justified DELETE grant on
+-- purchaseorderlines alone, in a new numbered grants file. It is not decided
+-- here by accident.
+-- =============================================================================
+
+GRANT INSERT, UPDATE ON `merchandising`.`purchaseorders`     TO `merch_api`@`localhost`;
+GRANT INSERT, UPDATE ON `merchandising`.`purchaseorderlines` TO `merch_api`@`localhost`;
+
+FLUSH PRIVILEGES;
+
+-- =============================================================================
+-- VERIFY AFTER RUNNING. Both of these must fail with ERROR 1142:
+--
+--   mysql -u merch_api -p merchandising -e "DELETE FROM purchaseorders;"
+--   mysql -u merch_api -p merchandising -e "DELETE FROM purchaseorderlines;"
+--
+-- Asserted continuously by PurchaseOrderSchemaTests, not only here.
+-- =============================================================================

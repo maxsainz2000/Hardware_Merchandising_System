@@ -935,6 +935,8 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 4. **Receiving is two actions, not one.** `ReceivePartially` and `ReceiveFully`.
 5. **Enum names are the stable identifiers** P3-02 stores. Not ordinals.
 
+**Amended at P3-02 — what point 5 costs to actually hold.** Storing the name is not enough on its own. `PurchaseOrders.Status` is `VARCHAR(20)` under `CHECK (Status IN (…the seven…))`, and the first draft of migration `0008` let that column inherit the table's `utf8mb4_unicode_ci` — which is **case-insensitive**, so `'draft' = 'Draft'` evaluates to `1`, the `CHECK` passes, and MariaDB stores `'draft'` **verbatim**. The column would have held a value no `PurchaseOrderStatus` name matches: the exact drift point 5 exists to prevent, arriving through the collation rather than through an ordinal. The fix is `COLLATE utf8mb4_bin` on that single column, which makes the `CHECK` compare byte for byte. It is the only binary-collated column in the schema, and deliberately so — a binary collation is wrong for human text and exactly right for a machine identifier, matching VB's own `Option Compare Binary` (CLAUDE.md §3). `ENUM(...)` was rejected as the alternative: it carries the ordinal semantics this point rules out. Found by `StatusColumn_RefusesAnOrdinalAndAnUnknownName`, not by review; the repair required rolling back an already-applied migration under §7 stop condition 6 and was authorised rather than assumed. Full record: `evidence/phase-3/p3-02-schema.txt` §1b.
+
 **The table — 11 legal transitions out of 42 pairs.**
 
 | From | Submit | Approve | ReceivePartially | ReceiveFully | Cancel | Close |
