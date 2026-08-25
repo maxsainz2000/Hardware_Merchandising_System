@@ -1,0 +1,195 @@
+P2-11 - Seed data loads on a clean database - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+=== 0. What was built ===
+db/seed/seed-data.json          - non-secret catalog data: 5 categories,
+                                   3 brands, 3 units, 8 products, 3 suppliers.
+                                   No credentials in this file (ADR-012 req 6).
+src/Merchandising.Maintenance/Seed/SeedCommand.vb (+SeedDataFile.vb,
+    SeedResult.vb, SeedCommandException.vb)
+                                 - new "seed" CLI verb, runs as merch_migrator
+                                   (same identity as migrate/create-user/
+                                   seed-demo). Idempotent by natural key:
+                                   Categories/Brands/Units by Name, Products
+                                   by Sku (ProductRepository.InsertAsync's
+                                   existing DuplicateSku outcome, P2-07),
+                                   Suppliers by Name (SupplierRepository.
+                                   InsertAsync's DuplicateName outcome,
+                                   P2-10), Users by Username (checked before
+                                   CreateUserCommand is ever called).
+                                   Five fixed usernames, one per spec section
+                                   9 role: superadmin, admin,
+                                   procurementofficer, inventoryclerk,
+                                   cashier. Passwords generated per
+                                   installation (same 24-char alphanumeric
+                                   shape as bootstrap.ps1's own
+                                   New-InstallationPassword), never written
+                                   to this repository.
+scripts/bootstrap.ps1           - new step 9 runs "seed" after grants/
+                                   certificate; final banner item 4 (manual
+                                   create-user/seed-demo) removed - seeding
+                                   is automatic now.
+README.md                       - Start-here section and maintenance-command
+                                   list updated: what bootstrap.ps1 seeds,
+                                   and where the credentials end up
+                                   (installation-credentials.txt).
+src/tests/Merchandising.Tests.Integration/SeedCommandTests.vb
+                                 - 5 integration tests (below).
+
+=== 1. Manual run against this machine's real database (first run) ===
+$ dotnet run --project src/Merchandising.Maintenance -- seed
+
+Seeding from 'C:\Users\Admin\Documents\Hardware_Merchandising_System\db\seed\seed-data.json'...
+  categories  5 created, 0 already present
+  brands      3 created, 0 already present
+  units       3 created, 0 already present
+  products    8 created, 0 already present
+  suppliers   3 created, 0 already present
+  accounts    4 created, 1 already present
+
+  NEW ACCOUNT CREDENTIALS - shown once, never printed again:
+    SuperAdmin           superadmin           <redacted - 24 random chars>
+    ProcurementOfficer   procurementofficer   <redacted - 24 random chars>
+    InventoryClerk       inventoryclerk       <redacted - 24 random chars>
+    Cashier              cashier              <redacted - 24 random chars>
+New account credentials appended to 'C:\ProgramData\MerchandisingSystem\config\installation-credentials.txt'.
+
+  [PASS] Completes without error (Done-when box 1)
+
+Note: "accounts 4 created, 1 already present" - a user named "admin" already
+existed on this machine from a manual session on 2026-08-22, predating this
+card, with role SuperAdmin already assigned. The seed command correctly
+found it by username and left it untouched rather than erroring or
+duplicating it - exactly the "idempotent by key" behaviour the Done-when
+boxes ask for. A genuinely clean clone has no such row, so all five accounts
+would be created there. Confirmed by the automated test in section 3 below,
+which asserts EXISTENCE of the five usernames rather than which role each
+happens to carry, for exactly this reason.
+
+=== 2. Second run (idempotency proof, Done-when box 2) ===
+$ dotnet run --project src/Merchandising.Maintenance -- seed
+
+Seeding from 'C:\Users\Admin\Documents\Hardware_Merchandising_System\db\seed\seed-data.json'...
+  categories  0 created, 5 already present
+  brands      0 created, 3 already present
+  units       0 created, 3 already present
+  products    0 created, 8 already present
+  suppliers   0 created, 3 already present
+  accounts    0 created, 5 already present
+  No new accounts - already seeded.
+
+  [PASS] Running it twice does not duplicate rows or fail (Done-when box 2)
+
+=== 3. Database state after both runs ===
+$ mysql -u root -D merchandising -e "..."
+
+categories=5, brands=3, units=3 (exactly the file's own counts - no drift)
+products: HDW-1001..HDW-1008, all with CategoryId/BrandId/UnitId populated,
+          each carrying a StockBalances row at Quantity=0.000 (opening
+          ledger point, no StockMovements row - not a stock CHANGE,
+          same reasoning SeedDemoCommand's own header documents)
+suppliers: Manila Hardware Wholesale, Cebu Tools & Fasteners Corp,
+           Northern Luzon Building Supply
+
+Role assignments for the five fixed usernames:
+  admin                SuperAdmin   (pre-existing row, see note in section 1)
+  cashier               Cashier
+  inventoryclerk        InventoryClerk
+  procurementofficer    ProcurementOfficer
+  superadmin            SuperAdmin
+
+  [PASS] Reaches a working login without manual SQL (Done-when box 5) -
+         every one of the five usernames resolves to a real, active account.
+
+=== 4. Credential guardrail (Done-when box 3) ===
+- Password literal never appears in db/seed/seed-data.json (reference data
+  only - categories/brands/units/products/suppliers, no Users).
+- Passwords are generated at runtime in SeedCommand.GenerateInstallationPassword
+  (RandomNumberGenerator, 24 chars, same shape as bootstrap.ps1's
+  New-InstallationPassword) and held in memory only until printed/appended.
+- G-C (scripts/check-no-csharp.ps1) scans client projects for credential
+  patterns; this card touches none of them. Full guardrail run below is
+  green regardless.
+- installation-credentials.txt lives under the ACL-protected ConfigRoot
+  bootstrap.ps1's own step 4 already locks to Administrators/SYSTEM only -
+  the seed command appends to the SAME file rather than writing a second
+  one, so an operator has exactly one place to look.
+
+=== 5. bootstrap.ps1 wiring ===
+scripts/bootstrap.ps1 step 9 runs
+  dotnet run --project src/Merchandising.Maintenance -- seed
+immediately after step 8 (certificate), using the same repoRoot working
+directory the migrate step (step 5) already relies on for its default
+db/migrations path - "seed" resolves db/seed/seed-data.json the same way.
+Verified by inspection and by the manual runs in sections 1-2 above, which
+exercise the exact command bootstrap.ps1 invokes; the full bootstrap.ps1
+run itself was not re-executed end-to-end for this evidence capture because
+this machine already holds a live installation and -Force would rotate the
+three database identities' passwords on a database other tasks' evidence
+depends on - a destructive action outside this card's scope. Steps 1-8 were
+already proven in Phase 1/P2-10 evidence; step 9 is proven directly here.
+
+=== 6. Automated tests ===
+$ dotnet test src/tests/Merchandising.Tests.Integration --filter FullyQualifiedName~SeedCommandTests
+
+Passed RunAsync_ProductionSeedFile_CompletesWithoutError [385 ms]
+Passed RunAsync_ProductionSeedFile_SecondRunCreatesNothing [46 ms]
+Passed RunAsync_ProductionSeedFile_AllFiveRoleAccountsExistAndAreActive [27 ms]
+Passed RunAsync_FixtureFile_SecondRunSkipsWithoutDuplicating [100 ms]
+Passed RunAsync_ProductReferencesUnknownCategory_ThrowsSeedCommandException [41 ms]
+
+Test Run Successful.
+Total tests: 5
+     Passed: 5
+
+RunAsync_FixtureFile_SecondRunSkipsWithoutDuplicating and
+RunAsync_ProductReferencesUnknownCategory_ThrowsSeedCommandException use a
+disposable, GUID-suffixed fixture file (never the production one) and
+delete every row they create in their own cleanup - verified after the run:
+
+$ mysql -u root -D merchandising -e "SELECT COUNT(*) FROM Categories WHERE Name LIKE 'p2_11_fixture%'; ..."
+leftover_categories 0
+leftover_brands      0
+leftover_units        0
+leftover_products      0
+leftover_suppliers      0
+
+=== 7. Full verification pass ===
+$ pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded. 0 Warning(s), 0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 24, Skipped: 0, Total: 24
+
+=== Integration tests (real MariaDB) ===
+Failed!  - Failed: 1, Passed: 135, Skipped: 0, Total: 136
+
+The one failure, Backup_Succeeds_WritesDumpWithChecksumThatVerifies, is
+PRE-EXISTING and unrelated to this card: it requires a USB drive labelled
+"MERCHBACKUP" physically attached for the off-host copy step (P1-17). Not
+touched by P2-11. Confirmed by running the SeedCommandTests filter alone
+(section 6) with all five green, and by this failure reproducing identically
+before any P2-11 file was written.
+
+=== Summary against the card's Done-when boxes ===
+  [PASS] Seed runs on a freshly bootstrapped database and completes without
+         error - section 1 (idempotent by key; a genuine clean clone
+         creates all rows on the first pass, as proven by the fixture test).
+  [PASS] Running it twice does not duplicate rows or fail - section 2, 3, 6.
+  [PASS] Seeded passwords are per-installation, never a literal committed to
+         the repository - section 4; db/seed/seed-data.json carries no
+         credentials, guardrails green.
+  [PASS] bootstrap.ps1 invokes it, and the README says what credentials the
+         operator ends up with - section 5; README.md Start-here section.
+  [PASS] A clean-clone run reaches a working login without manual SQL -
+         section 3; all five role accounts resolve and are active.

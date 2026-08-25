@@ -1,0 +1,20 @@
+{
+  "categories": ["Hand Tools", "Power Tools", "Fasteners", "Paint & Finishing", "Plumbing"],
+  "brands": ["Stanley", "DeWalt", "Generic"],
+  "units": ["pcs", "box", "kg"],
+  "products": [
+    { "sku": "HDW-1001", "name": "Claw Hammer 16oz", "category": "Hand Tools", "brand": "Stanley", "unit": "pcs", "price": 350.00, "cost": 220.00 },
+    { "sku": "HDW-1002", "name": "Adjustable Wrench 10in", "category": "Hand Tools", "brand": "Stanley", "unit": "pcs", "price": 420.00, "cost": 260.00 },
+    { "sku": "HDW-1003", "name": "Cordless Drill 18V", "category": "Power Tools", "brand": "DeWalt", "unit": "pcs", "price": 4500.00, "cost": 3200.00 },
+    { "sku": "HDW-1004", "name": "Angle Grinder 4in", "category": "Power Tools", "brand": "DeWalt", "unit": "pcs", "price": 2800.00, "cost": 1950.00 },
+    { "sku": "HDW-1005", "name": "Wood Screws 1in (100pc box)", "category": "Fasteners", "brand": "Generic", "unit": "box", "price": 85.00, "cost": 45.00 },
+    { "sku": "HDW-1006", "name": "Hex Bolts M8x40 (50pc box)", "category": "Fasteners", "brand": "Generic", "unit": "box", "price": 120.00, "cost": 70.00 },
+    { "sku": "HDW-1007", "name": "Interior Latex Paint White 4L", "category": "Paint & Finishing", "brand": "Generic", "unit": "pcs", "price": 650.00, "cost": 410.00 },
+    { "sku": "HDW-1008", "name": "PVC Pipe 1/2in x 3m", "category": "Plumbing", "brand": "Generic", "unit": "pcs", "price": 180.00, "cost": 110.00 }
+  ],
+  "suppliers": [
+    { "name": "Manila Hardware Wholesale", "contactName": "Rosa Santos", "phone": "+63 2 8555 0101", "email": "sales@manilahardware.example", "address": "123 Rizal Ave, Manila" },
+    { "name": "Cebu Tools & Fasteners Corp", "contactName": "Miguel Cruz", "phone": "+63 32 555 0202", "email": "orders@cebutools.example", "address": "45 Osmena Blvd, Cebu City" },
+    { "name": "Northern Luzon Building Supply", "contactName": "Ana Reyes", "phone": "+63 74 555 0303", "email": "info@nlbuildingsupply.example", "address": "78 Session Rd, Baguio" }
+  ]
+}

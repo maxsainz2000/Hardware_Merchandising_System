@@ -447,13 +447,45 @@ if ($SkipCertificate) {
 }
 
 # ===========================================================================
+# 9. SEED DATA
+#
+# P2-11. Everything from here on runs as merch_migrator against the schema
+# and grants just applied, the same "host-side bootstrap operation" identity
+# as steps 5-6. Re-runnable: SeedCommand matches every row on its own natural
+# key before writing anything (see Merchandising.Maintenance/Seed/
+# SeedCommand.vb), so a -Force re-install finds everything already there and
+# creates nothing a second time.
+#
+# What this leaves the operator with: the five spec section 9 roles (already
+# seeded by 0001_foundation.sql), one test account per role, a small product
+# catalog spanning categories/brands/units, and a few suppliers - a database
+# someone can actually log into and look at, not an empty schema.
+# ===========================================================================
+Write-Step '9. Seeding demo/test data (five role accounts, catalog, suppliers)'
+
+Push-Location $repoRoot
+try {
+    & dotnet run --project (Join-Path $repoRoot 'src\Merchandising.Maintenance\Merchandising.Maintenance.vbproj') `
+                 --configuration Release -- seed
+    if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'Seed run failed.' 'The output above is from Merchandising.Maintenance. Nothing partial was left uncommitted - each entity is its own small transaction (SeedCommand.vb).' }
+}
+finally {
+    Pop-Location
+}
+Write-Ok 'Seed data applied'
+Write-Info "Any newly created account's password was appended to $credentialRecordPath - never printed twice, never committed."
+
+# ===========================================================================
 # DONE
 # ===========================================================================
 Write-Host "`n=== Installed ===" -ForegroundColor Green
 Write-Host @"
 
-The database, accounts, schema, grants and certificate are in place, and the
-append-only guarantee was proven rather than assumed.
+The database, accounts, schema, grants, certificate and seed data are in
+place, and the append-only guarantee was proven rather than assumed. Five
+role accounts (superadmin/admin/procurementofficer/inventoryclerk/cashier),
+a small product catalog, and a few suppliers are ready to log into and look
+at - credentials are in $credentialRecordPath, never in this repository.
 
 WHAT IS LEFT, and why this script does not do it:
 
@@ -466,11 +498,6 @@ WHAT IS LEFT, and why this script does not do it:
 
   3. Client trust. Each client imports merch-host.cer into its Trusted Root
      store. See docs/installation-guide.md S4.2.
-
-  4. A user to log in as, and something to sell:
-
-       dotnet run --project src/Merchandising.Maintenance -- create-user <name> <password> InventoryClerk
-       dotnet run --project src/Merchandising.Maintenance -- seed-demo <name>
 
 Verify the whole thing with:
 

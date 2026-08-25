@@ -33,9 +33,12 @@ pwsh ./scripts/run-tests.ps1
 ```
 
 `bootstrap.ps1` checks everything before it writes anything, generates a password per database
-account for **your** installation, and finishes by printing the three per-machine steps it
-deliberately leaves to you (hosts entry, firewall, client certificate trust). Read its header
-before running it — it explains what it refuses to do and why.
+account for **your** installation, seeds five test accounts (one per role) plus a small product
+catalog and a few suppliers, and finishes by printing the three per-machine steps it deliberately
+leaves to you (hosts entry, firewall, client certificate trust). Read its header before running
+it — it explains what it refuses to do and why. Every generated credential — the three database
+accounts and the five seeded logins — ends up in one ACL-protected file,
+`%ProgramData%\MerchandisingSystem\config\installation-credentials.txt`, never in this repository.
 
 ### Prerequisites
 
@@ -143,6 +146,7 @@ Useful maintenance commands:
 
 ```powershell
 dotnet run --project src/Merchandising.Maintenance -- migrate
+dotnet run --project src/Merchandising.Maintenance -- seed             # idempotent - bootstrap.ps1 already runs this
 dotnet run --project src/Merchandising.Maintenance -- create-user <name> <password> InventoryClerk
 dotnet run --project src/Merchandising.Maintenance -- seed-demo <name>
 ```

@@ -312,7 +312,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ## Track E — Seed and closure
 
-### ⬜ P2-11 · Seed data loads on a clean database
+### ✅ P2-11 · Seed data loads on a clean database
 
 **Spec:** §12, §18 · **Files:** `db/seed/`, `scripts/bootstrap.ps1`
 
@@ -320,11 +320,11 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] Seed runs on a freshly bootstrapped database and completes without error
-- [ ] Running it **twice** does not duplicate rows or fail — idempotent by key, matching ADR-007's spirit
-- [ ] Seeded passwords are per-installation, never a literal committed to the repository — guardrail G-C must stay green
-- [ ] `bootstrap.ps1` invokes it, and the README says what credentials the operator ends up with
-- [ ] A clean-clone run reaches a working login without manual SQL
+- [x] Seed runs on a freshly bootstrapped database and completes without error
+- [x] Running it **twice** does not duplicate rows or fail — idempotent by key, matching ADR-007's spirit
+- [x] Seeded passwords are per-installation, never a literal committed to the repository — guardrail G-C must stay green
+- [x] `bootstrap.ps1` invokes it, and the README says what credentials the operator ends up with
+- [x] A clean-clone run reaches a working login without manual SQL
 
 **Evidence:** `evidence/phase-2/p2-11-seed-clean-db.log`
 

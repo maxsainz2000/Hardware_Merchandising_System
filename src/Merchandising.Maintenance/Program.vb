@@ -9,18 +9,31 @@
 Imports System
 Imports System.Globalization
 Imports System.IO
+Imports System.Text
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Backup
 Imports Merchandising.Maintenance.Demo
 Imports Merchandising.Maintenance.Migrations
 Imports Merchandising.Maintenance.Restore
+Imports Merchandising.Maintenance.Seed
 Imports Merchandising.Maintenance.Users
 Imports MySqlConnector
 
 Module Program
 
     Private Const MigratorConfigFileName As String = "database.migrator.json"
+
+    ' P2-11. Written beside the config files bootstrap.ps1 already writes in
+    ' its own ACL-protected ConfigRoot (step 4), under the exact filename it
+    ' already uses for the three database identities - one place the operator
+    ' looks for every credential this installation generated, not two.
+    Private Const CredentialRecordFileName As String = "installation-credentials.txt"
+
+    ' P2-11. Non-secret catalog data (categories/brands/units/products/
+    ' suppliers) - see db/seed/seed-data.json's own header for why user
+    ' credentials are never in this file.
+    Private Const DefaultSeedFileName As String = "seed-data.json"
 
     ' P1-17. The backup job runs as merch_backup - the third ADR-013 identity,
     ' provisioned at P1-04 and unused until now. It is NOT merch_api: the
@@ -70,6 +83,9 @@ Module Program
             Case "seed-demo"
                 Await RunSeedDemoAsync(args)
 
+            Case "seed"
+                Await RunSeedAsync(args)
+
             Case "backup"
                 Await RunBackupAsync(args)
 
@@ -88,6 +104,7 @@ Module Program
         Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe seed-demo <actor-username> [--sku <sku>] [--quantity <n>] [--config <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe seed [--seed-file <path>] [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe backup [--config <path>] [--mysqldump <path>] [--directory <path>] [--retention <n>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe restore --file <dump.sql> [--target <database>] [--config <path>] [--mysql <path>]")
     End Sub
@@ -287,6 +304,144 @@ Module Program
         End Try
 
     End Function
+
+    ''' <summary>
+    ''' P2-11: one seed pass that takes a freshly migrated database to a
+    ''' database someone can log into and look at - see SeedCommand.vb for
+    ''' what it does and why it is safe to run more than once.
+    ''' </summary>
+    Private Async Function RunSeedAsync(args As String()) As Task
+
+        Dim configPath As String = Nothing
+        Dim seedFilePath As String = Nothing
+
+        Dim i As Integer = 1
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--config requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    configPath = args(i)
+
+                Case "--seed-file"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--seed-file requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    seedFilePath = args(i)
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        ' merch_migrator, same identity as migrate/create-user/seed-demo -
+        ' seeding is a host-side bootstrap operation, not something the API
+        ' does for itself.
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Dim resolvedSeedFilePath As String =
+            If(seedFilePath,
+               Path.Combine(Directory.GetCurrentDirectory(), "db", "seed", DefaultSeedFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+            Dim factory As New ConnectionFactory(options)
+
+            Console.WriteLine($"Seeding from '{resolvedSeedFilePath}'...")
+
+            Dim result As SeedResult = Await SeedCommand.RunAsync(factory, resolvedSeedFilePath)
+
+            PrintSeedResult(result)
+
+            If result.UsersCreated.Count > 0 Then
+                Dim credentialPath As String =
+                    Path.Combine(Path.GetDirectoryName(resolvedConfigPath), CredentialRecordFileName)
+                AppendSeededCredentials(credentialPath, result.UsersCreated)
+                Console.WriteLine($"New account credentials appended to '{credentialPath}'.")
+            End If
+
+            Environment.ExitCode = 0
+
+        Catch ex As SeedCommandException
+
+            Console.Error.WriteLine($"seed failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        Catch ex As MySqlException
+
+            Console.Error.WriteLine($"seed failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    Private Sub PrintSeedResult(result As SeedResult)
+
+        Console.WriteLine($"  categories  {result.CategoriesCreated} created, {result.CategoriesSkipped} already present")
+        Console.WriteLine($"  brands      {result.BrandsCreated} created, {result.BrandsSkipped} already present")
+        Console.WriteLine($"  units       {result.UnitsCreated} created, {result.UnitsSkipped} already present")
+        Console.WriteLine($"  products    {result.ProductsCreated} created, {result.ProductsSkipped} already present")
+        Console.WriteLine($"  suppliers   {result.SuppliersCreated} created, {result.SuppliersSkipped} already present")
+        Console.WriteLine($"  accounts    {result.UsersCreated.Count} created, {result.UsersSkipped} already present")
+
+        If result.UsersCreated.Count = 0 Then
+            Console.WriteLine("  No new accounts - already seeded.")
+            Return
+        End If
+
+        Console.WriteLine("")
+        Console.WriteLine("  NEW ACCOUNT CREDENTIALS - shown once, never printed again:")
+        For Each credential As SeededUserCredential In result.UsersCreated
+            Console.WriteLine($"    {credential.RoleName,-20} {credential.Username,-20} {credential.Password}")
+        Next
+
+    End Sub
+
+    ''' <summary>
+    ''' Appends to the same credential record bootstrap.ps1's step 4 already
+    ''' writes for the three database identities, so an operator has exactly
+    ''' one file to read instead of two. Created fresh when run outside
+    ''' bootstrap.ps1 (a standalone "dotnet run -- seed").
+    ''' </summary>
+    Private Sub AppendSeededCredentials(credentialPath As String, created As IReadOnlyList(Of SeededUserCredential))
+
+        Dim builder As New StringBuilder()
+        builder.AppendLine()
+        builder.AppendLine("Merchandising System - seeded application accounts")
+        builder.AppendLine($"Generated {Date.UtcNow:u} by Merchandising.Maintenance seed on {Environment.MachineName}")
+        builder.AppendLine()
+        builder.AppendLine("These accounts log into the API/clients directly - they are not database")
+        builder.AppendLine("identities. Generated for THIS installation; not known to the author (ADR-012")
+        builder.AppendLine("requirement 6). Re-running seed never reprints or changes them.")
+        builder.AppendLine()
+        For Each credential As SeededUserCredential In created
+            builder.AppendLine($"  {credential.RoleName,-20} {credential.Username,-20} {credential.Password}")
+        Next
+        builder.AppendLine()
+        builder.AppendLine("Do not copy this file into the repository, an email, or a chat message.")
+
+        File.AppendAllText(credentialPath, builder.ToString())
+
+    End Sub
 
     Private Async Function RunCreateUserAsync(args As String()) As Task
 
