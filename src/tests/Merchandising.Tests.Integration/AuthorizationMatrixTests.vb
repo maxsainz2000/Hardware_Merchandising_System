@@ -43,6 +43,7 @@ Imports Merchandising.Contracts.Auth
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Maintenance
+Imports Merchandising.Contracts.Settings
 Imports Merchandising.Domain.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Users
@@ -71,7 +72,8 @@ Public Class AuthorizationMatrixTests
     ''' </summary>
     Private Shared ReadOnly AuthenticatedNoPolicyAllowlist As String() = {
         "Merchandising.Api.Controllers.AuthController.GetCurrentUser",
-        "Merchandising.Api.Controllers.AuthController.Logout"
+        "Merchandising.Api.Controllers.AuthController.Logout",
+        "Merchandising.Api.Controllers.SystemSettingsController.GetSettings"
     }
 
     Private Shared ReadOnly AllFiveRoles As String() = {
@@ -277,6 +279,38 @@ Public Class AuthorizationMatrixTests
             Using anonymousResponse As HttpResponseMessage =
                 Await SendAsync(client, HttpMethod.Post, "/api/v1/inventory/stock/decrement", token:=Nothing, requestBody:=anonymousBody)
                 Await AssertUnauthenticatedAsync("Adjustments.Request", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P2-05's SystemSettings write endpoint - Configuration.Manage's first live endpoint.</summary>
+    <TestMethod>
+    Public Async Function ConfigurationManage_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.ConfigurationManage)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+                Dim body As New UpdateSystemSettingRequest With {.Value = "PHP"}
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Put, "/api/v1/admin/settings/currency.code", token, body)
+                    Await AssertCellAsync("Configuration.Manage", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Dim anonymousBody As New UpdateSystemSettingRequest With {.Value = "PHP"}
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Put, "/api/v1/admin/settings/currency.code", token:=Nothing, requestBody:=anonymousBody)
+                Await AssertUnauthenticatedAsync("Configuration.Manage", anonymousResponse)
             End Using
 
         End Using

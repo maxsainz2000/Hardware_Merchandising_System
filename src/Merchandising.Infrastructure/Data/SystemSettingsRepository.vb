@@ -79,6 +79,65 @@ Namespace Data
 
         End Function
 
+        ''' <summary>
+        ''' P2-05: reads one setting's current value inside the caller's
+        ''' transaction, locking the row (or the gap, if absent) with
+        ''' <c>FOR UPDATE</c> so a concurrent write cannot change the value
+        ''' between this read and the caller's own upsert - the "previous
+        ''' value" an audit row records must be the value this write
+        ''' actually replaced, not a stale read from before a race.
+        ''' </summary>
+        ''' <returns>Nothing if the key has never been written.</returns>
+        Public Shared Async Function ReadForUpdateAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            settingKey As String,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of String)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT SettingValue FROM SystemSettings WHERE SettingKey = @settingKey FOR UPDATE;"
+                command.Parameters.AddWithValue("@settingKey", settingKey)
+
+                Dim value As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                Return If(value Is Nothing OrElse value Is DBNull.Value, Nothing, CStr(value))
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P2-05: writes one setting's value, inserting a new row or
+        ''' updating the existing one in a single statement - never
+        ''' read-then-write, the same discipline CLAUDE.md section 5
+        ''' requires of every conditional stock update, applied here to
+        ''' avoid a lost-update race between two concurrent administrators.
+        ''' Participates in the caller's transaction so the value change and
+        ''' the audit row it is paired with commit or roll back together.
+        ''' </summary>
+        Public Shared Async Function UpsertAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            settingKey As String,
+            settingValue As String,
+            updatedByUserId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "INSERT INTO SystemSettings (SettingKey, SettingValue, UpdatedAtUtc, UpdatedByUserId) " &
+                    "VALUES (@settingKey, @settingValue, UTC_TIMESTAMP(6), @updatedByUserId) " &
+                    "ON DUPLICATE KEY UPDATE " &
+                    "SettingValue = VALUES(SettingValue), UpdatedAtUtc = VALUES(UpdatedAtUtc), UpdatedByUserId = VALUES(UpdatedByUserId);"
+                command.Parameters.AddWithValue("@settingKey", settingKey)
+                command.Parameters.AddWithValue("@settingValue", settingValue)
+                command.Parameters.AddWithValue("@updatedByUserId", updatedByUserId)
+
+                Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+            End Using
+
+        End Function
+
     End Class
 
 End Namespace

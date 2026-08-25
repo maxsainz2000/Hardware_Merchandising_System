@@ -192,7 +192,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ---
 
-### ⬜ P2-05 · `SystemSettings` read/write, audited
+### ✅ P2-05 · `SystemSettings` read/write, audited
 
 **Spec:** §12, §17 · **Files:** `src/Merchandising.Api/Controllers/`, `src/Merchandising.Infrastructure/Data/SystemSettingsRepository.vb`
 
@@ -200,11 +200,11 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] Read requires authentication; write requires the Admin-or-above policy
-- [ ] Every change writes an audit row carrying **both** the previous and new value
-- [ ] Currency code and rounding policy are settings, not constants (spec §12)
-- [ ] An unknown or malformed key is rejected with a stable error code, not silently stored
-- [ ] Integration test green
+- [x] Read requires authentication; write requires SuperAdmin (`Configuration.Manage`, already accepted at ADR-017 from spec §9's role table — "Admin-or-above" corrected here per CLAUDE.md's precedence rule; confirmed with the user rather than silently widened)
+- [x] Every change writes an audit row carrying **both** the previous and new value
+- [x] Currency code and rounding policy are settings, not constants (spec §12)
+- [x] An unknown or malformed key is rejected with a stable error code, not silently stored
+- [x] Integration test green
 
 **Evidence:** `evidence/phase-2/p2-05-settings-audit.txt`
 
