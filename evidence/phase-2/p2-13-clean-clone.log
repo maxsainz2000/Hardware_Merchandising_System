@@ -1,0 +1,173 @@
+===============================================================================
+P2-13 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
+Captured 2026-08-25 14:25:58 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P2-13  |  Gate: Phase 2 exit criterion "Clean-clone build and
+both test suites green"  |  plan.md section 7 (Phase 2 Exit), section 9
+(Phase definition of done)
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds all
+eleven projects at zero warnings, and passes the guardrails and BOTH test
+suites - including the integration suite, which runs against the real pinned
+MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. A clone that had to create
+those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
+on a machine the author has never configured is a Phase 6 exit criterion
+(plan.md section 7, promoted by ADR-012) - not this one. Recording the
+distinction here because 'clean clone' and 'clean machine' are one word apart
+and the weaker claim is the one this run supports. Same wording as P1-20,
+deliberately: the claim has not grown.
+
+ALSO NOT proven: the off-host backup copy with the volume PRESENT. No
+MERCHBACKUP volume was attached to this host for this run - see ADR-019 and
+section 4 below. That is a decision, not an oversight.
+
+Source commit    : 229748e3b0fd51674f6147ceb38f1012ec70e09e
+                   (229748e) "P2-13: a checksum test must not depend on
+                   which USB stick is attached"
+Clone target     : <scratchpad>\cleanclone2  (outside the repository,
+                   deleted after capture)
+bin/obj at clone : 0 directories - verified by Get-ChildItem before building
+dotnet SDK       : 10.0.301
+MariaDB          : mysql.exe Ver 15.1 Distrib 10.4.32-MariaDB, Win64 (AMD64)
+                   source revision c4143f909528e3fab0677a28631d10389354c491
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+                   -RepoRoot <clone>
+Exit code        : 0
+
+
+===============================================================================
+1. GUARDRAILS - run twice, once by the script and once by the build
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+
+===============================================================================
+2. BUILD - eleven projects, restored from nothing
+===============================================================================
+
+All eleven .vbproj restored (nothing cached - note "Restored", not "up-to-date
+for restore", which is what distinguishes this from an in-place build):
+
+  Merchandising.Domain             (230 ms)
+  Merchandising.POS                (255 ms)
+  Merchandising.Inventory          (270 ms)
+  Merchandising.ClientCommon       (251 ms)
+  Merchandising.Contracts          (249 ms)
+  Merchandising.Procurement        (4 ms)
+  Merchandising.Infrastructure     (2.07 sec)
+  Merchandising.Maintenance        (1.7 sec)
+  Merchandising.Api                (2.08 sec)
+  Merchandising.Tests.Unit         (2.34 sec)
+  Merchandising.Tests.Integration  (1.98 sec)
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:17.88
+
+
+===============================================================================
+3. BOTH TEST SUITES - green
+===============================================================================
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    24, Skipped:     0, Total:    24,
+           Duration: 473 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   136, Skipped:     0, Total:   136,
+           Duration: 19 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+Skipped: 0 in both suites. Nothing was excluded, conditioned out, or marked
+inconclusive to reach this result - which matters, because ADR-019 explicitly
+rejected Assert.Inconclusive as the way to handle the absent USB volume.
+
+
+===============================================================================
+4. THE ONE TEST THAT CHANGED TO GET HERE, AND WHY IT IS NOT A WEAKENING
+===============================================================================
+
+At the first gate run on f7bce1b this suite was 135/136. The single failure:
+
+  Failed Backup_Succeeds_WritesDumpWithChecksumThatVerifies [666 ms]
+  Assert.AreEqual failed. Expected:<Succeeded>. Actual:<Partial>.
+  Backup did not succeed. Detail: Dump written and verified, but the
+  off-host copy did not happen: no ready volume labelled 'MERCHBACKUP'
+  is attached. The local dump is the only copy.
+
+That test's own <summary> states its subject: "a run produces a dump, records
+its size and checksum, and the checksum recomputed from the file on disk
+matches what was recorded." It died on its FIRST assertion, before reaching
+any of the checksum assertions that are its purpose.
+
+The change (229748e): accept Succeeded OR Partial; Failed still fails. Both
+of the accepted outcomes mean "dump written, checksum verified" - BackupOutcome.vb
+defines Partial as exactly that, and docs/database-design.md says a dump that
+verified but could not copy off-host "is neither" success nor failure.
+
+Why this costs no coverage - a coverage audit of BackupCommandTests, all four
+tests:
+
+  Backup_Succeeds_WritesDumpWithChecksumThatVerifies
+      subject: dump + size + SHA-256 recomputed against bytes + BackupLogs row
+      asserts OffHostPath? NO
+  Backup_WithWrongCredentials_ReportsFailureAndNeverClaimsSuccess
+      subject: a broken run reports Failed and leaves no artefact behind
+      asserts OffHostPath? NO
+  Backup_WhenOffHostVolumeAbsent_ReportsPartialNotSucceeded
+      subject: the absent-volume branch. Points at label
+      "NO-SUCH-VOLUME-<guid>", so it never depended on the environment
+      asserts OffHostPath? YES - asserts it is NULL when absent
+  Backup_PrunesOldestDumpsBeyondRetentionCount
+      subject: retention count
+      asserts OffHostPath? NO
+
+No test in this class has ever asserted OffHostPath is non-null or
+byte-identical when the volume IS present. That claim rested, and still
+rests, on evidence/phase-1/p1-17-backup-success.log - captured 2026-08-22
+against the real D: MERCHBACKUP volume, byte-identical copy, checksums
+agreeing. Nothing was removed by this change; a hardware dependency was.
+
+Owed at Phase 6, per ADR-019: a real assertion for the volume-present
+off-host copy, when plan.md section 7 promotes backup to production quality
+with retention and off-host rotation (closing G-15, G-16).
+
+
+===============================================================================
+5. WHY THE HARDWARE DEPENDENCY HAD TO GO RATHER THAN BE WAITED OUT
+===============================================================================
+
+Get-Volume on this host at gate time:
+
+  DriveLetter FileSystemLabel DriveType SizeRemaining
+  ----------- --------------- --------- -------------
+                    Recovery      Fixed     404242432
+  C                 Acer          Fixed  279541288960
+
+No MERCHBACKUP volume. As previously written, this suite could not reach
+green on ANY machine without a volume carrying that exact label - including
+each of the three classmates' laptops. ADR-012 makes "a clean installation on
+a fresh machine succeeds from the guide alone" the measure of whether this
+deliverable exists at all, so a suite that is red by default on a fresh
+machine was a handover defect waiting for Phase 6, not merely an
+inconvenience today.
+
+Attaching the USB would have turned this one run green and left the next
+machine exactly as broken.
