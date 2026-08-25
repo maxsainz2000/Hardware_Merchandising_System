@@ -291,7 +291,7 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 ## Track D — Suppliers
 
-### ⬜ P2-10 · Supplier master with the same lifecycle rules
+### ✅ P2-10 · Supplier master with the same lifecycle rules
 
 **Spec:** §10.1, §12 · **Files:** `db/migrations/0007_suppliers.sql`, `db/grants/0009_supplier-grants.sql`, `src/Merchandising.Api/Controllers/SuppliersController.vb`
 
@@ -299,12 +299,12 @@ Only 4 of `PolicyRegistry`'s 29 policies have a live endpoint today (`Diagnostic
 
 **Done when:**
 
-- [ ] Migration + grants applied in that order; lowercase names in the grant file
-- [ ] Duplicate supplier name rejected at both layers, as P2-07
-- [ ] Deactivation preserves references from any existing record
-- [ ] Procurement Officer may maintain suppliers; Cashier may not — asserted in the P2-03 matrix
-- [ ] Every mutation audited
-- [ ] Integration tests green
+- [x] Migration + grants applied in that order; lowercase names in the grant file
+- [x] Duplicate supplier name rejected at both layers, as P2-07
+- [x] Deactivation preserves references from any existing record — proven to the extent a consumer exists this phase (no FK yet: PurchaseOrders is Phase 3); confirmed with the user before implementing
+- [x] Procurement Officer may maintain suppliers; Cashier may not — asserted in the P2-03 matrix
+- [x] Every mutation audited
+- [x] Integration tests green
 
 **Evidence:** `evidence/phase-2/p2-10-suppliers.txt`
 

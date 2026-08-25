@@ -1,0 +1,120 @@
+P2-10 - Supplier master with the same lifecycle rules - evidence
+Captured 2026-08-25, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+=== 0. Baseline ===
+Migrations 0001-0006 applied; 19 tables (see P2-06/P2-09 evidence).
+
+=== 1. Migration 0007_suppliers + grant 0009 - already applied ===
+Both were found already applied against this machine's MariaDB instance
+when this session picked the card back up (files were uncommitted but the
+DB state was not baseline - a prior session had applied them but not
+committed the source or captured evidence). Verified, not re-applied:
+
+$ mysql -u root -e "SHOW TABLES FROM merchandising; SELECT MigrationId, Succeeded FROM merchandising.schemamigrations ORDER BY MigrationId;"
+20 tables (14 baseline + brands, categories, pricehistory, productbarcodes,
+units, suppliers).
+0001_foundation 1 / 0002_authentication 1 / 0003_backup 1 / 0004_maintenance 1
+/ 0005_identity 1 / 0006_product-master 1 / 0007_suppliers 1
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';" | findstr suppliers
+GRANT INSERT, UPDATE ON `merchandising`.`suppliers` TO `merch_api`@`localhost`
+
+=== 3. Shape check ===
+$ mysql -u root -e "DESCRIBE merchandising.suppliers; SHOW INDEX FROM merchandising.suppliers;"
+
+suppliers: Id (PK, auto_increment), Name VARCHAR(255) NOT NULL (UNIQUE:
+UQ_Suppliers_Name), ContactName/Phone/Email/Address (nullable free text),
+IsActive TINYINT(1) DEFAULT 1, RowVersion BIGINT DEFAULT 0, CreatedAtUtc/
+UpdatedAtUtc DATETIME(6).
+
+Indexes: PRIMARY(Id), UQ_Suppliers_Name(Name) - this unique key is also the
+"supplier name" index spec section 12 names and P2-06 deferred to this card
+(P2-06's own done-when box 3: "Supplier name deferred to P2-10").
+
+  [PASS] Migration + grants applied in that order (0007 before 0009,
+         table-exists-first ordering per ADR-013)
+
+=== 4. DELETE is refused for merch_api (append-only-by-default, ADR-013's
+       grant model - Suppliers gets no DELETE grant, ever, same as
+       StockMovements/AuditLogs/PriceHistory) ===
+$ mysql -u merch_api -p merchandising -e "DELETE FROM suppliers;"
+ERROR 1142 (42000) at line 1: DELETE command denied to user 'merch_api'@'localhost' for table `merchandising`.`suppliers`
+
+  [PASS] Deletion is refused by privilege - deactivation is the only
+         removal story, matching Products/PriceHistory precedent
+
+=== 5. Guardrails ===
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== 6. Integration tests - Supplier-specific ===
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~Supplier"
+
+  Passed DeactivateAsync_Success_SetsInactiveAndAudits [396 ms]
+  Passed DeactivateAsync_AlreadyInactive_ReturnsNoChange [21 ms]
+  Passed DeactivateAsync_UnknownSupplier_ReturnsSupplierNotFound [14 ms]
+  Passed ReactivateAsync_Success_RestoresActiveAndAudits_NoDuplicateRow [28 ms]
+  Passed ReactivateAsync_AlreadyActive_ReturnsNoChange [14 ms]
+  Passed DeactivateAsync_Success_SupplierStillResolvesById [18 ms]
+  Passed SearchSuppliers_DefaultExcludesInactive_IncludeInactiveShowsIt [725 ms]
+  Passed DeactivateThenReactivate_ThroughHttp_BothSucceed [265 ms]
+  Passed Create_ThenGet_ThenUpdate_RoundTrips [272 ms]
+  Passed CreateSupplier_DuplicateName_RejectedWithStableErrorCodeAndFieldDetail [193 ms]
+  Passed InsertAsync_TwoConcurrentInsertsSameName_ExactlyOneSucceeds [23 ms]
+  Passed CreateSupplier_Success_WritesAuditRow [188 ms]
+  Passed UpdateSupplier_Success_WritesAuditRow [193 ms]
+  Passed GetSupplier_UnknownId_ReturnsControlled404 [154 ms]
+  Passed SearchSuppliers_ByName_FindsIt [170 ms]
+  Passed CreateSupplier_AsProcurementOfficer_Succeeds [154 ms]
+  Passed CreateSupplier_AsCashier_Refused403 [149 ms]
+
+Total tests: 17, Passed: 17, Failed: 0
+
+  [PASS] Duplicate name rejected at API layer (409 DUPLICATE_SUPPLIER_NAME,
+         field-level detail) AND at DB layer under real concurrent-insert
+         race (InsertAsync_TwoConcurrentInsertsSameName_ExactlyOneSucceeds:
+         exactly one Success, one DuplicateName, no unhandled exception)
+  [PASS] Deactivation preserves references: row never deleted, still
+         resolves by Id after deactivation (no FK exists yet to prove the
+         cross-table half - PurchaseOrders is Phase 3; confirmed with the
+         user before implementing, see SupplierLifecycleTests.vb header)
+  [PASS] Reactivation restores availability without duplicating the row
+         (CountSupplierRowsForNameAsync = 1 after deactivate+reactivate)
+  [PASS] Procurement Officer succeeds (201), Cashier refused (403) -
+         Suppliers.Manage policy, ProcurementAndAbove, already registered
+         in PolicyRegistry ahead of this card
+  [PASS] Every mutation audited: SupplierCreated, SupplierUpdated,
+         SupplierDeactivated, SupplierReactivated all proven via
+         AuditLogs row count = 1 keyed on CorrelationId + Action
+
+=== 7. Full suite (unit + integration) ===
+$ pwsh ./scripts/run-tests.ps1
+
+Unit tests: Passed: 24, Failed: 0
+Integration tests: Passed: 130, Failed: 1, Total: 131
+
+The one failure, Backup_Succeeds_WritesDumpWithChecksumThatVerifies, is
+pre-existing and unrelated to this card - introduced at P1-17 (commit
+3376969, 2026-08-22, three days before this session). It fails because no
+USB volume labelled MERCHBACKUP is attached to this machine right now
+(Detail: "Dump written and verified, but the off-host copy did not happen:
+no ready volume labelled 'MERCHBACKUP' is attached") - an environment
+precondition, not a code defect, and not touched by any file this card
+changed. All 17 Supplier tests pass (section 6 above); the other 113
+non-Supplier integration tests unaffected by this card also pass.
+
+=== Summary ===
+  [PASS] Migration + grants applied in order, lowercase names in grant file
+  [PASS] Duplicate supplier name rejected at both layers
+  [PASS] Deactivation preserves references (to the extent a consumer exists
+         this phase - no FK yet, Phase 3's PurchaseOrders is the real proof)
+  [PASS] Procurement Officer may maintain suppliers; Cashier may not
+  [PASS] Every mutation audited
+  [PASS] Integration tests green (Supplier-specific: 17/17; one unrelated
+         pre-existing environmental failure in the full suite, documented
+         above)

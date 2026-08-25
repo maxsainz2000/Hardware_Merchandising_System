@@ -258,6 +258,9 @@ Public Module Program
         ' P2-09: deactivate/reactivate (Products + audit, atomically).
         builder.Services.AddScoped(Of ProductLifecycleService)()
 
+        ' P2-10: deactivate/reactivate (Suppliers + audit, atomically) - same shape as ProductLifecycleService above.
+        builder.Services.AddScoped(Of SupplierLifecycleService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()
