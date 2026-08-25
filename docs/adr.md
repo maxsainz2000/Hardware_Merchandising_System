@@ -714,9 +714,6 @@ Rules 1 and 2 are the general case. Rule 3 alone would have fixed this bug and l
 
 ---
 
-## Template for new entries
-
-```markdown
 ## ADR-015 · Demo network topology — the host is the access point
 
 **Status:** ACCEPTED
@@ -890,6 +887,43 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 
 ---
 
+## ADR-019 · A checksum test must not depend on which USB stick is attached
+
+**Status:** ACCEPTED
+**Date:** 2026-08-25
+**Decides:** whether `Backup_Succeeds_WritesDumpWithChecksumThatVerifies` may demand `BackupOutcome.Succeeded`, and where the volume-*present* off-host copy assertion is owed. Raised at the Phase 2 exit gate, which this test was the sole blocker of on the test-suite criterion.
+
+**Decision.**
+
+1. **The test accepts `Succeeded` or `Partial`.** Both mean "dump written, checksum verified"; they differ only in whether the off-host copy happened. `Failed` still fails the test — no usable dump was produced and none of the assertions that follow could hold.
+2. **The volume-present off-host copy is artifact-backed, not assertion-backed**, and a real assertion is owed when **Phase 6** promotes backup to production quality with retention and off-host rotation (`plan.md` §7, closing G-15/G-16). Recorded here as an explicit debt rather than left implicit.
+3. **Phase 2 closes with no `MERCHBACKUP` volume attached to the host.** That is a deliberate decision, not an oversight, and this entry is where a reader finds out.
+
+**Reasoning.** Measured at the gate, not argued from preference.
+
+- **The failure was reproduced, not read from a log.** `pwsh ./scripts/run-tests.ps1` on `f7bce1b`: guardrails pass, 10 projects at 0 warnings / 0 errors, 24/24 unit, **135/136 integration**. The single failure was this test, and it died at its *first* assertion — `Expected:<Succeeded>. Actual:<Partial>` — before reaching a single one of the checksum assertions that are its purpose.
+- **The test's subject is not the off-host copy.** Its own `<summary>` says so: *"a run produces a dump, records its size and checksum, and the checksum recomputed from the file on disk matches what was recorded."* Its assertions are the dump file, the `MariaDB dump` header, the `Database: merchandising` line, the `-- Dump completed` truncation marker, the recomputed SHA-256, and the `BackupLogs` row. Off-host copy is incidental to all of it.
+- **`Partial` is a designed outcome, not a degraded pass.** `BackupOutcome.vb` defines it as *"Dump written and verified; off-host copy did not happen"*, and `docs/database-design.md` §`BackupLogs` states the rule directly: `Result` is `Succeeded`/`Partial`/`Failed`, *"not a boolean — a dump that verified but could not copy off-host is neither."* Demanding `Succeeded` in a checksum test contradicted the project's own three-valued model.
+- **A coverage audit of `BackupCommandTests` decided it.** The class has four tests. **None** asserts `OffHostPath` is non-null or byte-identical when the volume *is* present — that claim has always rested on `evidence/phase-1/p1-17-backup-success.log` (real `D:`, byte-identical copy, checksums agree), never on an assertion. So this relaxation costs **zero** assertion coverage; it removes a hardware dependency and nothing else.
+- **The absent branch stays covered, environment-independently.** `Backup_WhenOffHostVolumeAbsent_ReportsPartialNotSucceeded` points at a deliberately nonexistent label (`NO-SUCH-VOLUME-<guid>`) and so has never depended on what is plugged in. It passes today and is untouched.
+- **Portability is the part that would have bitten later.** As written, this suite could not go green on *any* machine without a volume labelled `MERCHBACKUP` — including a classmate's laptop. ADR-012 makes "a clean installation on a fresh machine succeeds from the guide alone" the measure of whether the deliverable exists at all, and a red suite on every fresh machine is squarely against that.
+
+**Rejected.**
+
+- **Attach the USB and re-run.** Closes this one run and does nothing for the next machine; the same failure recurs on every host without the stick. It treats the symptom.
+- **Defer by ADR in the ADR-016 shape** — carry the failing test forward to a later gate. More ceremony for a weaker result: it leaves a permanently red suite that every future gate has to re-explain, and it mislabels a miswired test as an unproven claim. ADR-016 deferred things that were genuinely *unproven* (three unsurveyed workstations, a network never brought up cold). This is not that.
+- **`Assert.Inconclusive` when no volume is attached.** MSTest reports inconclusive as neither pass nor fail. A suite that silently skips its checksum verification on most machines is worse than one that asserts everything it can — it would have hidden a real checksum regression behind a hardware condition.
+- **Delete the test.** The checksum-recomputed-against-the-bytes-on-disk assertion is the entire point of P1-17: *"A checksum that is merely stored proves nothing — it has to be checked against the bytes."*
+
+**What this does NOT prove, stated plainly.** That the off-host copy works when the volume is present. That remains evidenced only by `evidence/phase-1/p1-17-backup-success.log`, captured 2026-08-22 against the real `D:` volume. Phase 6 owes it an assertion.
+
+**Evidence.** `evidence/phase-2/p2-13-clean-clone.log` (the green run this unblocked), `evidence/phase-1/p1-17-backup-success.log` (the artifact the off-host claim now rests on).
+
+---
+
+## Template for new entries
+
+```markdown
 ## ADR-NNN · Short title
 
 **Status:** PENDING | ACCEPTED | SUPERSEDED by ADR-MMM

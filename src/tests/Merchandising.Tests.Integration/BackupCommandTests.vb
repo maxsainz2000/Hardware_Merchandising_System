@@ -76,8 +76,26 @@ Public Class BackupCommandTests
 
         Dim result As BackupResult = Await RunBackupAsync(BackupSettingsForTest(retentionCount:=5))
 
-        Assert.AreEqual(BackupOutcome.Succeeded, result.Outcome,
-                        $"Backup did not succeed. Detail: {result.Detail}")
+        ' Succeeded and Partial both mean "dump written, checksum verified".
+        ' They differ only in whether the off-host copy happened, and that is
+        ' a property of which USB stick is plugged into this desk, not of the
+        ' code under test. Asserting Succeeded here made a CHECKSUM test fail
+        ' on any machine without a volume labelled MERCHBACKUP attached - it
+        ' died on this line before reaching a single one of the assertions
+        ' below that are the actual point of the test. Failed is still a
+        ' failure: no usable dump was produced, and none of what follows
+        ' could hold.
+        '
+        ' Nothing is lost by not demanding Succeeded here. The absent-volume
+        ' branch is asserted by Backup_WhenOffHostVolumeAbsent_ReportsPartial-
+        ' NotSucceeded, which points at a deliberately nonexistent label and
+        ' so never depended on the environment. The volume-PRESENT off-host
+        ' copy was never asserted by any test in this class - it is evidenced
+        ' at evidence/phase-1/p1-17-backup-success.log (real D:, byte-
+        ' identical, checksums agree) and is owed a real assertion when Phase
+        ' 6 promotes backup to production quality. See ADR-019.
+        Assert.IsTrue(result.Outcome = BackupOutcome.Succeeded OrElse result.Outcome = BackupOutcome.[Partial],
+                      $"Backup produced no usable dump. Outcome: {result.Outcome}. Detail: {result.Detail}")
 
         Assert.IsTrue(File.Exists(result.FilePath), "Dump file was reported but does not exist.")
         Assert.IsGreaterThan(0L, result.SizeBytes.Value, "Dump file is empty.")
