@@ -1,0 +1,186 @@
+P3-06 - purchase history and order tracking - acceptance evidence
+Captured 2026-08-27 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0), over real HTTP through MerchandisingApiFactory.
+Nothing below is quoted from a design document; every figure is a
+measurement.
+
+Endpoint added:
+  GET /api/v1/purchase-orders/history   PurchaseOrders.Track (same policy as
+                                         the plain list - an extra READ shape
+                                         of the same operation, not a new one)
+
+P3-03's own PurchaseOrderSummaryResponse.vb header explicitly reserved this
+card's ground: "NOT here: ordered value, outstanding quantity, or any other
+aggregate... belong to P3-06". This card is therefore a new response type
+(PurchaseOrderHistoryItemResponse) and a new route, never an extension of
+GET /api/v1/purchase-orders's existing shape.
+
+
+===============================================================================
+1. Full verification pass - whole repository
+===============================================================================
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    0 Warning(s)
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  37, Skipped: 0, Total:  37 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 208, Skipped: 0, Total: 208 - Merchandising.Tests.Integration.dll (net10.0)
+
+Integration count moved 200 -> 208: 8 new PurchaseOrderHistoryTests.
+PurchaseOrdersTrack_MatrixMatchesPolicyRegistry (AuthorizationMatrixTests.vb)
+was EXTENDED in place with a history cell per role plus an anonymous cell,
+rather than a new test method - PurchaseOrders.Track is one policy gating
+two routes now, the same test already iterates all five roles once.
+
+
+===============================================================================
+2. Routing: /history does not collide with /{id}
+===============================================================================
+
+GET /api/v1/purchase-orders/{id} (P3-03) and GET /api/v1/purchase-orders/history
+(this card) sit at the same path depth. ASP.NET Core's attribute routing
+prefers a literal segment over a parameter placeholder at the same position
+regardless of declaration order - not assumed here, proven directly:
+GetPurchaseOrderHistory_OrderedQuantityAndValue_ComputedServerSide (below)
+hits GET /purchase-orders/history and gets a 200 with the aggregate shape,
+never a 404 or an Id-parse failure from a wrongly-matched {id} route.
+
+
+===============================================================================
+3. Done-when box 1 - server-computed ordered/received/outstanding
+   quantity and value, never trusted from the client
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_OrderedQuantityAndValue_ComputedServerSide"
+  Passed GetPurchaseOrderHistory_OrderedQuantityAndValue_ComputedServerSide [1 s]
+
+Two lines (3.000 @ 10.0000, 5.000 @ 4.5000) sum server-side to
+OrderedQuantity=8.000, OrderedValue=52.5000 (30.0000 + 22.5000) - the client
+sent only the two lines, never a total.
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_PartiallyReceivedLine_ReflectsReceivedAndOutstanding"
+  Passed GetPurchaseOrderHistory_PartiallyReceivedLine_ReflectsReceivedAndOutstanding [304 ms]
+
+A line ordered 10.000 @ 2.0000, with 4.000 forced-received (standing in for
+Phase 4's receiving endpoint, which does not exist yet): ReceivedQuantity=4.000,
+ReceivedValue=8.0000 (the captured order-time cost, not a later one),
+OutstandingQuantity=6.000.
+
+Measured directly against the database - three real orders from this
+evidence-capture run, using the EXACT SQL shape SearchHistoryAsync runs
+(CAST to each column's own storage scale, ADR-004):
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT o.Id, o.OrderNumber, o.Status,
+           CAST(COALESCE(SUM(l.OrderedQuantity), 0) AS DECIMAL(19,3)) AS OrderedQuantity,
+           CAST(COALESCE(SUM(l.OrderedQuantity * l.PurchaseCost), 0) AS DECIMAL(19,4)) AS OrderedValue,
+           CAST(COALESCE(SUM(l.ReceivedQuantity), 0) AS DECIMAL(19,3)) AS ReceivedQuantity,
+           CAST(COALESCE(SUM(l.ReceivedQuantity * l.PurchaseCost), 0) AS DECIMAL(19,4)) AS ReceivedValue,
+           CAST(COALESCE(SUM(l.OrderedQuantity - l.ReceivedQuantity), 0) AS DECIMAL(19,3)) AS OutstandingQuantity
+      FROM purchaseorders o JOIN suppliers s ON s.Id = o.SupplierId
+      LEFT JOIN purchaseorderlines l ON l.PurchaseOrderId = o.Id
+     WHERE s.Name LIKE 'P3-06 Supplier%'
+     GROUP BY o.Id, o.OrderNumber, o.Status ORDER BY o.Id DESC LIMIT 3;"
+
+Id    OrderNumber       Status  OrderedQuantity  OrderedValue  ReceivedQuantity  ReceivedValue  OutstandingQuantity
+2920  PO-20260827-0489  Draft   1.000            1.0000        0.000             0.0000         1.000
+2919  PO-20260827-0488  Draft   1.000            1.0000        0.000             0.0000         1.000
+2918  PO-20260827-0487  Draft   1.000            1.0000        0.000             0.0000         1.000
+
+Scale matches PurchaseOrderHistoryItemResponse exactly: quantities at 3
+decimal places, values at 4 - the CAST is what enforces that, not an
+accident of MariaDB's default arithmetic widening (an un-CAST SUM on the
+same rows returns "1.0000000", 7 decimal places - measured separately,
+confirming the CAST is load-bearing, not decorative).
+
+
+===============================================================================
+4. Done-when box 2 - a cancelled order appears in history, labelled
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_CancelledOrder_AppearsLabelledNotExcluded"
+  Passed GetPurchaseOrderHistory_CancelledOrder_AppearsLabelledNotExcluded [291 ms]
+
+Cancels a fresh order, then reads history unfiltered by status: the order is
+still present, Status = "Cancelled" - never excluded by default. The status
+filter itself stays opt-in, exactly like GET /api/v1/purchase-orders already
+works.
+
+
+===============================================================================
+5. Done-when box 3 - date boundaries in the store time zone, stated in the
+   response
+===============================================================================
+
+StoreTimeZone (Merchandising.Domain) pins Asia/Manila. Measured before any
+code depended on it:
+
+  [TimeZoneInfo]::FindSystemTimeZoneById("Asia/Manila")
+  -> Id=Asia/Manila, BaseUtcOffset=08:00:00
+  AdjustmentRules count: 0, SupportsDaylightSavingTime: False
+
+.NET's ICU-based globalization (default since .NET 5, including Windows)
+resolves the IANA id directly; the older NLS-only path would have needed the
+Windows id "Singapore Standard Time" instead. Asia/Manila observes no DST,
+confirmed rather than assumed, so BaseUtcOffset is the offset for every
+calendar date - no seasonal transition to special-case.
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_DateRangeFilter_StoreLocalBoundaries"
+  Passed GetPurchaseOrderHistory_DateRangeFilter_StoreLocalBoundaries [289 ms]
+
+An order created "now" is included by a fromDate=toDate=today window,
+excluded by a window starting tomorrow, and excluded by a window ending
+yesterday - all computed from the actual store-local calendar date at test
+time, not a hardcoded date.
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_NoDateFilters_EchoesUnboundedRange"
+  Passed GetPurchaseOrderHistory_NoDateFilters_EchoesUnboundedRange [198 ms]
+
+No fromDate/toDate supplied -> response.FromDate and response.ToDate are
+both null (never silently defaulted to "today" or any other implicit
+window), response.TimeZone is "Asia/Manila" regardless - the zone is always
+stated, even when the range is unbounded.
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_MalformedFromDate_Refused400"
+  Passed GetPurchaseOrderHistory_MalformedFromDate_Refused400 [189 ms]
+-> 400 VALIDATION_FAILED, field "fromDate", for a non-yyyy-MM-dd value.
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_FromDateAfterToDate_Refused400"
+  Passed GetPurchaseOrderHistory_FromDateAfterToDate_Refused400 [191 ms]
+-> 400 VALIDATION_FAILED, field "toDate", when toDate precedes fromDate.
+
+
+===============================================================================
+6. Done-when box 4 - pagination and max page size consistent with P3-03
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~GetPurchaseOrderHistory_PaginationMatchesP3_03Contract"
+  Passed GetPurchaseOrderHistory_PaginationMatchesP3_03Contract [304 ms]
+
+Same defaults (page=1, pageSize=25), same clamp (oversized pageSize clamped
+to MaxPageSize=100, never honoured), same no-overlap-between-pages guarantee
+- reusing PurchaseOrderRepository.OrderByClause's existing Id tie-break, the
+identical mechanism P3-03's own SearchAsync already relies on.
+
+
+===============================================================================
+7. Done-when box 5 - matrix suite extended, PurchaseOrders.Track positive
+   and negative cells
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~PurchaseOrdersTrack_MatrixMatchesPolicyRegistry"
+  Passed PurchaseOrdersTrack_MatrixMatchesPolicyRegistry [1 s]
+
+Extended in place (not a new test method): every role now also probes
+GET /purchase-orders/history alongside the existing list/by-id cells, plus a
+new anonymous-caller 401 cell for /history. PurchaseOrders.Track is
+ProcurementAndAbove (SuperAdmin, Admin, ProcurementOfficer allowed;
+InventoryClerk, Cashier refused 403) - unchanged from P3-03, since this card
+adds a route to an existing policy rather than a new one.

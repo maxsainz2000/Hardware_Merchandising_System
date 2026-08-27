@@ -41,6 +41,7 @@
 ' the user at P3-03.
 
 Imports System.Collections.Generic
+Imports System.Globalization
 Imports System.Linq
 Imports System.Security.Claims
 Imports System.Threading.Tasks
@@ -233,6 +234,112 @@ Namespace Controllers
                 .PageSize = effectivePageSize,
                 .MaxPageSize = MaxPageSize,
                 .Sort = CanonicalSort(sortField, sortDescending)
+            })
+
+        End Function
+
+        ''' <summary>
+        ''' P3-06: spec section 14's purchase-order history report surface -
+        ''' PurchaseOrders.Track, the same policy the plain list uses (this is
+        ''' an extra READ shape of the same operation, not a new one). Adds
+        ''' fromDate/toDate to the plain list's filters, and returns
+        ''' server-computed ordered/received/outstanding aggregates per order
+        ''' instead of just headers - PurchaseOrderSummaryResponse's own
+        ''' header explains why those aggregates do not live on the plain
+        ''' list endpoint instead.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.PurchaseOrdersTrack)>
+        <HttpGet("history")>
+        Public Async Function GetPurchaseOrderHistory(
+            <FromQuery> Optional supplierId As Integer? = Nothing,
+            <FromQuery> Optional status As String = Nothing,
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing,
+            <FromQuery> Optional page As Integer = 1,
+            <FromQuery> Optional pageSize As Integer = DefaultPageSize) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim statusFilter As DomainProcurement.PurchaseOrderStatus? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(status) Then
+
+                Dim parsedStatus As DomainProcurement.PurchaseOrderStatus
+
+                If TryParseStatusName(status, parsedStatus) Then
+                    statusFilter = parsedStatus
+                Else
+                    fieldErrors("status") = {
+                        "Unknown purchase-order status. Valid values are " & String.Join(", ", StatusNames()) & "."}
+                End If
+
+            End If
+
+            Dim fromLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(fromDate) Then
+                Dim parsedFromDate As DateOnly
+                If DateOnly.TryParseExact(fromDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedFromDate) Then
+                    fromLocalDate = parsedFromDate
+                Else
+                    fieldErrors("fromDate") = {"fromDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            Dim toLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(toDate) Then
+                Dim parsedToDate As DateOnly
+                If DateOnly.TryParseExact(toDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedToDate) Then
+                    toLocalDate = parsedToDate
+                Else
+                    fieldErrors("toDate") = {"toDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            If fromLocalDate.HasValue AndAlso toLocalDate.HasValue AndAlso fromLocalDate.Value > toLocalDate.Value Then
+                fieldErrors("toDate") = {"toDate cannot be before fromDate."}
+            End If
+
+            Dim sortField As PurchaseOrderSortField = PurchaseOrderSortField.CreatedAt
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseSort(sort, sortField, sortDescending) Then
+                    fieldErrors("sort") = {
+                        "Unsupported sort. Use one of " & String.Join(", ", SortFieldNames()) &
+                        ", optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim effectivePage As Integer = If(page < 1, 1, page)
+            Dim effectivePageSize As Integer = If(pageSize < 1, DefaultPageSize, Math.Min(pageSize, MaxPageSize))
+
+            Dim fromUtc As DateTime? =
+                If(fromLocalDate.HasValue, CType(StoreTimeZone.StartOfDayUtc(fromLocalDate.Value), DateTime?), Nothing)
+            Dim toUtcExclusive As DateTime? =
+                If(toLocalDate.HasValue, CType(StoreTimeZone.EndOfDayUtcExclusive(toLocalDate.Value), DateTime?), Nothing)
+
+            Dim result = Await _purchaseOrderService.SearchHistoryAsync(
+                supplierId, statusFilter, fromUtc, toUtcExclusive, sortField, sortDescending,
+                effectivePage, effectivePageSize, HttpContext.RequestAborted)
+
+            Return Ok(New PurchaseOrderHistoryResponse With {
+                .Items = result.Items,
+                .TotalCount = result.TotalCount,
+                .Page = effectivePage,
+                .PageSize = effectivePageSize,
+                .MaxPageSize = MaxPageSize,
+                .Sort = CanonicalSort(sortField, sortDescending),
+                .FromDate = If(fromLocalDate.HasValue, fromLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .ToDate = If(toLocalDate.HasValue, toLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .TimeZone = StoreTimeZone.IanaId
             })
 
         End Function

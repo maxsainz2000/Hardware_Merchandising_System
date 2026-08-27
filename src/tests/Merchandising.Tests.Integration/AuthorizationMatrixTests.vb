@@ -437,6 +437,13 @@ Public Class AuthorizationMatrixTests
                     Await AssertCellAsync("PurchaseOrders.Track (list)", roleName, allowedRoles.Contains(roleName), listResponse)
                 End Using
 
+                ' P3-06: the history report surface shares PurchaseOrders.Track
+                ' with the plain list above - same policy, one more route.
+                Using historyResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders/history?pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("PurchaseOrders.Track (history)", roleName, allowedRoles.Contains(roleName), historyResponse)
+                End Using
+
                 ' A disallowed role must be refused 403 BEFORE the handler
                 ' looks the order up - never 404. An endpoint that answered
                 ' "no such order" to a caller with no right to ask would leak
@@ -453,6 +460,11 @@ Public Class AuthorizationMatrixTests
             Using anonymousResponse As HttpResponseMessage =
                 Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders", token:=Nothing, requestBody:=Nothing)
                 Await AssertUnauthenticatedAsync("PurchaseOrders.Track (list)", anonymousResponse)
+            End Using
+
+            Using anonymousHistoryResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders/history", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Track (history)", anonymousHistoryResponse)
             End Using
 
         End Using

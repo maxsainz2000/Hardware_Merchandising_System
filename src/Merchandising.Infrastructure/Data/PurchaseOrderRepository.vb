@@ -410,6 +410,97 @@ Namespace Data
 
         End Function
 
+        ''' <summary>
+        ''' P3-06: paginated, filtered, sorted purchase-order HISTORY - spec
+        ''' section 14's report shape, one row per order carrying its line
+        ''' aggregates (ordered/received quantity and value, outstanding
+        ''' quantity), computed here with SUM/GROUP BY rather than by the
+        ''' caller re-summing PurchaseOrderResponse.Lines. Every SUM is CAST
+        ''' back to its column's own storage scale (ADR-004) - MariaDB widens
+        ''' a DECIMAL product/SUM's scale internally, and the response must
+        ''' not leak that intermediate precision onto the wire.
+        '''
+        ''' <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/> are
+        ''' already-converted UTC instants - StoreTimeZone.StartOfDayUtc/
+        ''' EndOfDayUtcExclusive is the caller's job (PurchaseOrderService),
+        ''' the same "this layer takes UTC, never a store-local value" rule
+        ''' every other write/read in this class already follows.
+        ''' </summary>
+        Public Shared Async Function SearchHistoryAsync(
+            connection As MySqlConnection,
+            supplierId As Integer?,
+            status As PurchaseOrderStatus?,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As PurchaseOrderSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of PurchaseOrderHistoryItem), TotalCount As Integer))
+
+            Dim conditions As New List(Of String)
+
+            If supplierId.HasValue Then
+                conditions.Add("o.SupplierId = @supplierId")
+            End If
+
+            If status.HasValue Then
+                conditions.Add("o.Status = @status COLLATE utf8mb4_bin")
+            End If
+
+            If fromUtc.HasValue Then
+                conditions.Add("o.CreatedAtUtc >= @fromUtc")
+            End If
+
+            If toUtcExclusive.HasValue Then
+                conditions.Add("o.CreatedAtUtc < @toUtcExclusive")
+            End If
+
+            Dim whereClause As String =
+                If(conditions.Count > 0, " WHERE " & String.Join(" AND ", conditions), String.Empty)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM PurchaseOrders o" & whereClause & ";"
+                AddHistoryFilterParameters(command, supplierId, status, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of PurchaseOrderHistoryItem)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT o.Id, o.OrderNumber, o.SupplierId, s.Name AS SupplierName, o.Status, " &
+                    "       o.RequestedByUserId, o.ApprovedByUserId, o.SubmittedAtUtc, o.ApprovedAtUtc, o.CreatedAtUtc, " &
+                    "       CAST(COALESCE(SUM(l.OrderedQuantity), 0) AS DECIMAL(19,3)) AS OrderedQuantity, " &
+                    "       CAST(COALESCE(SUM(l.OrderedQuantity * l.PurchaseCost), 0) AS DECIMAL(19,4)) AS OrderedValue, " &
+                    "       CAST(COALESCE(SUM(l.ReceivedQuantity), 0) AS DECIMAL(19,3)) AS ReceivedQuantity, " &
+                    "       CAST(COALESCE(SUM(l.ReceivedQuantity * l.PurchaseCost), 0) AS DECIMAL(19,4)) AS ReceivedValue, " &
+                    "       CAST(COALESCE(SUM(l.OrderedQuantity - l.ReceivedQuantity), 0) AS DECIMAL(19,3)) AS OutstandingQuantity " &
+                    "  FROM PurchaseOrders o" &
+                    "  JOIN Suppliers s ON s.Id = o.SupplierId" &
+                    "  LEFT JOIN PurchaseOrderLines l ON l.PurchaseOrderId = o.Id" &
+                    whereClause &
+                    " GROUP BY o.Id, o.OrderNumber, o.SupplierId, s.Name, o.Status, " &
+                    "          o.RequestedByUserId, o.ApprovedByUserId, o.SubmittedAtUtc, o.ApprovedAtUtc, o.CreatedAtUtc" &
+                    " ORDER BY " & OrderByClause(sortField, sortDescending) &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddHistoryFilterParameters(command, supplierId, status, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadHistoryItem(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
         ' --------------------------------------------------------------- helpers
 
         Private Shared Sub AddFilterParameters(
@@ -421,6 +512,22 @@ Namespace Data
 
             If status.HasValue Then
                 command.Parameters.AddWithValue("@status", status.Value.ToString())
+            End If
+
+        End Sub
+
+        Private Shared Sub AddHistoryFilterParameters(
+            command As MySqlCommand, supplierId As Integer?, status As PurchaseOrderStatus?,
+            fromUtc As DateTime?, toUtcExclusive As DateTime?)
+
+            AddFilterParameters(command, supplierId, status)
+
+            If fromUtc.HasValue Then
+                command.Parameters.AddWithValue("@fromUtc", fromUtc.Value)
+            End If
+
+            If toUtcExclusive.HasValue Then
+                command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive.Value)
             End If
 
         End Sub
@@ -501,6 +608,32 @@ Namespace Data
                 .RowVersion = reader.GetInt64(reader.GetOrdinal("RowVersion")),
                 .CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("CreatedAtUtc")),
                 .UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("UpdatedAtUtc"))
+            }
+
+        End Function
+
+        Private Shared Function ReadHistoryItem(reader As MySqlDataReader) As PurchaseOrderHistoryItem
+
+            Dim approvedByOrdinal As Integer = reader.GetOrdinal("ApprovedByUserId")
+            Dim submittedOrdinal As Integer = reader.GetOrdinal("SubmittedAtUtc")
+            Dim approvedAtOrdinal As Integer = reader.GetOrdinal("ApprovedAtUtc")
+
+            Return New PurchaseOrderHistoryItem With {
+                .Id = reader.GetInt32(reader.GetOrdinal("Id")),
+                .OrderNumber = reader.GetString(reader.GetOrdinal("OrderNumber")),
+                .SupplierId = reader.GetInt32(reader.GetOrdinal("SupplierId")),
+                .SupplierName = reader.GetString(reader.GetOrdinal("SupplierName")),
+                .Status = ParseStatus(reader.GetString(reader.GetOrdinal("Status"))),
+                .RequestedByUserId = reader.GetInt32(reader.GetOrdinal("RequestedByUserId")),
+                .ApprovedByUserId = If(reader.IsDBNull(approvedByOrdinal), CType(Nothing, Integer?), reader.GetInt32(approvedByOrdinal)),
+                .SubmittedAtUtc = If(reader.IsDBNull(submittedOrdinal), CType(Nothing, DateTime?), reader.GetDateTime(submittedOrdinal)),
+                .ApprovedAtUtc = If(reader.IsDBNull(approvedAtOrdinal), CType(Nothing, DateTime?), reader.GetDateTime(approvedAtOrdinal)),
+                .CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("CreatedAtUtc")),
+                .OrderedQuantity = reader.GetDecimal(reader.GetOrdinal("OrderedQuantity")),
+                .OrderedValue = reader.GetDecimal(reader.GetOrdinal("OrderedValue")),
+                .ReceivedQuantity = reader.GetDecimal(reader.GetOrdinal("ReceivedQuantity")),
+                .ReceivedValue = reader.GetDecimal(reader.GetOrdinal("ReceivedValue")),
+                .OutstandingQuantity = reader.GetDecimal(reader.GetOrdinal("OutstandingQuantity"))
             }
 
         End Function

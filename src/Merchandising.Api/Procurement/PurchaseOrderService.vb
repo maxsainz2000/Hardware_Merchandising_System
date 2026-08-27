@@ -625,6 +625,40 @@ Namespace Procurement
 
         End Function
 
+        ''' <summary>
+        ''' P3-06: paginated, filtered, sorted purchase-order HISTORY, with
+        ''' server-computed ordered/received/outstanding quantity and value
+        ''' per order (spec section 14). <paramref name="fromUtc"/> and
+        ''' <paramref name="toUtcExclusive"/> are already-converted UTC
+        ''' instants - PurchaseOrdersController does the store-local-date-to-UTC
+        ''' conversion (StoreTimeZone), the same layering SearchAsync's own
+        ''' page/pageSize clamping already uses: this layer receives values
+        ''' already in the shape the database needs, never a raw HTTP string.
+        ''' </summary>
+        Public Async Function SearchHistoryAsync(
+            supplierId As Integer?,
+            status As DomainProcurement.PurchaseOrderStatus?,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As PurchaseOrderSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of PurchaseOrderHistoryItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result = Await PurchaseOrderRepository.SearchHistoryAsync(
+                    connection, supplierId, status, fromUtc, toUtcExclusive, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Return (Items:=CType(result.Items.Select(AddressOf ToHistoryItemResponse).ToList(), IReadOnlyList(Of PurchaseOrderHistoryItemResponse)),
+                        TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
         ' --------------------------------------------------------------- helpers
 
         ''' <summary>
@@ -728,6 +762,28 @@ Namespace Procurement
                 .RowVersion = order.RowVersion,
                 .CreatedAtUtc = order.CreatedAtUtc,
                 .UpdatedAtUtc = order.UpdatedAtUtc
+            }
+
+        End Function
+
+        Private Shared Function ToHistoryItemResponse(item As PurchaseOrderHistoryItem) As PurchaseOrderHistoryItemResponse
+
+            Return New PurchaseOrderHistoryItemResponse With {
+                .Id = item.Id,
+                .OrderNumber = item.OrderNumber,
+                .SupplierId = item.SupplierId,
+                .SupplierName = item.SupplierName,
+                .Status = item.Status.ToString(),
+                .RequestedByUserId = item.RequestedByUserId,
+                .ApprovedByUserId = item.ApprovedByUserId,
+                .SubmittedAtUtc = item.SubmittedAtUtc,
+                .ApprovedAtUtc = item.ApprovedAtUtc,
+                .CreatedAtUtc = item.CreatedAtUtc,
+                .OrderedQuantity = item.OrderedQuantity,
+                .OrderedValue = item.OrderedValue,
+                .ReceivedQuantity = item.ReceivedQuantity,
+                .ReceivedValue = item.ReceivedValue,
+                .OutstandingQuantity = item.OutstandingQuantity
             }
 
         End Function

@@ -226,7 +226,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ---
 
-### ⬜ P3-06 · Purchase history and order tracking
+### ✅ P3-06 · Purchase history and order tracking
 
 **Spec:** §10.1, §14 · **Files:** `src/Merchandising.Api/Controllers/PurchaseOrdersController.vb`, `src/Merchandising.Infrastructure/Data/PurchaseOrderRepository.vb`
 
@@ -234,12 +234,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] History filters by supplier, status and date range, with date boundaries defined in the **store time zone** and stated in the response (spec §14)
-- [ ] Ordered quantity/value and outstanding quantity computed server-side, never by the client
-- [ ] A cancelled order appears in history, labelled, rather than vanishing
-- [ ] Pagination and max page size consistent with P3-03
-- [ ] **Matrix suite extended** — `PurchaseOrders.Track` positive and negative cells
-- [ ] Integration suite green
+- [x] History filters by supplier, status and date range, with date boundaries defined in the **store time zone** and stated in the response (spec §14)
+- [x] Ordered quantity/value and outstanding quantity computed server-side, never by the client
+- [x] A cancelled order appears in history, labelled, rather than vanishing
+- [x] Pagination and max page size consistent with P3-03
+- [x] **Matrix suite extended** — `PurchaseOrders.Track` positive and negative cells
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-3/p3-06-purchase-history.txt`
 
