@@ -39,7 +39,7 @@ Two of its boxes need nobody but you and can still invalidate ADR-015: whether M
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-Five `docs/*.md` remain: `api-specification.md` → **Phase 3, P3-08 below**; `database-design.md` finalised → Phase 4; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
+Four `docs/*.md` remain: ~~`api-specification.md` → Phase 3, P3-08~~ **written** (procurement section only — struck at P3-08); `database-design.md` finalised → Phase 4; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
 
 ### ⬜ CARRY-01 · Account recovery has no implementation and no card — **unassigned, decision owed**
 
@@ -270,7 +270,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track E — Documents and closure
 
-### ⬜ P3-08 · `docs/api-specification.md` — procurement section
+### ✅ P3-08 · `docs/api-specification.md` — procurement section
 
 **Spec:** §13, §20 · **Files:** `docs/api-specification.md`
 
@@ -278,15 +278,17 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Every route added in Track C documented with its **policy name**, not a role string
-- [ ] Every stable error code listed with the condition that raises it
-- [ ] The idempotency requirement stated per write command (spec §13)
-- [ ] Pagination, max page size, sorting, filtering and date-boundary behaviour stated for every list endpoint
-- [ ] Verified against the running registration rather than transcribed by hand, in the P2-12 shape — a drift check, not a promise
-- [ ] States the academic-prototype framing required by `plan.md` §5
-- [ ] One of P0-07's five remaining documents struck from its list
+- [x] Every route added in Track C documented with its **policy name**, not a role string
+- [x] Every stable error code listed with the condition that raises it
+- [x] The idempotency requirement stated per write command (spec §13)
+- [x] Pagination, max page size, sorting, filtering and date-boundary behaviour stated for every list endpoint
+- [x] Verified against the running registration rather than transcribed by hand, in the P2-12 shape — a drift check, not a promise. `ApiSpecificationDocumentationTests` (`Merchandising.Tests.Integration`) reflects `PurchaseOrdersController`'s live `[Route]`/`[HttpGet]`/`[HttpPost]`/`[Authorize(Policy:=...)]` attributes and reads `PolicyRegistry.Names`/`PurchaseOrderTransitionErrors`/`ExceptionHandlingMiddleware.ErrorCode` straight off the compiled types, rather than regenerating the whole document byte-for-byte as `RolePermissionMatrixDocumentationTests` does for the pure-data role matrix — this document is prose around those facts, not pure data.
+- [x] States the academic-prototype framing required by `plan.md` §5
+- [x] One of P0-07's five remaining documents struck from its list
 
-**Evidence:** the document
+**Scope confirmed with the user:** "procurement section" means exactly Track C's 8 `PurchaseOrdersController` routes — not Suppliers (P2-10, Phase 2) and not receiving (Phase 4, no endpoint exists yet). Those get their own sections when their phase closes.
+
+**Evidence:** `evidence/phase-3/p3-08-api-specification.txt`
 
 ---
 

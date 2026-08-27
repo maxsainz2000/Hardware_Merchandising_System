@@ -1,0 +1,50 @@
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:07.91
+
+=== Unit tests ===
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    41, Skipped:     0, Total:    41, Duration: 325 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   211, Skipped:     0, Total:   211, Duration: 30 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
