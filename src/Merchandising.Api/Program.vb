@@ -15,6 +15,7 @@ Imports Merchandising.Api.Catalog
 Imports Merchandising.Api.Hosting
 Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
+Imports Merchandising.Api.Procurement
 Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Infrastructure.Security
@@ -260,6 +261,11 @@ Public Module Program
 
         ' P2-10: deactivate/reactivate (Suppliers + audit, atomically) - same shape as ProductLifecycleService above.
         builder.Services.AddScoped(Of SupplierLifecycleService)()
+
+        ' P3-03 / ADR-006 + ADR-007: purchase-order creation - the claim-first
+        ' transaction that writes the order, its lines and the audit row, or
+        ' none of them.
+        builder.Services.AddScoped(Of PurchaseOrderService)()
 
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.

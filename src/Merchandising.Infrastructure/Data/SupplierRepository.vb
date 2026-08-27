@@ -39,12 +39,21 @@ Namespace Data
 
         End Function
 
+        ''' <param name="transaction">
+        ''' Optional, added at P3-03 and appended last so no positional call
+        ''' site written before it shifts arguments - see
+        ''' ProductRepository.GetByIdAsync's identical parameter for the
+        ''' reasoning. Nothing (the default) keeps every earlier call site
+        ''' behaving exactly as before.
+        ''' </param>
         Public Shared Async Function GetByIdAsync(
             connection As MySqlConnection,
             id As Integer,
-            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Supplier)
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional transaction As MySqlTransaction = Nothing) As Task(Of Supplier)
 
             Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
                 command.CommandText = SelectColumns & " FROM Suppliers WHERE Id = @id;"
                 command.Parameters.AddWithValue("@id", id)
                 Return Await ReadOneAsync(command, cancellationToken).ConfigureAwait(False)

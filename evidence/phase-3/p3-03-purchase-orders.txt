@@ -1,0 +1,228 @@
+P3-03 - create and read purchase orders and lines - acceptance evidence
+Captured 2026-08-27 on box1, against the real pinned MariaDB 10.4.32 (XAMPP
+8.2.12-0), over real HTTP through MerchandisingApiFactory. Nothing below is
+quoted from a design document; every figure is a measurement.
+
+Endpoints added:
+  POST   /api/v1/purchase-orders        PurchaseOrders.Create   [AuditRequired]
+  GET    /api/v1/purchase-orders        PurchaseOrders.Track
+  GET    /api/v1/purchase-orders/{id}   PurchaseOrders.Track
+
+
+=== 1. Test suites, whole repository ===
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    0 Warning(s)
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  37, Skipped: 0, Total:  37 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 171, Skipped: 0, Total: 171 - Merchandising.Tests.Integration.dll (net10.0)
+
+Integration count moved 150 -> 171: the 19 new PurchaseOrderCreationTests plus
+the 2 new AuthorizationMatrixTests cells.
+
+
+=== 2. The 19 acceptance tests, individually ===
+
+Passed CreatePurchaseOrder_StartsInDraft_WithServerAssignedIdentities [204 ms]
+Passed CreatePurchaseOrder_ClientSuppliedStatus_Refused400 [137 ms]
+Passed CreatePurchaseOrder_InactiveProductLine_RefusedWithStableErrorCode [149 ms]
+Passed CreatePurchaseOrder_InactiveSupplier_RefusedWithStableErrorCode [136 ms]
+Passed CreatePurchaseOrder_UnknownSupplierAndProduct_RefusedWithFieldDetail [133 ms]
+Passed CreatePurchaseOrder_NoLines_Refused400 [119 ms]
+Passed CreatePurchaseOrder_OverScaleQuantity_RefusedBeforeAnyRowIsWritten [153 ms]
+Passed CreatePurchaseOrder_OverScaleCost_RefusedBeforeAnyRowIsWritten [136 ms]
+Passed CreatePurchaseOrder_RepeatedIdempotencyKey_ReplaysTheOriginalOrder [188 ms]
+Passed CreatePurchaseOrder_TenConcurrentRequestsSameKey_CreateExactlyOneOrder [182 ms]
+Passed CreatePurchaseOrder_TenConcurrentRequestsDistinctKeys_ProduceTenDistinctOrderNumbers [196 ms]
+Passed CreatePurchaseOrder_MissingIdempotencyKey_Refused400 [128 ms]
+Passed ListPurchaseOrders_FiltersBySupplierAndStatus [215 ms]
+Passed ListPurchaseOrders_UnknownStatusFilter_Refused400 [132 ms]
+Passed ListPurchaseOrders_PageSizeClampedToMaximum_AndEchoedBack [157 ms]
+Passed ListPurchaseOrders_SortIsWhitelisted [210 ms]
+Passed ListPurchaseOrders_SecondPageDoesNotRepeatTheFirst [224 ms]
+Passed CreatePurchaseOrder_Success_WritesExactlyOneAuditRow [166 ms]
+Passed GetPurchaseOrder_UnknownId_ReturnsControlled404 [128 ms]
+
+Matrix suite extended for both new policies (P2-03's data-driven suite):
+
+Passed PurchaseOrdersCreate_MatrixMatchesPolicyRegistry [1 s]
+Passed PurchaseOrdersTrack_MatrixMatchesPolicyRegistry [535 ms]
+
+These are PurchaseOrders.Create's and PurchaseOrders.Track's FIRST live
+endpoints - two of the 25 policies the Phase 2 gate recorded as carried by
+mechanism rather than by assertion are now carried by assertion. A disallowed
+role probing GET /purchase-orders/999999999 is refused 403 before the handler
+looks anything up, never 404, so the endpoint cannot leak which ids exist.
+
+P3-02's schema suite still passes unchanged against the same tables (13 tests,
+listed in p3-02-schema.txt).
+
+
+=== 3. Committed state after the run, read back from the database ===
+
+$ mysql -u root merchandising -e "SELECT COUNT(*) AS orders, MIN(OrderNumber), MAX(OrderNumber), COUNT(DISTINCT OrderNumber) FROM PurchaseOrders;"
+orders  first_num          last_num           distinct_nums
+97      PO-20260827-0001   PO-20260827-0097   97
+
+  [PASS] 97 orders, 97 DISTINCT order numbers, contiguous 0001..0097 - no
+         duplicate and no gap survived the concurrency tests.
+
+$ mysql -u root merchandising -e "SELECT DISTINCT Status FROM PurchaseOrders;"
+Status
+Draft
+
+  [PASS] every order this phase can create is Draft, and nothing else. The
+         status is server-assigned; the create request's `status` property
+         exists only to be refused 400 (see test 2 above).
+
+$ mysql -u root merchandising -e "SELECT COUNT(*) AS lines_total, MIN(LineNumber), SUM(ReceivedQuantity) FROM PurchaseOrderLines;"
+lines_total  min_line  total_received
+97           1         0.000
+
+  [PASS] line numbers are server-assigned from 1. ReceivedQuantity is 0.000
+         across every line - nothing in Phase 3 can move it; Phase 4's
+         receiving command owns it.
+
+$ mysql -u root merchandising -e "SELECT Scope, COUNT(*), SUM(CompletedAtUtc IS NOT NULL) FROM IdempotencyKeys GROUP BY Scope;"
+Scope                             keys_stored  completed
+Inventory.StockDecrement          600          600
+Procurement.PurchaseOrderCreate   97           97
+
+  [PASS] exactly one completed key per committed order (97 = 97), in this
+         command's own ADR-007 scope. A claim is committed with the response
+         it replays or not at all.
+
+$ mysql -u root merchandising -e "SELECT Action, COUNT(*) FROM AuditLogs WHERE Action LIKE 'PurchaseOrder%' GROUP BY Action;"
+Action                        rows_written
+PurchaseOrderCreated          97
+PurchaseOrderCreateReplayed   40
+
+  [PASS] one PurchaseOrderCreated row per committed order (97 = 97), written
+         in the same transaction as the order itself.
+  [NOTE] a REPLAY audits too, under its own action name - it was served, but
+         it created nothing. [AuditRequired] on the create endpoint rejects
+         any 2xx that recorded no audit (P2-04), so the replay path needs its
+         own row; naming it PurchaseOrderCreated would have corrupted the
+         count above.
+
+
+=== 4. Box 3 (ADR-004.1) - what "before binding" actually proves ===
+
+An over-scale value is refused at the API boundary, BEFORE a connection is
+opened. The assertion is the ABSENCE of rows, not the presence of a
+correctly-scaled one: MariaDB rounds an over-scale decimal silently (Note
+1265, not an error) even under STRICT_TRANS_TABLES, so a stored 12.346 would
+look identical whether the guard ran or whether the server rounded it.
+
+  quantity 12.3456 -> 400 VALIDATION_FAILED, field "lines[0].orderedQuantity"
+  cost     1.99999 -> 400 VALIDATION_FAILED, field "lines[0].purchaseCost"
+
+Both tests assert PurchaseOrders row count AND IdempotencyKeys row count are
+unchanged across the refused request - the key is not even claimed, because
+DecimalScaleGuard runs before the transaction begins.
+
+
+=== 5. FINDING - the isolation level was not what ADR-006 says it was ===
+
+This is the substantive discovery of the card, and it is not confined to
+P3-03. It was found by a failing test, measured directly, and is recorded
+here because the fix applied is deliberately narrower than the problem.
+
+WHAT WAS MEASURED. Inside a transaction opened by
+`connection.BeginTransactionAsync(cancellationToken)`:
+
+  SELECT @@tx_isolation;  ->  REPEATABLE-READ
+
+...despite ConnectionFactory issuing `SET SESSION tx_isolation =
+'READ-COMMITTED'` on every connection (P1-05, ADR-006), and despite
+ConnectionFactoryTests asserting that session value live.
+
+WHY. MySqlConnector's BeginTransaction sends its own `SET TRANSACTION
+ISOLATION LEVEL` for the transaction it opens. That overrides the session
+value the connection factory set. The session-level assertion is true and the
+transaction-level behaviour is still REPEATABLE READ; nothing in the test
+suite compared the two until now.
+
+WHAT IT COST HERE. Under REPEATABLE READ a transaction reads from the
+snapshot taken at its first read. PurchaseOrderNumberGenerator's
+`SELECT MAX(OrderNumber)` therefore could not see order numbers committed
+after this transaction started, while its INSERT (a write, always current)
+collided with them. Every retry recomputed the SAME candidate:
+
+  P3-03 DIAG attempt 1 candidate PO-20260827-0040 collided, tx_isolation=REPEATABLE-READ
+  P3-03 DIAG attempt 2 candidate PO-20260827-0040 collided, tx_isolation=REPEATABLE-READ
+  P3-03 DIAG attempt 3 candidate PO-20260827-0040 collided, tx_isolation=REPEATABLE-READ
+  ... (identical candidate every attempt, until the retry bound was exhausted)
+
+Ten concurrent creates with distinct keys failed nine of ten requests with a
+409. Raising the retry bound did NOT fix it - the bound was never the cause.
+
+THE FIX APPLIED. PurchaseOrderService now passes the level explicitly:
+
+  Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+
+After it, the same ten-way test passes and produces ten distinct order
+numbers (section 3 above: 97 orders, 97 distinct numbers).
+
+WHAT IS DELIBERATELY NOT FIXED, AND IS NOW OPEN WORK. Every other
+BeginTransaction call site in the API still opens a REPEATABLE READ
+transaction - StockService, PriceChangeService, ProductLifecycleService,
+SupplierLifecycleService, SuppliersController, ProductsController,
+MaintenanceController. None of their tests fail today: their correctness
+rests on InnoDB row locking on a conditional UPDATE (ADR-006's own stated
+mechanism, P1-11/P1-13), and a locking read always sees the latest committed
+row regardless of isolation level. So this is a divergence between ADR-006's
+text and the running system, NOT a known-broken guarantee.
+
+It is left open rather than fixed here because changing the isolation level
+of the stock decrement, the price change and the maintenance lock is a change
+to three proven, evidenced Phase 1/Phase 2 mechanisms, and each owns its own
+tests and evidence. That is a card, not a footnote in this one.
+CLAUDE.md section 6.2 already warns exactly this ("the default isolation
+level is REPEATABLE-READ ... set it explicitly. Never assume it"); what is
+new is that setting it on the SESSION is not sufficient, and ADR-006 should
+say so.
+
+
+=== 6. Spec section 13 list contract, as defined and asserted ===
+
+  page       default 1;  below 1 clamped to 1
+  pageSize   default 25; below 1 clamped to 25; above 100 clamped DOWN to 100
+  maxPageSize 100, echoed in the response body
+  sort       default createdAt:desc; whitelist {createdAt, orderNumber,
+             status}, each :asc or :desc; anything else 400 with field "sort"
+  filters    supplierId, status; an unknown status is 400 with field
+             "status", never silently ignored
+
+Asserted: pageSize=5000 returns pageSize 100; page=-4&pageSize=0 returns
+page 1 / pageSize 25; sort=rowVersion:asc is refused 400; pages 1/2/3 at
+pageSize 2 over 5 orders return 2/2/1 items with 5 distinct ids and no
+overlap; TotalCount is the whole result set, not the page.
+
+Sorting cannot be injected by construction, not merely by validation:
+PurchaseOrderRepository.SearchAsync takes a PurchaseOrderSortField enum, so
+no caller can hand it a column name at all.
+
+DATE-BOUNDARY FILTERING IS DELIBERATELY ABSENT and belongs to P3-06, which
+owns store-time-zone (Asia/Manila) boundaries against UTC storage. The
+PO-yyyyMMdd-NNNN order number embeds a UTC date as a LABEL; it must not be
+read to decide what store-local day an order was raised.
+
+
+=== 7. Stable error codes introduced ===
+
+  VALIDATION_FAILED          400  with field-level detail (ADR-014)
+  SUPPLIER_INACTIVE          400  order raised against a deactivated supplier
+  PRODUCT_INACTIVE           400  deactivated product newly ordered (spec 10.2)
+  PURCHASE_ORDER_NOT_FOUND   404  unknown order id, controlled, no leak
+  ORDER_NUMBER_UNAVAILABLE   409  order-number retry bound exhausted
+
+Every error body carries a correlation ID; none carries a stack trace, SQL
+text, connection string, or environment detail.

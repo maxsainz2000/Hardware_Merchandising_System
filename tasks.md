@@ -47,6 +47,12 @@ Five `docs/*.md` remain: `api-specification.md` → **Phase 3, P3-08 below**; `d
 
 > **Not a Phase 3 blocker, and deliberately not silently assigned.** The natural home is **Phase 6** (operations, beside backup/restore) as a `reset-password` subcommand on the CLI that already creates accounts — roughly one card. Confirm that placement, or place it earlier, before Phase 6 planning closes.
 
+### ⬜ CARRY-03 · Every transaction outside P3-03 runs REPEATABLE READ, not READ COMMITTED — **unassigned, decision owed**
+
+**Surfaced at P3-03** by a failing concurrency test, then measured directly (`evidence/phase-3/p3-03-purchase-orders.txt` §5). `ConnectionFactory` sets `SET SESSION tx_isolation = 'READ-COMMITTED'` and `ConnectionFactoryTests` asserts it — but MySqlConnector's `BeginTransaction` sends its own `SET TRANSACTION ISOLATION LEVEL`, so **inside** a transaction the level is `REPEATABLE-READ`. Only `PurchaseOrderService` passes `IsolationLevel.ReadCommitted` explicitly today.
+
+> **Not currently a broken guarantee, and deliberately not silently fixed.** ADR-006's stock-decrement correctness rests on InnoDB row locking on a conditional `UPDATE`, and a locking read sees the latest committed row at either level — which is why P1-11/P1-13 pass and always did. What is wrong is that **ADR-006's text and the running system disagree**, and the next author who writes a transaction that *reads* before it writes will hit exactly the bug P3-03 hit. Two things are owed: pass the level explicitly at the remaining call sites (`StockService`, `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`, `SuppliersController`, `ProductsController`, `MaintenanceController`), and add the assertion `ConnectionFactoryTests` is missing — `@@tx_isolation` read *inside* a transaction, not only on the session. Roughly one card. **Phase 4 is the natural home**, since receiving reads a line before it writes one and is the first command that would be bitten.
+
 ### ⬜ CARRY-02 · Off-host backup copy, volume present — **owed at the Phase 6 gate (ADR-019)**
 
 No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifact-backed only. Phase 6 promotes backup to production quality (`plan.md` §7, closing G-15/G-16) and owes the assertion then.
@@ -142,7 +148,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. One worker, in order — each card consumes the last.*
 
-### ⬜ P3-03 · Create and read purchase orders and lines
+### ✅ P3-03 · Create and read purchase orders and lines
 
 **Spec:** §10.1, §13 · **Files:** `src/Merchandising.Api/Controllers/PurchaseOrdersController.vb`, `src/Merchandising.Infrastructure/Data/PurchaseOrderRepository.vb`, `src/Merchandising.Contracts/Procurement/`
 
@@ -150,14 +156,29 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] A created order starts in `Draft` — the state is assigned server-side and a client-supplied status is rejected, not honoured
-- [ ] Lines reference active products; an inactive product is refused with a stable error code (the P2-09 lifecycle rule)
-- [ ] Money and quantity scale validated at the API boundary **before** binding (ADR-004.1) — a stored value that looks right proves nothing
-- [ ] Idempotency key honoured per ADR-007: a repeated key returns the original committed order, never a second one
-- [ ] Pagination, max page size, sort and filter defined and asserted, per spec §13
-- [ ] Creation audited through the P2-04 pipeline
-- [ ] **Matrix suite extended** for every route added — positive and negative cells, 403 not 401/404
-- [ ] Integration suite green
+- [x] A created order starts in `Draft` — the state is assigned server-side and a client-supplied status is rejected, not honoured
+- [x] Lines reference active products; an inactive product is refused with a stable error code (the P2-09 lifecycle rule)
+- [x] Money and quantity scale validated at the API boundary **before** binding (ADR-004.1) — a stored value that looks right proves nothing
+- [x] Idempotency key honoured per ADR-007: a repeated key returns the original committed order, never a second one
+- [x] Pagination, max page size, sort and filter defined and asserted, per spec §13
+- [x] Creation audited through the P2-04 pipeline
+- [x] **Matrix suite extended** for every route added — positive and negative cells, 403 not 401/404
+- [x] Integration suite green
+
+> **The isolation level was not what ADR-006 says it is, and only this card's transaction is fixed.**
+> Measured, not assumed: inside a transaction opened by `BeginTransactionAsync(cancellationToken)`,
+> `SELECT @@tx_isolation` reports **`REPEATABLE-READ`** — because MySqlConnector's `BeginTransaction`
+> sends its own `SET TRANSACTION ISOLATION LEVEL`, overriding the `SET SESSION` that `ConnectionFactory`
+> issues and `ConnectionFactoryTests` asserts. Under it, the order-number generator's `MAX` read could not
+> see rows committed after its transaction began, every retry recomputed the same candidate, and ten
+> concurrent creates failed nine of ten. `PurchaseOrderService` now passes `IsolationLevel.ReadCommitted`
+> explicitly. **Every other `BeginTransaction` call site still opens REPEATABLE READ** — `StockService`,
+> `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`, and the three controllers.
+> No test of theirs fails, because their correctness rests on InnoDB row locking on a conditional `UPDATE`
+> (ADR-006's own mechanism), and a locking read is current at any isolation level. So it is a divergence
+> between ADR-006's text and the running system, not a known-broken guarantee — carried below as CARRY-03
+> rather than fixed here, because it changes three evidenced Phase 1/Phase 2 mechanisms that own their own
+> tests. Full measurement in `evidence/phase-3/p3-03-purchase-orders.txt` §5.
 
 **Evidence:** `evidence/phase-3/p3-03-purchase-orders.txt`
 

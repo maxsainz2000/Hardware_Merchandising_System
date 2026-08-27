@@ -58,11 +58,31 @@ Public NotInheritable Class DecimalScaleGuard
         Return Decimal.Round(value, QuantityScale, MidpointRounding.AwayFromZero)
     End Function
 
+    ''' <summary>
+    ''' True when a client-supplied money value is already at or below the
+    ''' storage scale. The non-throwing form of
+    ''' <see cref="EnsureMoneyScale"/>, added at P3-03 for the API boundary:
+    ''' a controller turning an over-scale value into a field-level 400 wants
+    ''' to ASK the question, while a service asserting a hard precondition
+    ''' wants it to throw. Both go through the same one definition of "at
+    ''' storage scale" below.
+    ''' </summary>
+    Public Shared Function IsAtMoneyScale(value As Decimal) As Boolean
+        Return IsAtScale(value, MoneyScale)
+    End Function
+
+    ''' <summary>True when a client-supplied quantity value is already at or below the storage scale. The non-throwing form of <see cref="EnsureQuantityScale"/>.</summary>
+    Public Shared Function IsAtQuantityScale(value As Decimal) As Boolean
+        Return IsAtScale(value, QuantityScale)
+    End Function
+
+    Private Shared Function IsAtScale(value As Decimal, scale As Integer) As Boolean
+        Return Decimal.Round(value, scale, MidpointRounding.AwayFromZero) = value
+    End Function
+
     Private Shared Function EnsureScale(value As Decimal, scale As Integer) As Decimal
 
-        Dim rounded As Decimal = Decimal.Round(value, scale, MidpointRounding.AwayFromZero)
-
-        If rounded <> value Then
+        If Not IsAtScale(value, scale) Then
             Throw New ArgumentException(
                 $"Value '{value}' exceeds the storage scale of {scale} decimal place(s). " &
                 "Client-supplied money and quantity values must be rejected, not silently rounded (ADR-004.1).",

@@ -62,12 +62,25 @@ Namespace Data
 
         End Function
 
+        ''' <param name="transaction">
+        ''' Optional, added at P3-03 and appended last so no positional call
+        ''' site written before it shifts arguments - the same shape
+        ''' AuditLogWriter.WriteAsync's transaction parameter took at P1-11.
+        ''' PurchaseOrderService passes its own transaction so the "is this
+        ''' product still active?" check and the line insert that depends on
+        ''' the answer run inside one transaction, rather than the check
+        ''' happening outside it and being stale by the time the line is
+        ''' written. Nothing (the default) keeps every earlier call site
+        ''' behaving exactly as before.
+        ''' </param>
         Public Shared Async Function GetByIdAsync(
             connection As MySqlConnection,
             id As Integer,
-            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Product)
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional transaction As MySqlTransaction = Nothing) As Task(Of Product)
 
             Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
                 command.CommandText = SelectColumns & " FROM Products WHERE Id = @id;"
                 command.Parameters.AddWithValue("@id", id)
                 Return Await ReadOneAsync(command, cancellationToken).ConfigureAwait(False)

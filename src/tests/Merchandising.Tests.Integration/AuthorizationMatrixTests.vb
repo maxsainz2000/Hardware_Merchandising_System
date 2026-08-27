@@ -43,6 +43,7 @@ Imports Merchandising.Contracts.Auth
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Maintenance
+Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
 Imports Merchandising.Contracts.Settings
 Imports Merchandising.Domain.Security
@@ -62,6 +63,7 @@ Public Class AuthorizationMatrixTests
     Private Const MigratorConfigFileName As String = "database.migrator.json"
     Private Const FixturePassword As String = "P2-03 Fixture Passw0rd!"
     Private Const FixtureProductSku As String = "p2_03_fixture_sku"
+    Private Const FixtureSupplierName As String = "P2-03 Fixture Supplier"
     Private Const BaselineQuantity As Decimal = 100.000D
 
     ''' <summary>
@@ -365,6 +367,85 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P3-03's purchase-order creation endpoint - PurchaseOrders.Create's
+    ''' first live endpoint. Every allowed role creates a real Draft order;
+    ''' Inventory Clerk and Cashier are refused 403.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersCreate_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersCreate)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/purchase-orders", token,
+                                     NewPurchaseOrderBody(supplierId, productId))
+                    Await AssertCellAsync("PurchaseOrders.Create", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/purchase-orders", token:=Nothing,
+                                 requestBody:=NewPurchaseOrderBody(supplierId, productId))
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Create", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P3-03's purchase-order reads - PurchaseOrders.Track's first live endpoints. Both the list and the by-id read are probed.</summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersTrack_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersTrack)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using listResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders?pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("PurchaseOrders.Track (list)", roleName, allowedRoles.Contains(roleName), listResponse)
+                End Using
+
+                ' A disallowed role must be refused 403 BEFORE the handler
+                ' looks the order up - never 404. An endpoint that answered
+                ' "no such order" to a caller with no right to ask would leak
+                ' which ids exist.
+                If Not allowedRoles.Contains(roleName) Then
+                    Using detailResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders/999999999", token, requestBody:=Nothing)
+                        Await AssertCellAsync("PurchaseOrders.Track (by id)", roleName, isAllowed:=False, detailResponse)
+                    End Using
+                End If
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, "/api/v1/purchase-orders", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Track (list)", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -526,6 +607,47 @@ Public Class AuthorizationMatrixTests
             Return productId
 
         End Using
+
+    End Function
+
+    ''' <summary>A permanent active supplier for the P3-03 purchase-order cells. Suppliers has no DELETE grant, so it is created once and reused.</summary>
+    Private Async Function EnsureFixtureSupplierAsync() As Task(Of Integer)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+
+            Using selectCommand As MySqlCommand = connection.CreateCommand()
+                selectCommand.CommandText = "SELECT Id FROM Suppliers WHERE Name = @name;"
+                selectCommand.Parameters.AddWithValue("@name", FixtureSupplierName)
+                Dim existing As Object = Await selectCommand.ExecuteScalarAsync()
+                If existing IsNot Nothing Then
+                    Return CInt(existing)
+                End If
+            End Using
+
+            Using insertCommand As MySqlCommand = connection.CreateCommand()
+                insertCommand.CommandText =
+                    "INSERT INTO Suppliers (Name, IsActive, CreatedAtUtc, UpdatedAtUtc) " &
+                    "VALUES (@name, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6));"
+                insertCommand.Parameters.AddWithValue("@name", FixtureSupplierName)
+                Await insertCommand.ExecuteNonQueryAsync()
+                Return CInt(insertCommand.LastInsertedId)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>A fresh idempotency key per call - a matrix probe must never replay an earlier cell's committed order.</summary>
+    Private Shared Function NewPurchaseOrderBody(supplierId As Integer, productId As Integer) As CreatePurchaseOrderRequest
+
+        Return New CreatePurchaseOrderRequest With {
+            .SupplierId = supplierId,
+            .IdempotencyKey = Guid.NewGuid().ToString("d"),
+            .Lines = New List(Of CreatePurchaseOrderLineRequest) From {
+                New CreatePurchaseOrderLineRequest With {
+                    .ProductId = productId, .OrderedQuantity = 1.000D, .PurchaseCost = 1.0000D}
+            }
+        }
 
     End Function
 
