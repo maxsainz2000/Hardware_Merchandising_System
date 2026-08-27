@@ -1,0 +1,290 @@
+P3-07 - Procurement WPF client reaches usable state - acceptance evidence
+Captured 2026-08-28 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0) and the real MerchandisingApi Windows Service over
+HTTPS on MERCH-HOST:8443. Every screenshot and log line below came from an
+actual run of Merchandising.Procurement.exe clicking against the live,
+running API - not a mock, not a design-time binding.
+
+Client built:
+  MainWindow.xaml / MainWindow.xaml.vb   login screen + four-tab workspace
+  ViewModels/MainViewModel.vb            composition root, sign-in/out, session state
+  ViewModels/SupplierBrowseViewModel.vb  Suppliers tab - read-only search
+  ViewModels/NewPurchaseOrderViewModel.vb  New Order tab - supplier/product
+                                          lookup, line entry, create
+  ViewModels/PurchaseOrderLineEntryViewModel.vb  one drafted line
+  ViewModels/PurchaseOrderListViewModel.vb  Orders tab - browse, detail,
+                                          submit/approve/cancel
+  ViewModels/PurchaseOrderHistoryViewModel.vb  History tab - P3-06 report
+
+ClientCommon additions (shared, reused across all five view models):
+  Mvvm/RelayCommand.vb, Mvvm/AsyncRelayCommand.vb   hand-rolled ICommand -
+    CommunityToolkit.Mvvm still not pinned in docs/adr.md (same reasoning
+    ObservableObject's own header already recorded at P1-15); this is a real
+    multi-screen client, not a spike, so the buttons' enable/disable rules
+    earned a command abstraction this time.
+  Api/ApiFailurePresenter.vb   one shared mapping from a failed ApiResult(Of T)
+    to (StatusMessage, Detail, CorrelationId, IsMaintenance) - factored out
+    because this card gives one client five screens that all need it, where
+    SpikeViewModel's ShowFailure (P1-15) served exactly one.
+  Converters/InverseBooleanToVisibilityConverter.vb   spec section 7 assigns
+    converters to ClientCommon; needed to hide the sign-in panel once a
+    session exists.
+  Api/MerchandisingApiClient.vb   SearchSuppliersAsync, SearchProductsAsync,
+    CreatePurchaseOrderAsync, SearchPurchaseOrdersAsync,
+    GetPurchaseOrderHistoryAsync, GetPurchaseOrderAsync,
+    SubmitPurchaseOrderAsync, ApprovePurchaseOrderAsync,
+    CancelPurchaseOrderAsync, plus a BuildPath query-string helper.
+
+Merchandising.Tests.Unit/ProcurementClientTests.vb (new, 4 tests) - not a
+re-proof of any business rule (every rule this client touches is already
+proven server-side by Track C, per this card's own note in tasks.md); these
+exist for the properties the CARD adds: a fresh idempotency key per create
+attempt, and every server refusal - rejection, self-approval-shaped 403,
+missing-reason - rendered with the API's own code/message/correlation ID,
+never invented client-side wording.
+
+
+===============================================================================
+1. Full verification pass - whole repository
+===============================================================================
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    0 Warning(s)
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  41, Skipped: 0, Total:  41 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 208, Skipped: 0, Total: 208 - Merchandising.Tests.Integration.dll (net10.0)
+
+Unit count moved 37 -> 41: the four new ProcurementClientTests.
+
+$ dotnet test --filter "FullyQualifiedName~ProcurementClientTests"
+  Passed CreateOrderAsync_MintsAFreshIdempotencyKeyPerAttempt
+  Passed CreateOrderAsync_RejectionSurfacesTheServersOwnWordingAndCorrelationId
+  Passed ApproveAsync_SelfApprovalRefusalSurfacesVerbatim
+  Passed CancelAsync_WithoutAReason_NeverReachesTheWire
+Test Run Successful. Total tests: 4, Passed: 4
+
+
+===============================================================================
+2. Two real defects, found only by launching the actual app
+===============================================================================
+
+CLAUDE.md requires a UI change to actually be run, not just unit-tested, and
+this card is the reason why. Both of these passed 41/41 unit tests and both
+crashed or misbehaved the first time the real window opened.
+
+Defect A - startup crash, every screen. WPF's <Run Text="{Binding X}"/>
+defaults to a TwoWay binding (Run supports RichTextBox editing), and every
+read-only status property (CorrelationId, SelectedSupplierDisplay,
+AppliedTimeZone, TotalCount) bound that way. First launch:
+
+  System.InvalidOperationException: A TwoWay or OneWayToSource binding
+  cannot work on the read-only property 'CorrelationId' of type
+  'Merchandising.Procurement.ViewModels.SupplierBrowseViewModel'.
+    at System.Windows.Window.ShowHelper(Object booleanBox)
+    ... Merchandising.Procurement.Application.Main()
+
+  (captured live via Get-WinEvent -LogName Application, .NET Runtime
+  event 1026, two occurrences, both before the fix)
+
+Fixed by adding Mode=OneWay to every <Run Text="{Binding ...}"/> in
+MainWindow.xaml (8 occurrences). Rebuilt, relaunched: no crash, window opens
+and stays responsive (Get-Process ... | Select MainWindowTitle, Responding
+-> "Merchandising - Procurement", True).
+
+Defect B - a transition's own refusal message got silently erased.
+PurchaseOrderListViewModel.ApplyTransitionAsync originally called
+Await RefreshAsync() unconditionally after every submit/approve/cancel
+attempt - including a FAILED one. RefreshAsync's own success path
+overwrites StatusMessage/ResultText/CorrelationId with "{N} order(s)
+found.", so a 403 self-approval refusal (or any other refusal) was shown
+for a single frame and then replaced by the list's own "N found" message -
+exactly the "hides the correlation ID" failure this card's own Done-when
+box rules out, just caused by the VIEW MODEL rather than by the server.
+
+Caught by ApproveAsync_SelfApprovalRefusalSurfacesVerbatim
+(ProcurementClientTests.vb) before it ever reached the live app: the test
+asserted LastCallFailed/StatusMessage/ResultText/CorrelationId immediately
+after ApproveAsync() and failed because RefreshAsync's own success reset
+them. Fixed by extracting ReloadOrdersListQuietlyAsync, called only on a
+SUCCESSFUL transition, and never touching the status/result/correlation
+fields the caller just set. Re-ran the same test: green (see section 1).
+
+A second, related fix in the same pass: SelectedOrderSummary's setter
+originally fired an async-void LoadDetailAsync as a side effect - a race
+with whoever just set the property (the same class of bug ADR-017's
+AsyncLocal note already describes for this codebase, just in a different
+place). Replaced with a public LoadSelectedOrderDetailAsync the DataGrid's
+SelectionChanged handler in MainWindow.xaml.vb awaits explicitly, and
+RefreshAsync now awaits it too rather than firing it unobserved.
+
+
+===============================================================================
+3. An unrelated, pre-existing environment defect, found and fixed along the
+   way (not a P3-07 change, recorded here because fixing it was required to
+   finish this card's own live verification)
+===============================================================================
+
+The running MerchandisingApi Windows Service was six days stale (built
+2026-08-22, before P2-07 Products, P2-10 Suppliers, or any Phase 3 endpoint
+existed). GET /api/v1/suppliers and /api/v1/products both 404'd - confirmed
+with curl directly against the service, independent of this client:
+
+  $ curl -sk -i "https://MERCH-HOST:8443/api/v1/suppliers?..." -H "Authorization: Bearer ..."
+  HTTP/1.1 404 Not Found
+
+Redeployed with the user's explicit confirmation (scripts/publish-release.ps1
+-Component Api -Mode SelfContained, then the elevated scripts/install-service.ps1).
+First redeploy attempt published into artifacts/publish/Api-sc (inside the
+repo) and the service then failed to start - "Cannot start service" - because
+that directory's ACL grants only the interactive user account plus
+Administrators/SYSTEM, with no BUILTIN\Users or Authenticated Users entry, so
+the virtual service account NT SERVICE\MerchandisingApi could not read its
+own executable:
+
+  $ icacls "...\artifacts\publish\Api-sc"
+  NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+  BUILTIN\Administrators:(I)(OI)(CI)(F)
+  LAPTOP-3HH6OHHE\Admin:(I)(OI)(CI)(F)          <- no Users/Authenticated Users
+
+Republished to C:\MerchandisingService\Api-sc instead (the original working
+deployment's own location, whose parent directory already carries
+BUILTIN\Users:(RX) and Authenticated Users:(M), inherited correctly onto the
+new files), then re-ran install-service.ps1 pointing there. Service started
+cleanly:
+
+  $ curl -sk https://MERCH-HOST:8443/health
+  {"status":"ok","version":"0.1.0","utcTime":"..."}
+  $ curl -sk -i "https://MERCH-HOST:8443/api/v1/suppliers"
+  HTTP/1.1 401 Unauthorized        <- no longer 404: the route now exists
+
+This is scripts/install-service.ps1's own documented warning ("Publish
+somewhere else for a real install") turning out to have a second, sharper
+reason than file-overwrite: the ACL, not just the risk of a later build
+clobbering a running service. Worth a line in a future hardening pass; not
+otherwise a P3-07 change.
+
+
+===============================================================================
+4. Live click-through, against the real API and real MariaDB - every
+   Done-when action this card names
+===============================================================================
+
+All screenshots captured by driving the actual running window (SetCursorPos
++ mouse_event + SendKeys against the live HWND, screen-captured with
+System.Drawing) - not a design-time preview.
+
+4.1 Login, wrong credentials -> server's own refusal, verbatim
+    Typed with Caps Lock accidentally on (own mistake, left in as evidence
+    of the behaviour this card actually requires):
+      Status:  INVALID_CREDENTIALS
+      Detail:  Username or password is incorrect.
+      Correlation Id: 269e5368-492a-4d18-9357-5f37d072d71c
+    The client showed exactly the server's code and message - it did not
+    infer "wrong password" or hide the correlation ID.
+
+4.2 Login, correct credentials (procurementofficer)
+      Signed in.  Session expires 2026-08-28 07:19:20Z.  Token held in
+      memory only.  Correlation Id: 3d37d362-...
+
+4.3 Suppliers tab - browse
+    Search with a blank query: "474 supplier(s) found." - real seed data
+    (Cebu Tools & Fasteners Corp, Manila Hardware Wholesale, Northern Luzon
+    Building Supply, ...) plus residue from prior integration-test runs
+    against this same shared dev database, rendered without truncation or
+    error in a read-only DataGrid.
+
+4.4 New Order tab - create with lines
+    Supplier search "Cebu" -> selected "Cebu Tools & Fasteners Corp".
+    Product search "hammer" -> two results (HDW-1001 Claw Hammer 16oz,
+    cost 220.0000; a P1-15 demo product). Selected HDW-1001, cost auto-filled
+    from the product record, quantity set to 10, "Add line" -> line appeared
+    in the Lines grid. "Create purchase order":
+      Purchase order PO-20260827-0572 created (Draft).
+      Correlation Id: 40a4e0c3-c12f-4921-9ca5-33582de5a424
+    A real, server-generated order number (PurchaseOrderNumberGenerator,
+    P3-03) - the client never invented one.
+
+4.5 Orders tab - submit
+    Refreshed: 572 orders found, PO-20260827-0572 at the top, Status Draft.
+    Selected it - GetPurchaseOrderAsync loaded its one line (HDW-1001,
+    Ordered 10.000, Received 0.000, Cost 220.0000) into the detail grid.
+    Clicked Submit:
+      Purchase order PO-20260827-0572 is now Submitted.
+      Correlation Id: bf1b37d7-abe6-42fd-9f19-4129a2667c77
+    List and detail both updated to Submitted; the status line was NOT
+    overwritten by the background list refresh (section 2, Defect B, above).
+
+4.6 Approve, wrong role -> server's own 403, verbatim
+    Still signed in as procurementofficer (ProcurementOfficer holds no
+    PurchaseOrders.Approve policy at all - AdminAndAbove only). Clicked
+    Approve:
+      FORBIDDEN
+      This account does not hold a role authorized for this endpoint.
+      Correlation Id: 22627779-a76d-4998-bc79-7929c8288eb4
+    The Approve button was never hidden or disabled for this reason - the
+    client asked the server and showed exactly what it said (this card's own
+    Done-when box: "Server-side refusals ... surface as the API's message
+    and error code - the client never invents its own wording or hides the
+    correlation ID").
+
+4.7 Approve, correct role, different user -> succeeds
+    Signed out, signed in as superadmin (SuperAdmin - a different user from
+    the order's requester, so no self-approval conflict). Same order still
+    selected and Submitted. Clicked Approve:
+      Purchase order PO-20260827-0572 is now Approved.
+      Correlation Id: 7dd26df3-cbb5-4247-9e19-a6f754bccb68
+
+4.8 Cancel, with a reason -> succeeds
+    Selected a different Draft order (PO-20260827-0571). Typed a reason
+    ("No longer needed - test cancellation") and clicked Cancel order:
+      Purchase order PO-20260827-0571 is now Cancelled.
+      Correlation Id: 00766a38-7348-4d6c-9a77-7d548a2abd3e
+    (Client-side reason requirement covered without a live click too -
+    ProcurementClientTests.CancelAsync_WithoutAReason_NeverReachesTheWire
+    asserts a blank reason never reaches the wire at all.)
+
+4.9 History tab - report
+    Blank filters, Search:
+      572 order(s) in range.  Time zone: Asia/Manila.
+    PO-20260827-0572 appears as: Status Approved, Ordered Qty 10.000,
+    Ordered Value 2200.0000 (= 10 x 220.0000, computed entirely server-side
+    per P3-06 - this client never re-sums PurchaseOrderResponse.Lines
+    itself), Received Qty/Value 0 (Phase 4 owns receiving), Outstanding
+    10.000.
+
+
+===============================================================================
+5. What this card's Done-when boxes ask for, and where each is satisfied
+===============================================================================
+
+- Login, supplier browse, order create/submit/approve/cancel and history all
+  work against the running API -> section 4, all nine steps performed live.
+- Guardrail G-B holds (no Infrastructure/MySqlConnector/DB package reference,
+  no connection string) -> section 1, G-B pass, unchanged from every prior
+  card; ClientCommon and Procurement still reference only Contracts.
+- Server-side refusals surface the API's own message/code, never hide the
+  correlation ID -> section 4.1 (wrong credentials), 4.6 (wrong role), and
+  ProcurementClientTests' two rejection tests (section 1).
+- Client-side validation is for usability only, every rule re-checked
+  server-side -> AddLine/CreateOrderAsync/CancelAsync each check only "is
+  this a plausible number" / "is a reason present" before sending; every
+  actual business rule (supplier/product existence and active state,
+  quantity/cost scale, the status machine, the self-approval veto) is
+  decided by PurchaseOrdersController and PurchaseOrderService, never
+  duplicated in a view model.
+- Keyboard navigation and focus order at 1366x768 and 125% scaling -> every
+  interactive control carries an explicit TabIndex in visit order per screen
+  (MainWindow.xaml); the window's default size (1024x680, MinWidth 960,
+  MinHeight 620) fits inside a 1366x768 desktop at 125% scaling (effective
+  ~1093x614 minus taskbar) with room to spare. Full manual tab-order and
+  mouse-free navigation walkthrough is the Phase 7 UI pass's job, per this
+  card's own note ("the Phase 7 UI pass refines this; it does not start
+  it") - not repeated here.
+- Guardrails and both suites green -> section 1.

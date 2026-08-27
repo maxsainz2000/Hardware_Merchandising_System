@@ -255,12 +255,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Login, supplier browse, order create/submit/approve/cancel and history all work against the running API
-- [ ] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
-- [ ] Server-side refusals (403 self-approval, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
-- [ ] Client-side validation is for usability only; every rule is re-checked server-side
-- [ ] Keyboard navigation and focus order work at 1366×768 and 125% scaling (the Phase 7 UI pass refines this; it does not start it)
-- [ ] Guardrails and both suites green
+- [x] Login, supplier browse, order create/submit/approve/cancel and history all work against the running API
+- [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
+- [x] Server-side refusals (403 self-approval, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
+- [x] Client-side validation is for usability only; every rule is re-checked server-side
+- [ ] Keyboard navigation and focus order work at 1366×768 and 125% scaling (the Phase 7 UI pass refines this; it does not start it) — TabIndex ordering authored throughout and the window fits the target resolution, but not yet walked through with the OS actually set to 1366×768 @ 125% (this workstation runs 1920×1200 @ 100%); left open for that check
+- [x] Guardrails and both suites green
 
 **Evidence:** `evidence/phase-3/p3-07-procurement-client.txt`
 
