@@ -143,9 +143,27 @@ foreach ($s in $scopes) {
     # touches the schema, a grant, or a test that needs a live database belongs there. The
     # prose test matters as much as the path test: plenty of API cards name no db/ file and
     # still cannot run anywhere else.
+    #
+    # BOTH TESTS WERE TOO NARROW, AND IT WAS A SILENT FALSE NEGATIVE (found 2026-08-27,
+    # after P3-03). Phase 3 exposed it because every remaining card is integration-tested:
+    #
+    #   - The path test matched only '^db/', so a card declaring
+    #     src/tests/Merchandising.Tests.Integration/PurchaseOrderApprovalTests.vb
+    #     registered no database surface at all.
+    #   - The prose test looked for the literal 'integration test', but every Phase 3 card
+    #     writes "Integration suite green" - so the phrase never matched.
+    #
+    # Result: Tracks C, D and E were ALL reported as needsDb=false and placed on box3, which
+    # has neither MariaDB nor a database config. Track C's integration tests cannot run
+    # there. Per .claude/fleet/mission.md that failure surfaces inside the worker and looks
+    # exactly like a code bug, which is the most expensive way to learn a placement was wrong.
+    #
+    # Widened deliberately rather than minimally: over-reporting needsDb costs parallelism
+    # (a scope is pinned to box1 that need not be), while under-reporting costs a worker that
+    # cannot run its own tests. Those are not symmetric, so this errs toward box1.
     $bodyAll = (($openCards | ForEach-Object { $_.body.ToString() }) -join "`n")
-    $needsDb = ($files | Where-Object { $_ -match '^db/' }) -or
-               ($bodyAll -match '(?i)mariadb|migration|merch_api|merch_migrator|integration test|grant')
+    $needsDb = ($files | Where-Object { $_ -match '^db/' -or $_ -match 'Tests\.Integration' }) -or
+               ($bodyAll -match '(?i)mariadb|migration|merch_api|merch_migrator|integration (test|suite)|grant')
     $box = if ($needsDb) { 'box1' } else { 'box3' }
 
     # The key the orchestrator dispatches with: P2-TRACK-A. Derived, never typed.
