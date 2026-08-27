@@ -873,6 +873,14 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 >
 > **Evidence.** `evidence/phase-3/p3-04-approval.txt`, `evidence/phase-3/p3-04-self-approval-denied.txt`.
 
+> **P3-05 addendum (2026-08-27) — `PurchaseOrders.Cancel` and `PurchaseOrders.Close`, two policies spec section 13 does not name.** Every prior `PurchaseOrders.*` policy (`Create`, `Submit`, `Approve`, `Track`) decomposes from an endpoint section 13's own table explicitly lists. Cancel and close have no row there at all — section 13's table is headed "representative endpoints", so the gap reads as brevity rather than a deliberate exclusion, but that is a judgement call, not a quote, and ADR-017 point 1's own rule ("grounded in section 13's API-area breakdown... rather than an invented split of section 9's prose") does not by itself resolve it. Confirmed with the user before implementing rather than decided silently (`CLAUDE.md` section 7 item 4: an ambiguous spec business rule is a stop condition).
+>
+> **Decision.** Both `ProcurementAndAbove` (`SuperAdmin`, `Admin`, `ProcurementOfficer`) — the same role set as `Create`/`Submit`/`Track`. Reasoning offered to the user: spec section 9's Procurement Officer row states "purchase orders, order tracking" as a primary responsibility, and nothing in section 9's restrictions column narrows cancellation or closure the way "purchase approvals" narrows `Approve` to Admin. The user picked this option over `AdminAndAbove` for both, or a split (Procurement cancels, Admin closes).
+>
+> **What this is not.** Not a section-13 quote the way `Create`/`Submit`/`Approve`/`Track`'s `SpecBasis` strings are — `PolicyRegistry.vb`'s entries for both say so explicitly, rather than dressing up a decision as a citation.
+>
+> **Evidence.** `evidence/phase-3/p3-05-cancellation.txt`.
+
 ---
 
 ## ADR-018 · Unique active barcode, without a partial index

@@ -72,8 +72,7 @@ Public Class AuthorizationMatrixTests
     ''' only a valid token to end its own session. Anything else reaching
     ''' the coverage test's "authenticated, no policy" bucket fails instead
     ''' of joining this list silently.
-    ''' </summary>
-    ''' <summary>
+    '''
     ''' The fourth entry is P3-04's PurchaseOrdersController.ApprovePurchaseOrder.
     ''' PurchaseOrders.Approve carries ADR-017 section 6's resource-based
     ''' SelfApprovalRequirement. A declarative &lt;Authorize(Policy:=...)&gt;
@@ -554,6 +553,93 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P3-05's cancel endpoint. Every probed order is a fresh Draft, created
+    ''' via the SuperAdmin fixture - Cancel is legal from Draft (P3-01's
+    ''' table), so no submit step is needed to isolate this cell.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersCancel_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersCancel)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim creatorToken As String = Await LoginAsync(client, RoleNames.SuperAdmin)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim orderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using cancelResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/cancel", token, NewReasonBody())
+                    Await AssertCellAsync("PurchaseOrders.Cancel", roleName, allowedRoles.Contains(roleName), cancelResponse)
+                End Using
+
+            Next
+
+            Dim anonymousOrderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{anonymousOrderId}/cancel", token:=Nothing, requestBody:=NewReasonBody())
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Cancel", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P3-05's close endpoint. Close is legal only from PartiallyReceived or
+    ''' FullyReceived (P3-01's table), which no live Phase 3 endpoint can
+    ''' reach - Phase 4 owns receiving. Each probed order is forced directly
+    ''' into FullyReceived via SQL purely to arrange fixture state (merch_api
+    ''' holds UPDATE on purchaseorders, db/grants/0010) - this is fixture
+    ''' setup, not something the assertions below rely on for their meaning.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersClose_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersClose)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim creatorToken As String = Await LoginAsync(client, RoleNames.SuperAdmin)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim orderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+                Await ForcePurchaseOrderStatusDirectlyAsync(orderId, "FullyReceived")
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using closeResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/close", token, NewReasonBody())
+                    Await AssertCellAsync("PurchaseOrders.Close", roleName, allowedRoles.Contains(roleName), closeResponse)
+                End Using
+
+            Next
+
+            Dim anonymousOrderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+            Await ForcePurchaseOrderStatusDirectlyAsync(anonymousOrderId, "FullyReceived")
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{anonymousOrderId}/close", token:=Nothing, requestBody:=NewReasonBody())
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Close", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -756,6 +842,32 @@ Public Class AuthorizationMatrixTests
                     .ProductId = productId, .OrderedQuantity = 1.000D, .PurchaseCost = 1.0000D}
             }
         }
+
+    End Function
+
+    ''' <summary>P3-05: the required-Reason body every cancel/close probe sends.</summary>
+    Private Shared Function NewReasonBody() As CancelPurchaseOrderRequest
+        Return New CancelPurchaseOrderRequest With {.Reason = "P3-05 matrix probe"}
+    End Function
+
+    ''' <summary>
+    ''' P3-05: forces an order directly into <paramref name="status"/> - fixture
+    ''' setup ONLY, standing in for Phase 4's receiving endpoints (which do not
+    ''' exist yet) so the Close matrix cell has a PartiallyReceived/FullyReceived
+    ''' order to probe. Same "direct SQL to arrange a precondition no live
+    ''' endpoint can reach yet" shape as ResetStockBalanceDirectlyAsync below.
+    ''' </summary>
+    Private Async Function ForcePurchaseOrderStatusDirectlyAsync(orderId As Integer, status As String) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "UPDATE PurchaseOrders SET Status = @status, UpdatedAtUtc = UTC_TIMESTAMP(6) WHERE Id = @id;"
+                command.Parameters.AddWithValue("@status", status)
+                command.Parameters.AddWithValue("@id", orderId)
+                Await command.ExecuteNonQueryAsync()
+            End Using
+        End Using
 
     End Function
 

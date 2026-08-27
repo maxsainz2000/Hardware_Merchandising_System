@@ -24,6 +24,8 @@ production-readiness claim.
 - `PurchaseOrders.Create` - Create a purchase order.
 - `PurchaseOrders.Submit` - Submit a draft purchase order for approval.
 - `PurchaseOrders.Approve` - Approve a submitted purchase order. Also requires the actor not be the order's own creator (SelfApprovalRequirement, wired in Merchandising.Api.Security).
+- `PurchaseOrders.Cancel` - Abandon a purchase order before any goods have been received.
+- `PurchaseOrders.Close` - Finish a purchase order, accepting whatever has been received.
 - `PurchaseOrders.Track` - View purchase order status and history.
 - `Receiving.Prepare` - Prepare a purchase order for receiving.
 - `Receiving.Confirm` - Confirm receipt of goods against a purchase order.
@@ -56,6 +58,8 @@ production-readiness claim.
 - `PurchaseOrders.Create` - Create a purchase order.
 - `PurchaseOrders.Submit` - Submit a draft purchase order for approval.
 - `PurchaseOrders.Approve` - Approve a submitted purchase order. Also requires the actor not be the order's own creator (SelfApprovalRequirement, wired in Merchandising.Api.Security).
+- `PurchaseOrders.Cancel` - Abandon a purchase order before any goods have been received.
+- `PurchaseOrders.Close` - Finish a purchase order, accepting whatever has been received.
 - `PurchaseOrders.Track` - View purchase order status and history.
 - `Receiving.Prepare` - Prepare a purchase order for receiving.
 - `Receiving.Confirm` - Confirm receipt of goods against a purchase order.
@@ -80,6 +84,8 @@ production-readiness claim.
 - `Suppliers.Manage` - Create or update a supplier record.
 - `PurchaseOrders.Create` - Create a purchase order.
 - `PurchaseOrders.Submit` - Submit a draft purchase order for approval.
+- `PurchaseOrders.Cancel` - Abandon a purchase order before any goods have been received.
+- `PurchaseOrders.Close` - Finish a purchase order, accepting whatever has been received.
 - `PurchaseOrders.Track` - View purchase order status and history.
 - `Receiving.Prepare` - Prepare a purchase order for receiving.
 - `PurchaseReturns.Manage` - Record a purchase return to a supplier.
@@ -116,6 +122,8 @@ production-readiness claim.
 | `PurchaseOrders.Create` | Create a purchase order. | SuperAdmin, Admin, ProcurementOfficer | spec section 9 Procurement Officer 'purchase orders' |
 | `PurchaseOrders.Submit` | Submit a draft purchase order for approval. | SuperAdmin, Admin, ProcurementOfficer | spec section 10.1 purchase-order status transitions |
 | `PurchaseOrders.Approve` | Approve a submitted purchase order. Also requires the actor not be the order's own creator (SelfApprovalRequirement, wired in Merchandising.Api.Security). | SuperAdmin, Admin | spec section 9 Admin 'purchase approvals'; Procurement Officer restriction 'cannot approve their own purchase order' |
+| `PurchaseOrders.Cancel` | Abandon a purchase order before any goods have been received. | SuperAdmin, Admin, ProcurementOfficer | spec section 9 Procurement Officer 'purchase orders, order tracking' - section 13's endpoint table does not name this operation, so this is a P3-05 decomposition, not a section-13 quote |
+| `PurchaseOrders.Close` | Finish a purchase order, accepting whatever has been received. | SuperAdmin, Admin, ProcurementOfficer | spec section 9 Procurement Officer 'order tracking' - section 13's endpoint table does not name this operation, so this is a P3-05 decomposition, not a section-13 quote |
 | `PurchaseOrders.Track` | View purchase order status and history. | SuperAdmin, Admin, ProcurementOfficer | spec section 9 Procurement Officer 'order tracking' |
 | `Receiving.Prepare` | Prepare a purchase order for receiving. | SuperAdmin, Admin, ProcurementOfficer | spec section 9 Procurement Officer 'receiving preparation' |
 | `Receiving.Confirm` | Confirm receipt of goods against a purchase order. | SuperAdmin, Admin, InventoryClerk | spec section 9 Inventory Clerk 'receiving confirmation' |

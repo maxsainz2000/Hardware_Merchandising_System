@@ -69,6 +69,9 @@ Namespace Controllers
         Private Const DefaultPageSize As Integer = 25
         Private Const MaxPageSize As Integer = 100
 
+        ''' <summary>Same bound MaintenanceController.MaxReasonLength uses for the same "require reason" control (spec section 9).</summary>
+        Private Const MaxReasonLength As Integer = 500
+
         Private ReadOnly _connectionFactory As ConnectionFactory
         Private ReadOnly _purchaseOrderService As PurchaseOrderService
         Private ReadOnly _authorizationService As IAuthorizationService
@@ -402,7 +405,81 @@ Namespace Controllers
 
         End Function
 
+        ''' <summary>
+        ''' Abandons a Draft, Submitted or Approved order (spec section 10.1).
+        ''' Role-only check, same shape as SubmitPurchaseOrder - Cancel carries
+        ''' no self-approval requirement.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.PurchaseOrdersCancel)>
+        <AuditRequired>
+        <HttpPost("{id}/cancel")>
+        Public Async Function CancelPurchaseOrder(id As Integer, <FromBody> request As CancelPurchaseOrderRequest) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim reasonFailure As IActionResult = ValidateReason(request?.Reason, correlationId)
+
+            If reasonFailure IsNot Nothing Then
+                Return reasonFailure
+            End If
+
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PurchaseOrderTransitionOutcome =
+                Await _purchaseOrderService.CancelAsync(
+                    id, actorUserId, request.Reason, correlationId, cancellationToken:=HttpContext.RequestAborted)
+
+            Return TransitionResult(outcome, id, correlationId)
+
+        End Function
+
+        ''' <summary>
+        ''' Finishes a PartiallyReceived or FullyReceived order, accepting
+        ''' whatever has been received (spec section 10.1). Role-only check.
+        ''' Adds no rule of its own - a caller in ANY other status is refused
+        ''' by CanTransition alone, the same as every other transition here.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.PurchaseOrdersClose)>
+        <AuditRequired>
+        <HttpPost("{id}/close")>
+        Public Async Function ClosePurchaseOrder(id As Integer, <FromBody> request As ClosePurchaseOrderRequest) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim reasonFailure As IActionResult = ValidateReason(request?.Reason, correlationId)
+
+            If reasonFailure IsNot Nothing Then
+                Return reasonFailure
+            End If
+
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PurchaseOrderTransitionOutcome =
+                Await _purchaseOrderService.CloseAsync(
+                    id, actorUserId, request.Reason, correlationId, cancellationToken:=HttpContext.RequestAborted)
+
+            Return TransitionResult(outcome, id, correlationId)
+
+        End Function
+
         ' --------------------------------------------------------- validation
+
+        ''' <summary>Shared by Cancel and Close: a reason is required, same bound MaintenanceController's Enter uses for the same purpose.</summary>
+        Private Function ValidateReason(reason As String, correlationId As String) As IActionResult
+
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            If String.IsNullOrWhiteSpace(reason) Then
+                fieldErrors("reason") = {"A reason is required."}
+            ElseIf reason.Length > MaxReasonLength Then
+                fieldErrors("reason") = {$"Reason must be {MaxReasonLength} characters or fewer."}
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Return Nothing
+
+        End Function
 
         ''' <summary>
         ''' Everything about the request that can be judged without touching

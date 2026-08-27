@@ -456,6 +456,125 @@ Namespace Procurement
         End Function
 
         ''' <summary>
+        ''' Abandons <paramref name="purchaseOrderId"/> (spec section 10.1: "A
+        ''' cancelled order cannot receive goods"). Legal from Draft,
+        ''' Submitted or Approved (P3-01's table) - never from
+        ''' PartiallyReceived/FullyReceived, where goods already moved and
+        ''' Close, not Cancel, is the route for abandoning the remainder.
+        ''' </summary>
+        Public Async Function CancelAsync(
+            purchaseOrderId As Integer,
+            actorUserId As Integer,
+            reason As String,
+            correlationId As String,
+            Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of PurchaseOrderTransitionOutcome)
+
+            Return Await TransitionWithReasonAsync(
+                purchaseOrderId, DomainProcurement.PurchaseOrderAction.Cancel, "PurchaseOrderCancelled",
+                actorUserId, reason, correlationId, testOnlyFaultAfterAuditInsert, cancellationToken).ConfigureAwait(False)
+
+        End Function
+
+        ''' <summary>
+        ''' Finishes <paramref name="purchaseOrderId"/>, accepting whatever
+        ''' has been received. Legal only from PartiallyReceived or
+        ''' FullyReceived (P3-01's table) - Phase 4 owns the receiving
+        ''' endpoints that reach those states; this card adds no rule of its
+        ''' own beyond what CanTransition already decides.
+        ''' </summary>
+        Public Async Function CloseAsync(
+            purchaseOrderId As Integer,
+            actorUserId As Integer,
+            reason As String,
+            correlationId As String,
+            Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of PurchaseOrderTransitionOutcome)
+
+            Return Await TransitionWithReasonAsync(
+                purchaseOrderId, DomainProcurement.PurchaseOrderAction.Close, "PurchaseOrderClosed",
+                actorUserId, reason, correlationId, testOnlyFaultAfterAuditInsert, cancellationToken).ConfigureAwait(False)
+
+        End Function
+
+        ''' <summary>
+        ''' Shared shape for CancelAsync/CloseAsync - both are "lock, ask
+        ''' CanTransition, write the ONE column (Status) both share, audit
+        ''' with the caller's reason, commit" with nothing else distinguishing
+        ''' them (contrast SubmitAsync/ApproveAsync, which each own a
+        ''' distinct extra column and so stay separate methods). The target
+        ''' status comes from CanTransition's own decision, never hardcoded
+        ''' here - this method does not know or care which of the two callers
+        ''' invoked it beyond the action/audit-name pair they pass in.
+        ''' </summary>
+        Private Async Function TransitionWithReasonAsync(
+            purchaseOrderId As Integer,
+            action As DomainProcurement.PurchaseOrderAction,
+            auditAction As String,
+            actorUserId As Integer,
+            reason As String,
+            correlationId As String,
+            testOnlyFaultAfterAuditInsert As Action,
+            cancellationToken As CancellationToken) As Task(Of PurchaseOrderTransitionOutcome)
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim transaction As MySqlTransaction =
+                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim locked =
+                    Await PurchaseOrderRepository.GetStatusForUpdateAsync(
+                        connection, transaction, purchaseOrderId, cancellationToken).ConfigureAwait(False)
+
+                If Not locked.Found Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.NotFound()
+                End If
+
+                Dim decision As DomainProcurement.PurchaseOrderTransitionResult =
+                    DomainProcurement.PurchaseOrderTransitions.CanTransition(locked.Status, action)
+
+                If Not decision.IsAllowed Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.Refused(decision.ErrorCode)
+                End If
+
+                Dim updated As Boolean =
+                    Await PurchaseOrderRepository.MarkStatusAsync(
+                        connection, transaction, purchaseOrderId, decision.To.Value, cancellationToken).ConfigureAwait(False)
+
+                If Not updated Then
+                    Throw New InvalidOperationException(
+                        $"PurchaseOrder {purchaseOrderId} was locked by GetStatusForUpdateAsync but MarkStatusAsync affected zero rows. This should be unreachable.")
+                End If
+
+                Dim committed As PurchaseOrder =
+                    Await PurchaseOrderRepository.GetByIdAsync(
+                        connection, purchaseOrderId, cancellationToken, transaction).ConfigureAwait(False)
+
+                Await AuditLogWriter.WriteAsync(
+                    connection, actorUserId, auditAction, committed.OrderNumber, "Success", correlationId,
+                    detail:=reason,
+                    cancellationToken:=cancellationToken,
+                    transaction:=transaction).ConfigureAwait(False)
+
+#If DEBUG Then
+                testOnlyFaultAfterAuditInsert?.Invoke()
+#End If
+
+                Await transaction.CommitAsync(cancellationToken).ConfigureAwait(False)
+                Await transaction.DisposeAsync().ConfigureAwait(False)
+
+                Return PurchaseOrderTransitionOutcome.Success(ToResponse(committed))
+
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Reads one order with its lines. Nothing if no such order exists.
         ''' </summary>
         Public Async Function GetAsync(

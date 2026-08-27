@@ -245,6 +245,40 @@ Namespace Data
         End Function
 
         ''' <summary>
+        ''' P3-05: moves a locked order to <paramref name="targetStatus"/> -
+        ''' shared by Cancel and Close, neither of which sets any column
+        ''' beyond Status (contrast <see cref="MarkSubmittedAsync"/> /
+        ''' <see cref="MarkApprovedAsync"/>, which each own a distinct
+        ''' timestamp/actor column 0008 defines). Same locked-row arrangement
+        ''' as those two: the affected-row count here is a defensive check,
+        ''' not the mechanism that prevents a lost update - the row lock
+        ''' <see cref="GetStatusForUpdateAsync"/> already took is.
+        ''' </summary>
+        Public Shared Async Function MarkStatusAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            id As Integer,
+            targetStatus As PurchaseOrderStatus,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE PurchaseOrders " &
+                    "   SET Status = @status, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id;"
+                command.Parameters.AddWithValue("@status", targetStatus.ToString())
+                command.Parameters.AddWithValue("@id", id)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Reads one order with every line, ordered by LineNumber. Nothing if
         ''' no such order exists. <paramref name="transaction"/> is optional so
         ''' the creating transaction can read back what it has just written,

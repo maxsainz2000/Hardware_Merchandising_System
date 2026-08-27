@@ -207,7 +207,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ---
 
-### ⬜ P3-05 · Cancellation and closure rules
+### ✅ P3-05 · Cancellation and closure rules
 
 **Spec:** §10.1 · **Files:** `src/Merchandising.Api/Controllers/PurchaseOrdersController.vb`, `src/Merchandising.Domain/Procurement/`
 
@@ -215,12 +215,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] A cancelled order refuses every subsequent action with a stable error code — enumerated over all actions, not spot-checked
-- [ ] Closure rules match P3-01's table exactly; the controller adds no rule of its own
-- [ ] A cancelled or closed order is never physically deleted (spec §12) and remains fully readable in history
-- [ ] Both transitions audited with actor, reason and correlation ID
-- [ ] **Matrix suite extended** for both routes
-- [ ] Integration suite green
+- [x] A cancelled order refuses every subsequent action with a stable error code — enumerated over all actions, not spot-checked
+- [x] Closure rules match P3-01's table exactly; the controller adds no rule of its own
+- [x] A cancelled or closed order is never physically deleted (spec §12) and remains fully readable in history
+- [x] Both transitions audited with actor, reason and correlation ID
+- [x] **Matrix suite extended** for both routes
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-3/p3-05-cancellation.txt`
 

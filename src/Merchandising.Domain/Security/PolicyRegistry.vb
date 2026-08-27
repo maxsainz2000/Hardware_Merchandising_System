@@ -44,6 +44,8 @@ Namespace Security
             Public Const PurchaseOrdersCreate As String = "PurchaseOrders.Create"
             Public Const PurchaseOrdersSubmit As String = "PurchaseOrders.Submit"
             Public Const PurchaseOrdersApprove As String = "PurchaseOrders.Approve"
+            Public Const PurchaseOrdersCancel As String = "PurchaseOrders.Cancel"
+            Public Const PurchaseOrdersClose As String = "PurchaseOrders.Close"
             Public Const PurchaseOrdersTrack As String = "PurchaseOrders.Track"
             Public Const ReceivingPrepare As String = "Receiving.Prepare"
             Public Const ReceivingConfirm As String = "Receiving.Confirm"
@@ -117,6 +119,8 @@ Namespace Security
             collected.Add(New PolicyDefinition(Names.PurchaseOrdersCreate, "Create a purchase order.", ProcurementAndAbove, "spec section 9 Procurement Officer 'purchase orders'"))
             collected.Add(New PolicyDefinition(Names.PurchaseOrdersSubmit, "Submit a draft purchase order for approval.", ProcurementAndAbove, "spec section 10.1 purchase-order status transitions"))
             collected.Add(New PolicyDefinition(Names.PurchaseOrdersApprove, "Approve a submitted purchase order. Also requires the actor not be the order's own creator (SelfApprovalRequirement, wired in Merchandising.Api.Security).", AdminAndAbove, "spec section 9 Admin 'purchase approvals'; Procurement Officer restriction 'cannot approve their own purchase order'"))
+            collected.Add(New PolicyDefinition(Names.PurchaseOrdersCancel, "Abandon a purchase order before any goods have been received.", ProcurementAndAbove, "spec section 9 Procurement Officer 'purchase orders, order tracking' - section 13's endpoint table does not name this operation, so this is a P3-05 decomposition, not a section-13 quote"))
+            collected.Add(New PolicyDefinition(Names.PurchaseOrdersClose, "Finish a purchase order, accepting whatever has been received.", ProcurementAndAbove, "spec section 9 Procurement Officer 'order tracking' - section 13's endpoint table does not name this operation, so this is a P3-05 decomposition, not a section-13 quote"))
             collected.Add(New PolicyDefinition(Names.PurchaseOrdersTrack, "View purchase order status and history.", ProcurementAndAbove, "spec section 9 Procurement Officer 'order tracking'"))
 
             collected.Add(New PolicyDefinition(Names.ReceivingPrepare, "Prepare a purchase order for receiving.", ProcurementAndAbove, "spec section 9 Procurement Officer 'receiving preparation'"))

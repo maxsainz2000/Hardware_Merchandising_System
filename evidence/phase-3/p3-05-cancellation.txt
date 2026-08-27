@@ -1,0 +1,216 @@
+P3-05 - cancellation and closure rules - acceptance evidence
+Captured 2026-08-27 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0), over real HTTP through MerchandisingApiFactory
+where the card requires it, and directly against PurchaseOrderService
+otherwise. Nothing below is quoted from a design document; every figure is
+a measurement.
+
+Endpoints added:
+  POST /api/v1/purchase-orders/{id}/cancel   PurchaseOrders.Cancel  [AuditRequired]
+  POST /api/v1/purchase-orders/{id}/close    PurchaseOrders.Close   [AuditRequired]
+
+Both routed through P3-01's PurchaseOrderTransitions.CanTransition (ADR-020) -
+no new domain logic was needed; the table already had every row this card
+needed (Cancel legal from Draft/Submitted/Approved, Close legal only from
+PartiallyReceived/FullyReceived, both terminal states already refuse
+everything). What P3-05 added is the wiring: two new PolicyRegistry entries
+(PurchaseOrders.Cancel, PurchaseOrders.Close - both ProcurementAndAbove,
+confirmed with the user before implementing since spec section 13's endpoint
+table names neither operation explicitly), two request contracts each
+requiring a Reason, two controller actions, and PurchaseOrderService.CancelAsync/
+CloseAsync sharing one private TransitionWithReasonAsync helper (both only
+ever touch the Status column, unlike Submit/Approve which each own a
+distinct extra column).
+
+
+===============================================================================
+1. Full verification pass - whole repository
+===============================================================================
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    0 Warning(s)
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  37, Skipped: 0, Total:  37 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 200, Skipped: 0, Total: 200 - Merchandising.Tests.Integration.dll (net10.0)
+
+Integration count moved 182 -> 200: 16 new PurchaseOrderCancellationTests plus
+2 new AuthorizationMatrixTests cells (PurchaseOrdersCancel_MatrixMatchesPolicyRegistry,
+PurchaseOrdersClose_MatrixMatchesPolicyRegistry).
+
+Also fixed in this pass: a duplicate <summary> XML doc tag on
+AuthenticatedNoPolicyAllowlist (AuthorizationMatrixTests.vb), left over from
+P3-04, that a fresh `dotnet build` caught as BC42305 - a real 0-warnings
+defect in the P3-04 commit, corrected here since this file was already open
+for this card's own matrix cells.
+
+
+===============================================================================
+2. Done-when box 1 - a cancelled order refuses every action, enumerated
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~CancelledOrder_RefusesEveryAction_Enumerated"
+  Passed CancelledOrder_RefusesEveryAction_Enumerated [28 ms]
+
+All six PurchaseOrderAction values asserted against a Cancelled order, every
+one refused with PURCHASE_ORDER_CANCELLED:
+  Submit    -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderService.SubmitAsync)
+  Approve   -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderService.ApproveAsync)
+  Cancel    -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderService.CancelAsync - a second cancel is not a silent no-op)
+  Close     -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderService.CloseAsync)
+  ReceivePartially -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderTransitions.CanTransition directly - no live endpoint yet, Phase 4)
+  ReceiveFully      -> Refused, PURCHASE_ORDER_CANCELLED  (PurchaseOrderTransitions.CanTransition directly - no live endpoint yet, Phase 4)
+
+Submit/Approve/Cancel/Close go through the real service methods, the four
+actions with live Phase 3 endpoints. ReceivePartially/ReceiveFully have none
+yet, so those two are asserted directly against CanTransition - the same
+table PurchaseOrderTransitionTests already proves exhaustively for all 42
+(state, action) pairs at P3-01 (13 tests); this test confirms the specific
+row rather than re-deriving the whole table.
+
+
+===============================================================================
+3. Done-when box 2 - closure rules match P3-01's table exactly
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~PurchaseOrderCancellationTests"
+  Passed CancelAsync_FromDraft_Succeeds [375 ms]
+  Passed CancelAsync_FromSubmitted_Succeeds [26 ms]
+  Passed CancelAsync_FromApproved_Succeeds [26 ms]
+  Passed CloseAsync_FromPartiallyReceived_Succeeds [25 ms]
+  Passed CloseAsync_FromFullyReceived_Succeeds [20 ms]
+  Passed CancelAsync_FromPartiallyReceived_RefusedInvalidTransition [22 ms]
+  Passed CloseAsync_FromDraft_RefusedInvalidTransition [16 ms]
+  Passed CloseAsync_FromSubmitted_RefusedInvalidTransition [15 ms]
+  Passed CloseAsync_FromApproved_RefusedInvalidTransition [13 ms]
+  Passed CancelledOrder_RefusesEveryAction_Enumerated [28 ms]
+  Passed ClosedOrder_RefusesEveryAction_Enumerated [19 ms]
+  Passed CancelPurchaseOrder_OverHttp_OrderRemainsReadableAfterCancellation [679 ms]
+  Passed CancelPurchaseOrder_Success_AuditedWithActorReasonAndCorrelationId [266 ms]
+  Passed ClosePurchaseOrder_Success_AuditedWithActorReasonAndCorrelationId [30 ms]
+  Passed CancelPurchaseOrder_MissingReason_Refused400 [214 ms]
+  Passed CancelAsync_UnknownOrder_ReturnsNotFound [11 ms]
+Test Run Successful. Total tests: 16, Passed: 16
+
+Matches P3-01's table exactly:
+  Cancel:  Draft -> Cancelled (allowed), Submitted -> Cancelled (allowed),
+           Approved -> Cancelled (allowed), PartiallyReceived -> REFUSED
+           (goods already moved; Close is the only route once receiving has
+           started - a receipt already wrote append-only StockMovements).
+  Close:   PartiallyReceived -> Closed (allowed), FullyReceived -> Closed
+           (allowed), Draft/Submitted/Approved -> REFUSED (nothing has been
+           received yet, so there is nothing to close out).
+
+The controller adds no rule of its own: CancelPurchaseOrder/ClosePurchaseOrder
+validate only the Reason field's SHAPE (non-empty, <= 500 chars) before
+handing the id straight to PurchaseOrderService, which does nothing but ask
+CanTransition and act on its answer.
+
+PartiallyReceived/FullyReceived, being unreachable through any live Phase 3
+endpoint (Phase 4 owns receiving), are reached in these tests with a direct
+SQL UPDATE - fixture setup only, not something any assertion above depends
+on for its meaning.
+
+
+===============================================================================
+4. Done-when box 3 - never physically deleted, remains fully readable
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~CancelPurchaseOrder_OverHttp_OrderRemainsReadableAfterCancellation"
+  Passed CancelPurchaseOrder_OverHttp_OrderRemainsReadableAfterCancellation [679 ms]
+
+Cancels an order over real HTTP, then GETs it back: 200, not 404, Status =
+"Cancelled". Structurally guaranteed too - db/grants/0010_purchase-order-grants.sql
+grants merch_api INSERT and UPDATE on purchaseorders, never DELETE:
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';" | grep purchaseorders
+GRANT INSERT, UPDATE ON `merchandising`.`purchaseorders` TO `merch_api`@`localhost`
+
+Measured directly, two real cancelled orders from this evidence-capture run:
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT p.Id, p.Status, u.Username AS RequestedBy, p.UpdatedAtUtc
+      FROM purchaseorders p JOIN users u ON u.Id = p.RequestedByUserId
+     WHERE u.Username = 'p3_05_fixture_procurement' AND p.Status = 'Cancelled'
+  ORDER BY p.Id DESC LIMIT 2;"
+
+Id    Status     RequestedBy                UpdatedAtUtc
+2779  Cancelled  p3_05_fixture_procurement  2026-08-27 13:37:23.167374
+2778  Cancelled  p3_05_fixture_procurement  2026-08-27 13:37:22.887413
+
+Both rows still exist, fully readable - cancellation is a status change, not
+a deletion (spec section 12).
+
+
+===============================================================================
+5. Done-when box 4 - both transitions audited with actor, reason and
+   correlation ID
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~AuditedWithActorReasonAndCorrelationId"
+  Passed CancelPurchaseOrder_Success_AuditedWithActorReasonAndCorrelationId [266 ms]
+  Passed ClosePurchaseOrder_Success_AuditedWithActorReasonAndCorrelationId [30 ms]
+
+Measured directly against the database (four real rows from this
+evidence-capture run's matrix-cell probes):
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT Id, ActorUserId, Action, Target, Result, Detail, CorrelationId, CreatedAtUtc
+      FROM auditlogs WHERE Action IN ('PurchaseOrderCancelled','PurchaseOrderClosed')
+  ORDER BY Id DESC LIMIT 4;"
+
+Id    ActorUserId  Action                 Target            Result   Detail                CorrelationId                          CreatedAtUtc
+5920  21           PurchaseOrderClosed    PO-20260827-0397  Success  P3-05 matrix probe    ff7f0008-1da5-4005-9b7c-f06977465729  2026-08-27 13:37:33.035503
+5917  21           PurchaseOrderClosed    PO-20260827-0396  Success  P3-05 matrix probe    e35e4d74-0be8-4bab-95b8-ea44359728bf  2026-08-27 13:37:32.935589
+5914  19           PurchaseOrderClosed    PO-20260827-0395  Success  P3-05 matrix probe    f8ae714b-48fb-46d6-a4f9-b91f5f2c24e7  2026-08-27 13:37:32.814938
+5905  21           PurchaseOrderCancelled PO-20260827-0391  Success  P3-05 matrix probe    1e48aabd-900d-4154-9095-2349ff6fb941  2026-08-27 13:37:32.220622
+
+Every row carries ActorUserId (who actually performed the transition), Detail
+(the caller-supplied Reason, not discarded after validation), and a
+CorrelationId - the three fields the done-when box names.
+
+A missing reason is refused before anything is written:
+
+$ dotnet test --filter "FullyQualifiedName~CancelPurchaseOrder_MissingReason_Refused400"
+  Passed CancelPurchaseOrder_MissingReason_Refused400 [214 ms]
+-> 400 VALIDATION_FAILED, field "reason", same shape MaintenanceController.Enter
+   already uses for its own required-reason control (spec section 9).
+
+
+===============================================================================
+6. Done-when box 5 - matrix suite extended, both routes
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~PurchaseOrdersCancel_MatrixMatchesPolicyRegistry | FullyQualifiedName~PurchaseOrdersClose_MatrixMatchesPolicyRegistry"
+  Passed PurchaseOrdersCancel_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersClose_MatrixMatchesPolicyRegistry [756 ms]
+Test Run Successful. Total tests: 2, Passed: 2
+
+Both PurchaseOrders.Cancel and PurchaseOrders.Close are ProcurementAndAbove
+(SuperAdmin, Admin, ProcurementOfficer allowed; InventoryClerk, Cashier
+refused 403) - confirmed with the user before implementation, since spec
+section 13's "representative endpoints" table names neither operation
+explicitly (unlike Submit/Approve, which it does name). docs/role-permission-matrix.md
+regenerated from PolicyRegistry.Definitions via RolePermissionMatrixFormatter.Render
+(RolePermissionMatrixDocumentationTests asserts this stays byte-for-byte
+current - it does, per the clean build above).
+
+
+===============================================================================
+7. Not owed by this card's done-when boxes, and deliberately not duplicated
+===============================================================================
+
+Unlike P3-04, this card's boxes do not ask for a forced-failure/rollback
+proof. CancelAsync and CloseAsync share PurchaseOrderService.
+TransitionWithReasonAsync - structurally the identical transaction shape
+(lock, decide, write, audit, #If DEBUG fault hook, commit) already proved
+atomic for ApproveAsync at P3-04
+(ApproveAsync_FaultInjectedBeforeCommit_RollsBackStatusAndAuditRows,
+evidence/phase-3/p3-04-approval.txt section 5). A second proof of the same
+mechanism was judged not worth repeating here.
