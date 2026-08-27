@@ -1,0 +1,164 @@
+P3-04 - submit and approve, with self-approval prohibited - acceptance evidence
+Captured 2026-08-27 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0), over real HTTP through MerchandisingApiFactory
+where the card requires it, and directly against PurchaseOrderService where
+the fault-injection hook has no HTTP surface. Nothing below is quoted from a
+design document; every figure is a measurement.
+
+Endpoints added:
+  POST /api/v1/purchase-orders/{id}/submit   PurchaseOrders.Submit    [AuditRequired]
+  POST /api/v1/purchase-orders/{id}/approve  PurchaseOrders.Approve   [AuditRequired]
+                                              + ADR-017 section 6 SelfApprovalRequirement,
+                                              enforced imperatively (see PurchaseOrdersController's
+                                              own comment on ApprovePurchaseOrder for why a
+                                              declarative <Authorize(Policy:=...)> cannot work here)
+
+
+===============================================================================
+1. Full verification pass - whole repository
+===============================================================================
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    0 Warning(s)
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  37, Skipped: 0, Total:  37 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 182, Skipped: 0, Total: 182 - Merchandising.Tests.Integration.dll (net10.0)
+
+Integration count moved 171 -> 182: 9 new PurchaseOrderApprovalTests plus
+2 new AuthorizationMatrixTests cells (PurchaseOrdersSubmit_MatrixMatchesPolicyRegistry,
+PurchaseOrdersApprove_MatrixMatchesPolicyRegistry).
+
+
+===============================================================================
+2. Done-when box 1 - matrix suite extended, both routes
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~PurchaseOrdersSubmit_MatrixMatchesPolicyRegistry | FullyQualifiedName~PurchaseOrdersApprove_MatrixMatchesPolicyRegistry"
+  Passed PurchaseOrdersSubmit_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersApprove_MatrixMatchesPolicyRegistry [999 ms]
+Test Run Successful. Total tests: 2, Passed: 2
+
+Submit is ProcurementAndAbove (SuperAdmin, Admin, ProcurementOfficer allowed;
+InventoryClerk, Cashier refused 403). Approve is AdminAndAbove (SuperAdmin,
+Admin allowed; ProcurementOfficer, InventoryClerk, Cashier refused 403) -
+every order probed for the Approve matrix is created AND submitted by the
+ProcurementOfficer fixture, who is never in Approve's allowed set, so the
+role dimension is isolated from the self-approval dimension (that cross-check
+is PurchaseOrderApprovalTests' job, immediately below).
+
+
+===============================================================================
+3. Done-when boxes 2-3 - self-approval refused 403, a different authorized
+   user succeeds, both over real HTTP with two real users
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~PurchaseOrderApprovalTests"
+  Passed ApprovePurchaseOrder_SameUserAsRequester_Refused403AndAudited [947 ms]
+  Passed ApprovePurchaseOrder_DifferentAuthorizedUser_SucceedsAndIsAttributable [1 s]
+  Passed ApprovePurchaseOrder_ProcurementOfficerNotTheRequester_StillRefused403
+  Passed ApproveAsync_OrderStillDraft_RefusedInvalidTransition [31 ms]
+  Passed SubmitAsync_OrderAlreadySubmitted_RefusedInvalidTransition [35 ms]
+  Passed SubmitAsync_OrderAlreadyApproved_RefusedInvalidTransition [27 ms]
+  Passed ApproveAsync_OrderAlreadyApproved_RefusedInvalidTransition [27 ms]
+  Passed ApproveAsync_UnknownOrder_ReturnsNotFound [10 ms]
+  Passed ApproveAsync_FaultInjectedBeforeCommit_RollsBackStatusAndAuditRows [49 ms]
+Test Run Successful. Total tests: 9, Passed: 9
+
+Live ASP.NET Core pipeline log for the self-approval attempt (from the same
+run), showing the request actually reached ApprovePurchaseOrder, was refused
+by the framework's own ForbidResult/SessionAuthenticationHandler machinery -
+not a controller `If` - and the response really was 403:
+
+  info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+        Executing endpoint 'Merchandising.Api.Controllers.PurchaseOrdersController.ApprovePurchaseOrder (Merchandising.Api)'
+  info: Microsoft.AspNetCore.Mvc.ForbidResult[1]
+        Executing ForbidResult with authentication schemes (Session).
+  info: Merchandising.Api.Security.SessionAuthenticationHandler[13]
+        AuthenticationScheme: Session was forbidden.
+  info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+        Request finished HTTP/1.1 POST http://localhost/api/v1/purchase-orders/2483/approve - 403 - application/json 21.4361ms
+
+
+===============================================================================
+4. Attributability, measured directly against the database
+===============================================================================
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT p.Id, p.Status, p.RequestedByUserId, ru.Username AS RequestedBy,
+           p.ApprovedByUserId, au.Username AS ApprovedBy, p.ApprovedAtUtc
+      FROM purchaseorders p
+      JOIN users ru ON ru.Id = p.RequestedByUserId
+ LEFT JOIN users au ON au.Id = p.ApprovedByUserId
+     WHERE p.Status = 'Approved' AND ru.Username = 'p3_04_fixture_admin_a'
+  ORDER BY p.Id DESC LIMIT 2;"
+
+Id    Status    RequestedByUserId  RequestedBy            ApprovedByUserId  ApprovedBy             ApprovedAtUtc
+2502  Approved  404                p3_04_fixture_admin_a  405               p3_04_fixture_admin_b  2026-08-27 13:02:30.543758
+2487  Approved  404                p3_04_fixture_admin_a  405               p3_04_fixture_admin_b  2026-08-27 13:01:32.223175
+
+RequestedByUserId (404, admin_a) and ApprovedByUserId (405, admin_b) are two
+different users, as the self-approval rule requires when the transition is
+allowed to happen at all. ApprovedAtUtc is a real, current UTC timestamp -
+not null, not the CreatedAtUtc value.
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT Id, ActorUserId, Action, Target, Result, CorrelationId, CreatedAtUtc
+      FROM auditlogs WHERE Action = 'PurchaseOrderApproved' ORDER BY Id DESC LIMIT 2;"
+
+Id    ActorUserId  Action                Target            Result   CorrelationId                         CreatedAtUtc
+5215  405          PurchaseOrderApproved PO-20260827-0223  Success  ff91b401-3f68-4743-90db-913d6f210c7b  2026-08-27 13:02:30.546804
+5193  20           PurchaseOrderApproved PO-20260827-0217  Success  9c28bb7b-7f55-41a6-b652-b19dc5ae5e64  2026-08-27 13:01:45.692196
+
+ActorUserId (405) is the APPROVER, matching ApprovedByUserId above, not the
+requester - the audit trail is attributable to who actually acted, per spec
+section 9's control table (actor, timestamp, action, target, result,
+correlation identifier).
+
+
+===============================================================================
+5. Status change and audit commit together or not at all (P1-12/P2-08 shape)
+===============================================================================
+
+ApproveAsync_FaultInjectedBeforeCommit_RollsBackStatusAndAuditRows: a fault is
+thrown inside the same transaction, immediately after the audit insert and
+before commit. The unhandled exception propagates out through the enclosing
+`Using connection`, whose Dispose() severs the connection and lets MariaDB
+roll back whatever was still open (the same mechanism P1-12 proved and
+PriceChangeService's own forced-failure test already relies on). Before/after
+assertions in the test confirm: Status stays "Submitted" (never "Approved"),
+ApprovedByUserId and ApprovedAtUtc stay null, and the AuditLogs row count for
+that correlation ID stays zero. Passed [49 ms].
+
+
+===============================================================================
+6. Every illegal transition into Submitted/Approved is refused with the
+   stable error code PurchaseOrderTransitionErrors.InvalidTransition
+===============================================================================
+
+  Approve a Draft order (never submitted)         -> Refused, InvalidTransition
+  Submit an already-Submitted order                -> Refused, InvalidTransition
+  Submit an Approved order                         -> Refused, InvalidTransition
+  Approve an already-Approved order (double-approve) -> Refused, InvalidTransition
+  Approve/Submit an unknown order id               -> NotFound (controlled, no exception)
+
+All five asserted directly against PurchaseOrderService.SubmitAsync/ApproveAsync,
+complementing PurchaseOrderTransitionTests' 13 pure-table unit tests (P3-01) by
+proving the SERVICE actually wires CanTransition end-to-end against committed
+rows, not only that the table itself is correct in isolation.
+
+
+===============================================================================
+7. Related decision recorded elsewhere
+===============================================================================
+
+Building this card required moving Merchandising.Api.Security.IOwnershipResource
+to Merchandising.Domain.Security so Merchandising.Domain.Entities.PurchaseOrder
+could implement it directly (CLAUDE.md section 4: Domain depends on nothing).
+Full reasoning: docs/adr.md, ADR-017's P3-04 addendum.

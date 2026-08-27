@@ -71,10 +71,16 @@ Namespace Controllers
 
         Private ReadOnly _connectionFactory As ConnectionFactory
         Private ReadOnly _purchaseOrderService As PurchaseOrderService
+        Private ReadOnly _authorizationService As IAuthorizationService
 
-        Public Sub New(connectionFactory As ConnectionFactory, purchaseOrderService As PurchaseOrderService)
+        Public Sub New(
+            connectionFactory As ConnectionFactory,
+            purchaseOrderService As PurchaseOrderService,
+            authorizationService As IAuthorizationService)
+
             _connectionFactory = connectionFactory
             _purchaseOrderService = purchaseOrderService
+            _authorizationService = authorizationService
         End Sub
 
         ''' <summary>
@@ -250,6 +256,149 @@ Namespace Controllers
             End If
 
             Return Ok(order)
+
+        End Function
+
+        ''' <summary>
+        ''' Sends a Draft order for approval. Role-only check - PurchaseOrders.Submit
+        ''' carries no self-approval requirement, so the declarative policy is
+        ''' enough (contrast ApprovePurchaseOrder below).
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.PurchaseOrdersSubmit)>
+        <AuditRequired>
+        <HttpPost("{id}/submit")>
+        Public Async Function SubmitPurchaseOrder(id As Integer) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PurchaseOrderTransitionOutcome =
+                Await _purchaseOrderService.SubmitAsync(id, actorUserId, correlationId, cancellationToken:=HttpContext.RequestAborted)
+
+            Return TransitionResult(outcome, id, correlationId)
+
+        End Function
+
+        ''' <summary>
+        ''' Approves a Submitted order. PurchaseOrders.Approve also carries
+        ''' ADR-017 section 6's SelfApprovalRequirement, which is
+        ''' resource-based and cannot be evaluated by the declarative
+        ''' &lt;Authorize(Policy:=...)&gt; attribute alone - that filter runs
+        ''' before this method body, with no order loaded, so
+        ''' SelfApprovalHandler (typed to IOwnershipResource) would never see
+        ''' a matching resource and the requirement could never succeed for
+        ''' ANYONE. So this action carries only &lt;Authorize&gt;
+        ''' (authentication), and calls
+        ''' IAuthorizationService.AuthorizeAsync(User, order, PurchaseOrders.Approve)
+        ''' itself once the order is loaded - evaluating role membership AND
+        ''' the ownership veto together, in the one place both are knowable.
+        ''' Registered in AuthorizationMatrixTests' AuthenticatedNoPolicyAllowlist
+        ''' for exactly this reason - it is still policy-gated, just
+        ''' imperatively rather than declaratively.
+        '''
+        ''' ROLE MEMBERSHIP IS CHECKED BEFORE THE ORDER IS EVER LOADED,
+        ''' against the SAME PolicyRegistry.Definitions role list
+        ''' AuthorizationPolicyRegistration registers - not a second,
+        ''' hand-written copy. PurchaseOrdersTrack_MatrixMatchesPolicyRegistry's
+        ''' own comment states why: "A disallowed role must be refused 403
+        ''' BEFORE the handler looks the order up - never 404. An endpoint
+        ''' that answered 'no such order' to a caller with no right to ask
+        ''' would leak which ids exist." A role-disallowed caller must get
+        ''' the identical 403 whether id 1 or id 999999999 is requested;
+        ''' loading the order FIRST (needed only for the self-approval
+        ''' comparison) would leak existence to exactly the caller who has no
+        ''' right to know it.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName)>
+        <AuditRequired>
+        <HttpPost("{id}/approve")>
+        Public Async Function ApprovePurchaseOrder(id As Integer) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+
+            Dim allowedRoles As IReadOnlyList(Of String) =
+                PolicyRegistry.Definitions.Single(
+                    Function(d) d.PolicyName = PolicyRegistry.Names.PurchaseOrdersApprove).AllowedRoles
+
+            If Not allowedRoles.Any(AddressOf User.IsInRole) Then
+                Return Await DeniedAsync(id, correlationId, "Actor's role does not hold PurchaseOrders.Approve.")
+            End If
+
+            ' A COURTESY READ, NOT THE GUARANTEE - same arrangement as
+            ' CheckReferencesAsync above (this class's header explains why):
+            ' this unlocked read exists only to build the 404 body and to
+            ' hand IAuthorizationService a resource with a real
+            ' RequestedByUserId. RequestedByUserId is immutable after
+            ' creation (nothing in this system ever changes who requested an
+            ' order), so no lock is needed for the value this decision
+            ' actually depends on. ApproveAsync re-locks and re-decides the
+            ' STATUS transition inside its own transaction regardless - that
+            ' is the check that counts. Reaching this line already proves the
+            ' caller's role is allowed, so a 404 here leaks nothing a 403
+            ' would have hidden.
+            Dim order As PurchaseOrder
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
+                order = Await PurchaseOrderRepository.GetByIdAsync(connection, id, HttpContext.RequestAborted)
+            End Using
+
+            If order Is Nothing Then
+                Return NotFound(New ApiErrorResponse With {
+                    .ErrorCode = "PURCHASE_ORDER_NOT_FOUND",
+                    .Message = $"No purchase order with Id {id} exists.",
+                    .CorrelationId = correlationId
+                })
+            End If
+
+            Dim authorization As AuthorizationResult =
+                Await _authorizationService.AuthorizeAsync(User, order, PolicyRegistry.Names.PurchaseOrdersApprove)
+
+            If Not authorization.Succeeded Then
+                Return Await DeniedAsync(id, correlationId, "Self-approval prohibited (spec section 9).")
+            End If
+
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PurchaseOrderTransitionOutcome =
+                Await _purchaseOrderService.ApproveAsync(id, actorUserId, correlationId, cancellationToken:=HttpContext.RequestAborted)
+
+            Return TransitionResult(outcome, id, correlationId)
+
+        End Function
+
+        ''' <summary>
+        ''' Shared 403 path for ApprovePurchaseOrder's two denial reasons
+        ''' (wrong role, self-approval). Audited even though P2-04's
+        ''' &lt;AuditRequired&gt; filter only forces auditing on a 2xx result -
+        ''' spec section 9's control table asks a privileged action for an
+        ''' audit record "actor, timestamp, action, target, result,
+        ''' correlation identifier" regardless of outcome. Written OUTSIDE
+        ''' any transaction: nothing else needs to be atomic with it, and
+        ''' AuditLogs is append-only regardless (ADR-013). Returns the same
+        ''' "FORBIDDEN" body shape as a declaratively-refused endpoint
+        ''' (SessionAuthenticationHandler.HandleForbiddenAsync), by routing
+        ''' through the same ForbidAsync call.
+        ''' </summary>
+        Private Async Function DeniedAsync(
+            purchaseOrderId As Integer, correlationId As String, reason As String) As Task(Of IActionResult)
+
+            Dim deniedActorUserId As Integer? = Nothing
+            Dim parsedActorUserId As Integer
+
+            If Integer.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), parsedActorUserId) Then
+                deniedActorUserId = parsedActorUserId
+            End If
+
+            Using connection = Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
+                Await AuditLogWriter.WriteAsync(
+                    connection, deniedActorUserId,
+                    "PurchaseOrderApprovalDenied", purchaseOrderId.ToString(), "Denied", correlationId,
+                    detail:=reason,
+                    cancellationToken:=HttpContext.RequestAborted)
+            End Using
+
+            Return Forbid(SessionAuthenticationHandler.SchemeName)
 
         End Function
 
@@ -566,6 +715,60 @@ Namespace Controllers
                 .Message = "A deactivated product cannot be newly ordered.",
                 .CorrelationId = correlationId
             })
+
+        End Function
+
+        ''' <summary>
+        ''' Maps SubmitAsync/ApproveAsync's outcome onto a status code. A
+        ''' refusal is 409, not 400 - the request was well-formed and the
+        ''' order was correctly identified; it is the order's CURRENT STATE
+        ''' that conflicts with the attempted action, the same reasoning
+        ''' CreatePurchaseOrder already applies to OrderNumberUnavailable.
+        ''' </summary>
+        Private Function TransitionResult(
+            outcome As PurchaseOrderTransitionOutcome, id As Integer, correlationId As String) As IActionResult
+
+            Select Case outcome.Kind
+
+                Case PurchaseOrderTransitionOutcomeKind.Success
+                    Return Ok(outcome.Response)
+
+                Case PurchaseOrderTransitionOutcomeKind.NotFound
+                    Return NotFound(New ApiErrorResponse With {
+                        .ErrorCode = "PURCHASE_ORDER_NOT_FOUND",
+                        .Message = $"No purchase order with Id {id} exists.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case Else ' Refused
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = outcome.ErrorCode,
+                        .Message = TransitionRefusalMessage(outcome.ErrorCode),
+                        .CorrelationId = correlationId
+                    })
+
+            End Select
+
+        End Function
+
+        ''' <summary>Human-readable text for each of PurchaseOrderTransitionErrors' stable codes (ADR-014).</summary>
+        Private Shared Function TransitionRefusalMessage(errorCode As String) As String
+
+            Select Case errorCode
+
+                Case DomainProcurement.PurchaseOrderTransitionErrors.Cancelled
+                    Return "This purchase order is cancelled and cannot proceed."
+
+                Case DomainProcurement.PurchaseOrderTransitionErrors.Closed
+                    Return "This purchase order is closed and cannot proceed."
+
+                Case DomainProcurement.PurchaseOrderTransitionErrors.FullyReceived
+                    Return "This purchase order is already fully received."
+
+                Case Else ' InvalidTransition
+                    Return "This action is not valid for the purchase order's current status."
+
+            End Select
 
         End Function
 

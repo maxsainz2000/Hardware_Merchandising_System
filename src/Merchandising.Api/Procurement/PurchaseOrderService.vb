@@ -305,6 +305,157 @@ Namespace Procurement
         End Function
 
         ''' <summary>
+        ''' Moves <paramref name="purchaseOrderId"/> to Submitted (spec section
+        ''' 10.1). One transaction: lock, ask CanTransition, write, audit,
+        ''' commit - the same shape CreateAsync and PriceChangeService use.
+        ''' <paramref name="testOnlyFaultAfterAuditInsert"/> is P1-12/P2-08-
+        ''' shaped fault injection, compiled out of Release.
+        ''' </summary>
+        Public Async Function SubmitAsync(
+            purchaseOrderId As Integer,
+            actorUserId As Integer,
+            correlationId As String,
+            Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of PurchaseOrderTransitionOutcome)
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim transaction As MySqlTransaction =
+                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim locked =
+                    Await PurchaseOrderRepository.GetStatusForUpdateAsync(
+                        connection, transaction, purchaseOrderId, cancellationToken).ConfigureAwait(False)
+
+                If Not locked.Found Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.NotFound()
+                End If
+
+                Dim decision As DomainProcurement.PurchaseOrderTransitionResult =
+                    DomainProcurement.PurchaseOrderTransitions.CanTransition(
+                        locked.Status, DomainProcurement.PurchaseOrderAction.Submit)
+
+                If Not decision.IsAllowed Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.Refused(decision.ErrorCode)
+                End If
+
+                Dim submittedAtUtc As DateTime = DateTime.UtcNow
+
+                Dim updated As Boolean =
+                    Await PurchaseOrderRepository.MarkSubmittedAsync(
+                        connection, transaction, purchaseOrderId, submittedAtUtc, cancellationToken).ConfigureAwait(False)
+
+                If Not updated Then
+                    Throw New InvalidOperationException(
+                        $"PurchaseOrder {purchaseOrderId} was locked by GetStatusForUpdateAsync but MarkSubmittedAsync affected zero rows. This should be unreachable.")
+                End If
+
+                ' Read back what was actually written, inside the same
+                ' transaction (CreateAsync's own arrangement) - OrderNumber is
+                ' the audit target, and the same read becomes the response
+                ' after commit with no second round trip.
+                Dim committed As PurchaseOrder =
+                    Await PurchaseOrderRepository.GetByIdAsync(
+                        connection, purchaseOrderId, cancellationToken, transaction).ConfigureAwait(False)
+
+                Await AuditLogWriter.WriteAsync(
+                    connection, actorUserId, "PurchaseOrderSubmitted", committed.OrderNumber, "Success", correlationId,
+                    cancellationToken:=cancellationToken,
+                    transaction:=transaction).ConfigureAwait(False)
+
+#If DEBUG Then
+                testOnlyFaultAfterAuditInsert?.Invoke()
+#End If
+
+                Await transaction.CommitAsync(cancellationToken).ConfigureAwait(False)
+                Await transaction.DisposeAsync().ConfigureAwait(False)
+
+                Return PurchaseOrderTransitionOutcome.Success(ToResponse(committed))
+
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Moves <paramref name="purchaseOrderId"/> to Approved, recording
+        ''' <paramref name="actorUserId"/> as the approver. The self-approval
+        ''' veto (ADR-017 section 6) has already been decided by the caller
+        ''' through IAuthorizationService before this method is ever reached -
+        ''' this method trusts that and enforces only the status machine.
+        ''' </summary>
+        Public Async Function ApproveAsync(
+            purchaseOrderId As Integer,
+            actorUserId As Integer,
+            correlationId As String,
+            Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of PurchaseOrderTransitionOutcome)
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim transaction As MySqlTransaction =
+                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim locked =
+                    Await PurchaseOrderRepository.GetStatusForUpdateAsync(
+                        connection, transaction, purchaseOrderId, cancellationToken).ConfigureAwait(False)
+
+                If Not locked.Found Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.NotFound()
+                End If
+
+                Dim decision As DomainProcurement.PurchaseOrderTransitionResult =
+                    DomainProcurement.PurchaseOrderTransitions.CanTransition(
+                        locked.Status, DomainProcurement.PurchaseOrderAction.Approve)
+
+                If Not decision.IsAllowed Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return PurchaseOrderTransitionOutcome.Refused(decision.ErrorCode)
+                End If
+
+                Dim approvedAtUtc As DateTime = DateTime.UtcNow
+
+                Dim updated As Boolean =
+                    Await PurchaseOrderRepository.MarkApprovedAsync(
+                        connection, transaction, purchaseOrderId, actorUserId, approvedAtUtc, cancellationToken).ConfigureAwait(False)
+
+                If Not updated Then
+                    Throw New InvalidOperationException(
+                        $"PurchaseOrder {purchaseOrderId} was locked by GetStatusForUpdateAsync but MarkApprovedAsync affected zero rows. This should be unreachable.")
+                End If
+
+                Dim committed As PurchaseOrder =
+                    Await PurchaseOrderRepository.GetByIdAsync(
+                        connection, purchaseOrderId, cancellationToken, transaction).ConfigureAwait(False)
+
+                Await AuditLogWriter.WriteAsync(
+                    connection, actorUserId, "PurchaseOrderApproved", committed.OrderNumber, "Success", correlationId,
+                    detail:=$"ApprovedByUserId={actorUserId}",
+                    cancellationToken:=cancellationToken,
+                    transaction:=transaction).ConfigureAwait(False)
+
+#If DEBUG Then
+                testOnlyFaultAfterAuditInsert?.Invoke()
+#End If
+
+                Await transaction.CommitAsync(cancellationToken).ConfigureAwait(False)
+                Await transaction.DisposeAsync().ConfigureAwait(False)
+
+                Return PurchaseOrderTransitionOutcome.Success(ToResponse(committed))
+
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Reads one order with its lines. Nothing if no such order exists.
         ''' </summary>
         Public Async Function GetAsync(

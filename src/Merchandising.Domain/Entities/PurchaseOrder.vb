@@ -18,9 +18,18 @@
 ' it and no write does; see PurchaseOrderLine.ProductSku/ProductName for the
 ' same arrangement, and PurchaseOrderLineResponse's header for why the name
 ' is joined live rather than captured on the row.
+'
+' IMPLEMENTS IOwnershipResource (P3-04, ADR-017 section 6). RequestedByUserId
+' below is also the interface's property - PurchaseOrdersController loads an
+' order and passes it straight to
+' IAuthorizationService.AuthorizeAsync(User, order, PurchaseOrders.Approve),
+' and SelfApprovalHandler compares the authenticated actor against this same
+' property. Nothing extra to wire: the property already existed for P3-03's
+' response mapping.
 
 Imports System.Collections.Generic
 Imports Merchandising.Domain.Procurement
+Imports Merchandising.Domain.Security
 
 Namespace Entities
 
@@ -29,6 +38,7 @@ Namespace Entities
     ''' <c>PurchaseOrderRepository.GetByIdAsync</c>.
     ''' </summary>
     Public NotInheritable Class PurchaseOrder
+        Implements IOwnershipResource
 
         Public Property Id As Integer
 
@@ -42,7 +52,7 @@ Namespace Entities
 
         Public Property Status As PurchaseOrderStatus
 
-        Public Property RequestedByUserId As Integer
+        Public Property RequestedByUserId As Integer Implements IOwnershipResource.RequestedByUserId
 
         ''' <summary>Null until an approval endpoint sets it. Kept distinct from <see cref="RequestedByUserId"/> so the self-approval rule has both to compare (ADR-017 section 6).</summary>
         Public Property ApprovedByUserId As Integer?

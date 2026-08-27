@@ -1,0 +1,93 @@
+P3-04 - self-approval denied - focused evidence
+Captured 2026-08-27 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0). Spec section 9: a Procurement Officer/Admin
+"cannot approve their own purchase order." This file isolates that one claim,
+end to end, with two real fixture users (p3_04_fixture_admin_a,
+p3_04_fixture_admin_b - both role Admin, so PurchaseOrders.Approve's ROLE
+cell is already satisfied for both; the only variable is who requested the
+order under approval).
+
+Mechanism (ADR-017 section 6, applied here): PurchaseOrdersController.
+ApprovePurchaseOrder loads the order, then calls
+IAuthorizationService.AuthorizeAsync(User, order, PurchaseOrders.Approve).
+PurchaseOrder now implements IOwnershipResource directly (moved from
+Merchandising.Api.Security to Merchandising.Domain.Security this card - see
+ADR-017's P3-04 addendum), so SelfApprovalHandler receives a real resource
+and compares the authenticated actor's ClaimTypes.NameIdentifier against
+RequestedByUserId, calling context.Fail() on a match - an absolute veto, not
+merely an unmet requirement.
+
+
+===============================================================================
+1. Test result
+===============================================================================
+
+$ dotnet test --filter "FullyQualifiedName~ApprovePurchaseOrder_SameUserAsRequester_Refused403AndAudited"
+  Passed ApprovePurchaseOrder_SameUserAsRequester_Refused403AndAudited [947 ms]
+Test Run Successful. Total tests: 1, Passed: 1
+
+
+===============================================================================
+2. What the test does, in order
+===============================================================================
+
+  1. Log in as admin_a.
+  2. POST /api/v1/purchase-orders as admin_a -> 201 Created, Draft.
+  3. POST /api/v1/purchase-orders/{id}/submit as admin_a -> 200 OK, Submitted.
+  4. POST /api/v1/purchase-orders/{id}/approve as admin_a (the SAME user) ->
+     asserted 403 Forbidden, body.ErrorCode == "FORBIDDEN", body.CorrelationId
+     non-empty (ADR-014).
+  5. Re-read the order directly from the database: Status still "Submitted",
+     ApprovedByUserId still NULL, ApprovedAtUtc still NULL - the refusal left
+     no partial trace of an approval.
+  6. Count AuditLogs rows for this test's own correlation ID, Action =
+     "PurchaseOrderApprovalDenied", Result = "Denied" -> exactly 1. The
+     refusal itself is audited (spec section 9's privileged-action control:
+     actor, timestamp, action, target, result, correlation identifier),
+     beyond what P2-04's <AuditRequired> filter strictly forces (that filter
+     only forces auditing a 2xx result; this 403 audits by deliberate choice,
+     the same precedent LoginFailed/AccountLocked/MaintenanceReleaseRefused
+     already set).
+
+
+===============================================================================
+3. Measured directly against the database (order 2501, a real row from this
+   evidence-capture run - not the row the automated test itself created,
+   captured moments earlier by the same test method under a different id)
+===============================================================================
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT p.Id, p.Status, p.RequestedByUserId, p.ApprovedByUserId, p.ApprovedAtUtc, u.Username AS RequestedBy
+      FROM purchaseorders p JOIN users u ON u.Id = p.RequestedByUserId
+     WHERE u.Username = 'p3_04_fixture_admin_a'
+  ORDER BY p.Id DESC LIMIT 1;"
+
+Id    Status     RequestedByUserId  ApprovedByUserId  ApprovedAtUtc  RequestedBy
+2501  Submitted  404                NULL              NULL           p3_04_fixture_admin_a
+
+$ mysql -u merch_api -p merchandising -e "
+    SELECT Id, ActorUserId, Action, Target, Result, CorrelationId, CreatedAtUtc
+      FROM auditlogs WHERE Action = 'PurchaseOrderApprovalDenied' ORDER BY Id DESC LIMIT 1;"
+
+Id    ActorUserId  Action                       Target  Result  CorrelationId                         CreatedAtUtc
+5210  404          PurchaseOrderApprovalDenied  2501    Denied  4389dd36-1ace-4374-a84b-126e80a38953  2026-08-27 13:02:15.604723
+
+ActorUserId (404) is the SAME user as RequestedByUserId (404) on order 2501 -
+this is the self-approval attempt, caught and denied, and both facts (who
+requested it, who was denied approving it) sit in the same row of evidence
+rather than being inferred.
+
+
+===============================================================================
+4. The other denial reason, for contrast - proves the two are genuinely
+   distinct checks, not one collapsed into the other
+===============================================================================
+
+ApprovePurchaseOrder_ProcurementOfficerNotTheRequester_StillRefused403: a
+ProcurementOfficer (never in PurchaseOrders.Approve's allowed-role set) is
+refused 403 attempting to approve an order they did NOT request - a pure
+ROLE denial, reached via PurchaseOrdersController's role-membership check
+BEFORE the order is even loaded (see the controller's own comment: loading
+the order first would leak its existence to a caller with no right to ask,
+the same reasoning AuthorizationMatrixTests' PurchaseOrdersTrack test already
+established for the read side). Passed.

@@ -15,9 +15,14 @@
 ' handler for the same requirement that might otherwise succeed it - which
 ' matches spec section 9's wording ("cannot") better than a silent
 ' non-match would.
+'
+' IOwnershipResource itself moved to Merchandising.Domain.Security at P3-04 -
+' this handler stays here, because it is the framework-dependent half
+' (AuthorizationHandler(Of ,) is ASP.NET Core), imported via the line below.
 
 Imports System.Security.Claims
 Imports System.Threading.Tasks
+Imports Merchandising.Domain.Security
 Imports Microsoft.AspNetCore.Authorization
 
 Namespace Security

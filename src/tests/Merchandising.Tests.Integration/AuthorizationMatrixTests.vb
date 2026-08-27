@@ -73,10 +73,24 @@ Public Class AuthorizationMatrixTests
     ''' the coverage test's "authenticated, no policy" bucket fails instead
     ''' of joining this list silently.
     ''' </summary>
+    ''' <summary>
+    ''' The fourth entry is P3-04's PurchaseOrdersController.ApprovePurchaseOrder.
+    ''' PurchaseOrders.Approve carries ADR-017 section 6's resource-based
+    ''' SelfApprovalRequirement. A declarative &lt;Authorize(Policy:=...)&gt;
+    ''' attribute evaluates that policy with resource=Nothing, so
+    ''' SelfApprovalHandler (typed to IOwnershipResource) would never see a
+    ''' matching resource and could never succeed - denying EVERY caller,
+    ''' always. So this action carries only &lt;Authorize&gt; (authentication)
+    ''' and calls IAuthorizationService.AuthorizeAsync(User, order, ...)
+    ''' itself once the order is loaded. It is still fully policy-gated - see
+    ''' PurchaseOrdersApprove_MatrixMatchesPolicyRegistry below - just not
+    ''' through this coverage test's declarative-attribute mechanism.
+    ''' </summary>
     Private Shared ReadOnly AuthenticatedNoPolicyAllowlist As String() = {
         "Merchandising.Api.Controllers.AuthController.GetCurrentUser",
         "Merchandising.Api.Controllers.AuthController.Logout",
-        "Merchandising.Api.Controllers.SystemSettingsController.GetSettings"
+        "Merchandising.Api.Controllers.SystemSettingsController.GetSettings",
+        "Merchandising.Api.Controllers.PurchaseOrdersController.ApprovePurchaseOrder"
     }
 
     Private Shared ReadOnly AllFiveRoles As String() = {
@@ -446,6 +460,100 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P3-04's submit endpoint. Every probed order is created fresh via the
+    ''' SuperAdmin fixture (always allowed to create, PurchaseOrders.Create
+    ''' being ProcurementAndAbove) rather than via roleName itself - this
+    ''' test isolates PurchaseOrders.Submit's OWN role cell, decoupled from
+    ''' PurchaseOrders.Create's, which already has its own matrix test above.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersSubmit_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersSubmit)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim creatorToken As String = Await LoginAsync(client, RoleNames.SuperAdmin)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim orderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using submitResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/submit", token, requestBody:=Nothing)
+                    Await AssertCellAsync("PurchaseOrders.Submit", roleName, allowedRoles.Contains(roleName), submitResponse)
+                End Using
+
+            Next
+
+            Dim anonymousOrderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{anonymousOrderId}/submit", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Submit", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P3-04's approve endpoint - the ROLE dimension only. Every probed
+    ''' order is created AND submitted via the ProcurementOfficer fixture,
+    ''' which is never in PurchaseOrders.Approve's allowed-role set
+    ''' (AdminAndAbove) - so no role under test ever collides with the
+    ''' order's own requester, and this test never accidentally exercises the
+    ''' self-approval veto instead of the role check. Self-approval itself is
+    ''' PurchaseOrderApprovalTests' job, with two real users over HTTP.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseOrdersApprove_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseOrdersApprove)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim requesterToken As String = Await LoginAsync(client, RoleNames.ProcurementOfficer)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim orderId As Integer = Await CreateDraftOrderAsync(client, requesterToken, supplierId, productId)
+
+                Using submitResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/submit", requesterToken, requestBody:=Nothing)
+                    Assert.AreEqual(HttpStatusCode.OK, submitResponse.StatusCode, "Fixture submit for the approve matrix must succeed.")
+                End Using
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using approveResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/approve", token, requestBody:=Nothing)
+                    Await AssertCellAsync("PurchaseOrders.Approve", roleName, allowedRoles.Contains(roleName), approveResponse)
+                End Using
+
+            Next
+
+            Dim anonymousOrderId As Integer = Await CreateDraftOrderAsync(client, requesterToken, supplierId, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{anonymousOrderId}/approve", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("PurchaseOrders.Approve", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -648,6 +756,25 @@ Public Class AuthorizationMatrixTests
                     .ProductId = productId, .OrderedQuantity = 1.000D, .PurchaseCost = 1.0000D}
             }
         }
+
+    End Function
+
+    ''' <summary>P3-04: a fresh Draft order over real HTTP, using <paramref name="creatorToken"/>. Fails the test loudly if creation itself did not succeed - a matrix cell for Submit/Approve means nothing against a fixture that was never actually created.</summary>
+    Private Async Function CreateDraftOrderAsync(
+        client As HttpClient, creatorToken As String, supplierId As Integer, productId As Integer) As Task(Of Integer)
+
+        Using response As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, "/api/v1/purchase-orders", creatorToken,
+                             requestBody:=NewPurchaseOrderBody(supplierId, productId))
+
+            Assert.AreEqual(
+                HttpStatusCode.Created, response.StatusCode,
+                "Fixture purchase-order creation must succeed. Body: " & Await response.Content.ReadAsStringAsync())
+
+            Dim created As PurchaseOrderResponse = Await response.Content.ReadFromJsonAsync(Of PurchaseOrderResponse)()
+            Return created.Id
+
+        End Using
 
     End Function
 

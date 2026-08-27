@@ -184,7 +184,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ---
 
-### ⬜ P3-04 · Submit and approve, with self-approval prohibited 🎯
+### ✅ P3-04 · Submit and approve, with self-approval prohibited 🎯
 
 **Spec:** §9, §10.1 · **Closes:** G-23 · **Files:** `src/Merchandising.Api/Controllers/PurchaseOrdersController.vb`, `src/Merchandising.Domain/Procurement/`, `src/tests/Merchandising.Tests.Integration/PurchaseOrderApprovalTests.vb`
 
@@ -192,14 +192,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] `PurchaseOrder` implements `IOwnershipResource`; approval calls `IAuthorizationService.AuthorizeAsync(User, order, PurchaseOrders.Approve)` — **ADR-017 §6's mechanism, not a new one**
-- [ ] A user approving **their own** order is refused **403**, proven end-to-end over HTTP with two real users, not only by the existing handler unit test
-- [ ] A different authorized user approving the same order succeeds
-- [ ] Approval is **attributable**: `ApprovedByUserId` and an approval timestamp UTC are persisted, and audited through P2-04 with actor, target and correlation ID
-- [ ] Every illegal transition into `Submitted`/`Approved` is rejected with the stable error code P3-01 assigned — asserted, not assumed
-- [ ] Status change and audit row commit **together or not at all**, proven by a forced-failure test in the P1-12 / P2-08 shape
-- [ ] **Matrix suite extended** for both routes
-- [ ] Integration suite green
+- [x] `PurchaseOrder` implements `IOwnershipResource`; approval calls `IAuthorizationService.AuthorizeAsync(User, order, PurchaseOrders.Approve)` — **ADR-017 §6's mechanism, not a new one**
+- [x] A user approving **their own** order is refused **403**, proven end-to-end over HTTP with two real users, not only by the existing handler unit test
+- [x] A different authorized user approving the same order succeeds
+- [x] Approval is **attributable**: `ApprovedByUserId` and an approval timestamp UTC are persisted, and audited through P2-04 with actor, target and correlation ID
+- [x] Every illegal transition into `Submitted`/`Approved` is rejected with the stable error code P3-01 assigned — asserted, not assumed
+- [x] Status change and audit row commit **together or not at all**, proven by a forced-failure test in the P1-12 / P2-08 shape
+- [x] **Matrix suite extended** for both routes
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-3/p3-04-approval.txt`, `evidence/phase-3/p3-04-self-approval-denied.txt`
 

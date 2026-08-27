@@ -863,6 +863,16 @@ Deferring it is the author's call and is recorded as such. The consequence is th
 >
 > **Evidence.** `evidence/phase-2/p2-04-audit-pipeline.txt`, `evidence/phase-2/p2-04-rollback-regression.txt`.
 
+> **P3-04 addendum (2026-08-27) — `IOwnershipResource` moved from `Merchandising.Api.Security` to `Merchandising.Domain.Security`.** Point 6 above says Phase 3 "is expected to implement `IOwnershipResource`" on `PurchaseOrder`/`StockAdjustment`. It could not, as the interface stood: `PurchaseOrder` lives in `Merchandising.Domain.Entities`, and `Merchandising.Api.Security.IOwnershipResource` lived in the Api project — `CLAUDE.md` section 4's dependency direction ("Domain depends on nothing") forbids a Domain type implementing an Api-declared interface, and this is not a guardrail G-B checks (G-B only watches client projects), so it would have compiled clean and been wrong quietly.
+>
+> **Decision.** `IOwnershipResource.vb` moved to `Merchandising.Domain.Security`, unchanged in content — it declares one read-only `Integer` property and has zero ASP.NET Core dependency, the same category `PolicyRegistry`/`RoleNames`/`PolicyDefinition` already occupy there, distinct from the framework-dependent consumers (`SelfApprovalHandler`, `SelfApprovalRequirement`, `AuthorizationPolicyRegistration`) that stay in `Merchandising.Api.Security`. `Merchandising.Domain.Entities.PurchaseOrder` now implements it directly on its existing `RequestedByUserId` property — nothing new to wire, the property already existed for P3-03's response mapping. Three files touched: the moved interface, `SelfApprovalHandler.vb` (added `Imports Merchandising.Domain.Security`), and `SelfApprovalHandlerTests.vb` (same import added, its own `FakeOwnedResource` fixture unchanged).
+>
+> **Why this was found now and not at P2-02.** `IOwnershipResource` had no Domain implementer until this card — `SelfApprovalHandlerTests`' `FakeOwnedResource` lived entirely inside the Api-layer test project, so the misplacement never actually crossed the Domain/Api boundary until `PurchaseOrder` needed to implement it for real.
+>
+> **Behavior change: none.** Same interface, same members, same two consumers. `PurchaseOrdersController.ApprovePurchaseOrder` calls `IAuthorizationService.AuthorizeAsync(User, order, PolicyRegistry.Names.PurchaseOrdersApprove)` with the loaded `Merchandising.Domain.Entities.PurchaseOrder` as the resource, exactly as point 6 always described — resolvable only once the interface sat on the correct side of the dependency graph.
+>
+> **Evidence.** `evidence/phase-3/p3-04-approval.txt`, `evidence/phase-3/p3-04-self-approval-denied.txt`.
+
 ---
 
 ## ADR-018 · Unique active barcode, without a partial index

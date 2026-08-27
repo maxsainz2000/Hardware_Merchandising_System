@@ -1,4 +1,4 @@
-' Merchandising.Api.Security.IOwnershipResource
+' Merchandising.Domain.Security.IOwnershipResource
 '
 ' P2-02: the shape SelfApprovalHandler needs to compare "who is approving"
 ' against "who requested this" - spec section 9's "cannot approve their own
@@ -9,6 +9,16 @@
 ' requirement onto PurchaseOrders.Approve and Adjustments.Approve at startup
 ' (CLAUDE.md's "Phase 3 and Phase 5 consume these - they do not add their
 ' own"), and the requirement needs somewhere to point.
+'
+' RELOCATED AT P3-04 from Merchandising.Api.Security to here. This interface
+' has zero ASP.NET Core dependency - it is pure data shape, the same category
+' PolicyRegistry/RoleNames/PolicyDefinition already occupy in this namespace,
+' distinct from the framework-dependent handlers that consume it
+' (SelfApprovalHandler stays in Merchandising.Api.Security). It had to move
+' before Merchandising.Domain.Entities.PurchaseOrder could implement it
+' directly, as ADR-017 section 6 always intended: Domain depends on nothing
+' (CLAUDE.md section 4), so a Domain entity cannot implement an interface
+' declared in Api. See ADR-017's P3-04 addendum for the full note.
 
 Namespace Security
 

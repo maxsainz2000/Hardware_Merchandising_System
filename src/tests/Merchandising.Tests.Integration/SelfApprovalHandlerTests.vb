@@ -12,6 +12,7 @@
 
 Imports System.Security.Claims
 Imports Merchandising.Api.Security
+Imports Merchandising.Domain.Security
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.VisualStudio.TestTools.UnitTesting
 

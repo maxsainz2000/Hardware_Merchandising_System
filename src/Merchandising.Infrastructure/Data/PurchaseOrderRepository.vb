@@ -141,6 +141,110 @@ Namespace Data
         End Function
 
         ''' <summary>
+        ''' Locks one order's Status and RequestedByUserId with
+        ''' <c>SELECT ... FOR UPDATE</c>, inside <paramref name="transaction"/>.
+        ''' P3-04's status-transition writes read through this rather than
+        ''' <see cref="GetByIdAsync"/> - the same "lock, then decide, then
+        ''' write" shape <c>ProductRepository.ReadPriceForUpdateAsync</c> uses
+        ''' for P2-08, and for the same reason: CanTransition's decision and
+        ''' the write that acts on it must see the same row no other
+        ''' transaction can concurrently move.
+        ''' </summary>
+        Public Shared Async Function GetStatusForUpdateAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            id As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Found As Boolean, Status As PurchaseOrderStatus, RequestedByUserId As Integer))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "SELECT Status, RequestedByUserId FROM PurchaseOrders WHERE Id = @id FOR UPDATE;"
+                command.Parameters.AddWithValue("@id", id)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    If Not Await reader.ReadAsync(cancellationToken).ConfigureAwait(False) Then
+                        Return (Found:=False, Status:=CType(0, PurchaseOrderStatus), RequestedByUserId:=0)
+                    End If
+                    Return (Found:=True,
+                            Status:=ParseStatus(reader.GetString(0)),
+                            RequestedByUserId:=reader.GetInt32(1))
+                End Using
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P3-04: moves a locked order to <see cref="PurchaseOrderStatus.Submitted"/>.
+        ''' Always called after <see cref="GetStatusForUpdateAsync"/> has
+        ''' already locked and confirmed the row within the same transaction,
+        ''' so the affected-row count here is a defensive check, not the
+        ''' mechanism that prevents a lost update - the row lock is (same
+        ''' arrangement as <c>ProductRepository.UpdatePriceCostAsync</c>).
+        ''' </summary>
+        Public Shared Async Function MarkSubmittedAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            id As Integer,
+            submittedAtUtc As DateTime,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE PurchaseOrders " &
+                    "   SET Status = @status, " &
+                    "       SubmittedAtUtc = @submittedAtUtc, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id;"
+                command.Parameters.AddWithValue("@status", PurchaseOrderStatus.Submitted.ToString())
+                command.Parameters.AddWithValue("@submittedAtUtc", submittedAtUtc)
+                command.Parameters.AddWithValue("@id", id)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P3-04: moves a locked order to <see cref="PurchaseOrderStatus.Approved"/>,
+        ''' recording who approved it and when - kept distinct from
+        ''' RequestedByUserId so a later read can always tell the two apart
+        ''' (ADR-017 section 6). Same locked-row arrangement as
+        ''' <see cref="MarkSubmittedAsync"/>.
+        ''' </summary>
+        Public Shared Async Function MarkApprovedAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            id As Integer,
+            approvedByUserId As Integer,
+            approvedAtUtc As DateTime,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE PurchaseOrders " &
+                    "   SET Status = @status, " &
+                    "       ApprovedByUserId = @approvedByUserId, " &
+                    "       ApprovedAtUtc = @approvedAtUtc, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id;"
+                command.Parameters.AddWithValue("@status", PurchaseOrderStatus.Approved.ToString())
+                command.Parameters.AddWithValue("@approvedByUserId", approvedByUserId)
+                command.Parameters.AddWithValue("@approvedAtUtc", approvedAtUtc)
+                command.Parameters.AddWithValue("@id", id)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Reads one order with every line, ordered by LineNumber. Nothing if
         ''' no such order exists. <paramref name="transaction"/> is optional so
         ''' the creating transaction can read back what it has just written,
