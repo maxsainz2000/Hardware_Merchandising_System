@@ -7,7 +7,25 @@
         xmlns:vm="clr-namespace:Merchandising.Procurement.ViewModels"
         xmlns:conv="clr-namespace:Merchandising.ClientCommon.Converters;assembly=Merchandising.ClientCommon"
         mc:Ignorable="d"
-        Title="Merchandising - Procurement" Height="680" Width="1024" MinHeight="620" MinWidth="960">
+        Title="Merchandising - Procurement" Height="560" Width="1024" MinHeight="520" MinWidth="960">
+
+    <!--
+        Sizing is derived from the smallest supported desktop, not chosen by eye.
+        Spec section 5 / P3-07: 1366x768 at 125% scaling. WPF lays out in DIPs
+        (1 DIP = 1/96"), so that display is 1366/1.25 x 768/1.25 = 1092.8 x 614.4
+        DIP, and a default taskbar (48 physical px = 38.4 DIP) leaves a work area
+        of 1092.8 x 576.0 DIP. Window.Height/Width include the caption and border,
+        so every one of the four values above must fit inside that work area:
+
+            Width  1024 <= 1092.8      MinWidth  960 <= 1092.8
+            Height  560 <=   576.0     MinHeight 520 <=   576.0
+
+        MinHeight is the value that matters. A minimum taller than the work area
+        cannot be shrunk to fit, so the bottom row leaves the screen and no amount
+        of dragging brings it back. The earlier 680/620 pair failed exactly that
+        way. PurchaseOrderLayoutTests asserts these four numbers against the work
+        area it computes from the same arithmetic - change one and the test fails.
+    -->
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
@@ -36,7 +54,7 @@
         </DockPanel>
 
         <!-- Sign-in panel, shown only while signed out -->
-        <Border Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+        <Border x:Name="SignInPanel" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top"
                 MaxWidth="360" BorderBrush="Gray" BorderThickness="1" Padding="16"
                 Visibility="{Binding IsSignedIn, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel>
@@ -98,9 +116,17 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+                    <!--
+                        Proportional, not the fixed 260 this row carried before.
+                        A fixed height cannot give way on a short desktop: at
+                        1366x768 @ 125% it left the Lines grid below roughly 20
+                        DIP - present, focusable, and useless. Stars share what
+                        is actually there; the minimums keep both panes usable at
+                        the window's own MinHeight.
+                    -->
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="260"/>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="1.4*" MinHeight="170"/>
+                        <RowDefinition Height="1*" MinHeight="120"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 

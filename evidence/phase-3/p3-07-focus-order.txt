@@ -1,0 +1,229 @@
+===============================================================================
+P3-07 - KEYBOARD NAVIGATION AND FOCUS ORDER AT 1366x768 @ 125% SCALING
+Captured 2026-08-28 09:16:25 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P3-07, the seventh Done-when box
+===============================================================================
+
+WHY THIS FILE EXISTS.
+
+At the Phase 3 gate this box was the one open item on the card, deferred to
+the Phase 7 UI pass. The deferral rested on a sentence in
+p3-07-procurement-client.txt which its own arithmetic refuted:
+
+  "the window's default size (1024x680, MinWidth 960, MinHeight 620) fits
+   inside a 1366x768 desktop at 125% scaling (effective ~1093x614 minus
+   taskbar) with room to spare"
+
+680 and 620 are both larger than the 614 the same clause computes. The
+figures were right and the conclusion drawn from them was wrong. MinHeight
+is the value that mattered: a window whose MINIMUM exceeds the work area
+cannot be dragged or resized into it, so the status bar along the bottom
+would have been permanently off-screen on every 1366x768 demo laptop.
+
+WHAT WAS CHANGED (P3-07a).
+
+  src/Merchandising.Procurement/MainWindow.xaml
+    Height    680 -> 560        MinHeight 620 -> 520      (Width/MinWidth unchanged)
+    New Order tab, row 0:  Height="260"  ->  Height="1.4*" MinHeight="170"
+    New Order tab, row 1:  Height="*"    ->  Height="1*"   MinHeight="120"
+
+The second change is not cosmetic. A fixed 260 DIP row cannot give way on a
+short desktop; measured at the corrected MinHeight it left the Lines grid at
+0.0 DIP - laid out, focusable, and invisible. See section 3.
+
+===============================================================================
+1. THE BUDGET, AND WHY NO DISPLAY SETTING WAS CHANGED
+===============================================================================
+
+WPF lays out in device-independent pixels: 1 DIP = 1/96". A display's scaling
+factor converts DIP to physical pixels - it does not change the layout. So:
+
+  screen        1366 / 1.25  x  768 / 1.25   =  1092.8 x 614.4 DIP
+  taskbar       48 physical px / 1.25        =      38.4 DIP
+  WORK AREA     1092.8 x 576.0 DIP
+
+Every Width/Height/MinWidth/MinHeight in MainWindow.xaml is already in those
+units, so constraining layout to that DIP budget is the identical layout
+problem the real display poses. That is what makes this measurable on a
+1920x1200 @ 100% workstation without setting the OS to 1366x768 @ 125%.
+
+NOT claimed by this file: rendering fidelity at 125% - glyph hinting, image
+crispness, hairline border rounding. Those need the real display and are the
+Phase 7 UI pass's subject. The claim here is fit, reachability and order.
+
+  declared value   budget     verdict
+  --------------   --------   -------
+  MinHeight  520    576.0     fits
+  Height     560    576.0     fits
+  MinWidth   960   1092.8     fits
+  Width     1024   1092.8     fits
+
+===============================================================================
+2. THE ASSERTIONS ARE IN THE SUITE, AND THEY FAIL WHEN THEY SHOULD
+===============================================================================
+
+src/tests/Merchandising.Tests.Unit/ProcurementLayoutTests.vb - three tests,
+run on every build. Both were proven falsifiable before being trusted, by
+restoring the pre-fix XAML and confirming the failure and its message:
+
+  With MinHeight back at 620:
+    Failed Window_DeclaredSizes_FitTheSmallestSupportedDesktop
+    Assert.IsLessThanOrEqualTo failed. Actual value <620> is not less than or
+    equal to expected value <576>. MainWindow MinHeight is 620.0 DIP but the
+    1366x768 @ 125% work area is only 576.0 DIP. A minimum taller than the
+    work area can never be resized to fit.
+
+  With the window sizes corrected but row 0 back at a fixed 260:
+    Failed EveryScreen_AtMinimumWindowSize_LaysOutWithoutStarvingAGrid
+    Layout at the window's minimum size starves content:
+    Tab 'New Order': the 'Product' grid arranged to 0.0 DIP, below the 48.0
+    DIP that shows a header plus one row.
+
+Neither test shows a window, so the suite still runs where there is no
+interactive desktop session - which matters because /orchestrate dispatches
+it to box3.
+
+===============================================================================
+3. MEASURED LAYOUT AT THE WINDOW'S OWN MINIMUM (client height 480 DIP)
+===============================================================================
+
+Every DataGrid on every screen, arranged at MinHeight 520 minus 40 DIP of
+caption and border. Before the row-definition fix the 'Product' grid was 0.0.
+
+  Suppliers      grid:Name              247.3 DIP
+  New Order      grid:Name (supplier)    95.1 DIP
+  New Order      grid:SKU  (product)     91.1 DIP
+  New Order      grid:Product (lines)    61.1 DIP     <- was 0.0
+  Orders         OrdersDataGrid         122.7 DIP
+  Orders         grid:SKU (lines)        63.8 DIP
+  History        grid:Order #           221.4 DIP
+
+All above the 48 DIP that shows a column header plus one row.
+
+===============================================================================
+4. LIVE FOCUS TRAVERSAL - A REAL WINDOW, SHOWN AT THE WORK-AREA SIZE
+===============================================================================
+
+Section 1-3 are arithmetic and layout. This section is the actual thing the
+box asks about: a window on screen, sized to the 1366x768 @ 125% work area,
+walked with WPF's own MoveFocus(FocusNavigationDirection.Next) - the same
+traversal the Tab key performs - recording what receives focus, in order, and
+whether it is inside the window bounds.
+
+Captured once, by the harness described in section 5. Every control authored
+on each screen is reconciled: either it was visited, or the reason WPF
+skipped it is named. There is no unexplained skip.
+Window shown at 1093.0 x 576.0 DIP
+Requested work area 1092.8 x 576.0 DIP
+
+--- Tab: Suppliers ---
+  01. TextBox (TabIndex 10)   [on screen]
+  02. CheckBox Include inactive (TabIndex 11)   [on screen]
+  03. Button Search (TabIndex 12)   [on screen]
+  04. Button SignOutButton (TabIndex 99)   [on screen]
+  05. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox (TabIndex 10)
+    visited  CheckBox Include inactive (TabIndex 11)
+    visited  Button Search (TabIndex 12)
+    skipped  DataGrid grid:Name (TabIndex 13)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+--- Tab: New Order ---
+  01. TextBox (TabIndex 20)   [on screen]
+  02. Button Search (TabIndex 21)   [on screen]
+  03. TextBox (TabIndex 30)   [on screen]
+  04. Button Search (TabIndex 31)   [on screen]
+  05. TextBox (TabIndex 33)   [on screen]
+  06. TextBox (TabIndex 34)   [on screen]
+  07. Button SignOutButton (TabIndex 99)   [on screen]
+  08. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox (TabIndex 20)
+    visited  Button Search (TabIndex 21)
+    skipped  DataGrid grid:Name (TabIndex 22)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox (TabIndex 30)
+    visited  Button Search (TabIndex 31)
+    skipped  DataGrid grid:SKU (TabIndex 32)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox (TabIndex 33)
+    visited  TextBox (TabIndex 34)
+    skipped  Button Add line (TabIndex 35)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:Product (TabIndex 40)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Remove selected line (TabIndex 41)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  Button Create purchase order (TabIndex 42)  <- command disabled - nothing selected yet, so WPF skips it
+
+--- Tab: Orders ---
+  01. TextBox (TabIndex 50)   [on screen]
+  02. ComboBox (TabIndex 51)   [on screen]
+  03. Button Refresh (TabIndex 52)   [on screen]
+  04. TextBox (TabIndex 57)   [on screen]
+  05. Button SignOutButton (TabIndex 99)   [on screen]
+  06. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox (TabIndex 50)
+    visited  ComboBox (TabIndex 51)
+    visited  Button Refresh (TabIndex 52)
+    skipped  DataGrid OrdersDataGrid (TabIndex 53)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  DataGrid grid:SKU (TabIndex 54)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Submit (TabIndex 55)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  Button Approve (TabIndex 56)  <- command disabled - nothing selected yet, so WPF skips it
+    visited  TextBox (TabIndex 57)
+    skipped  Button Cancel order (TabIndex 58)  <- command disabled - nothing selected yet, so WPF skips it
+
+--- Tab: History ---
+  01. TextBox (TabIndex 60)   [on screen]
+  02. ComboBox (TabIndex 61)   [on screen]
+  03. TextBox (TabIndex 62)   [on screen]
+  04. TextBox (TabIndex 63)   [on screen]
+  05. Button Search (TabIndex 64)   [on screen]
+  06. Button SignOutButton (TabIndex 99)   [on screen]
+  07. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox (TabIndex 60)
+    visited  ComboBox (TabIndex 61)
+    visited  TextBox (TabIndex 62)
+    visited  TextBox (TabIndex 63)
+    visited  Button Search (TabIndex 64)
+    skipped  DataGrid grid:Order # (TabIndex 65)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+
+===============================================================================
+5. HOW SECTION 4 WAS PRODUCED, AND WHAT IT DOES AND DOES NOT PROVE
+===============================================================================
+
+A throwaway MSTest harness (TempFocusCapture) constructed MainWindow, gave it
+a MainViewModel signed in through a stubbed transport - the same
+StubHttpMessageHandler posture ProcurementClientTests uses, so every line of
+the client under test is the real one - sized the window to 1092.8 x 576.0
+DIP, showed and activated it, then for each tab focused the lowest TabIndex
+and called MoveFocus repeatedly until the cycle repeated.
+
+The harness is NOT committed. It shows a window and activates it, which needs
+an interactive desktop session; leaving it in the suite would break every
+headless run for the sake of a capture that only needs making once. This is
+the same division P3-07 already used: the live click-through
+(p3-07-live-clickthrough-2026-08-28/) is a captured artifact, while the view
+model rules that must not regress are suite tests. The regression protection
+for THIS box lives in ProcurementLayoutTests, section 2.
+
+PROVEN HERE:
+  - The window fits the work area, shown, at 1093.0 x 576.0 DIP.
+  - Every control that receives focus is inside the window bounds - the
+    "[on screen]" marker on every line of section 4, none reading OFF SCREEN.
+  - Focus visits controls in ascending TabIndex order on all four screens,
+    with Sign out (TabIndex 99) last before the cycle wraps to the tab strip.
+  - Every authored control is either visited or skipped for a named, correct
+    WPF reason (a disabled command, or an empty grid with no focusable cell).
+
+NOT PROVEN HERE, and left to the Phase 7 UI pass as the card intends:
+  - Rendering fidelity at a real 125% DPI.
+  - Focus VISUALS - whether the focus rectangle is clearly visible against
+    each background. That is a look question, not a reachability question.
+  - Traversal with grids populated. Every grid was empty in this fixture, so
+    the four grids' internal cell navigation was not walked. Their TabIndex
+    position among their siblings is asserted statically in section 2's third
+    test; their internal navigation is DataGrid's own behaviour, not this
+    window's authoring.

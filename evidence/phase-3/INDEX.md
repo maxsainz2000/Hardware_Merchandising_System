@@ -52,14 +52,19 @@ From `plan.md` §7 (Phase 3 *Exit*) and the `Phase 3 exit gate` checklist in the
 | P3-04 | Submit and approve, self-approval prohibited 🎯 | `p3-04-approval.txt`, `p3-04-self-approval-denied.txt` | ✅ |
 | P3-05 | Cancellation and closure rules | `p3-05-cancellation.txt` | ✅ |
 | P3-06 | Purchase history and order tracking | `p3-06-purchase-history.txt` | ✅ |
-| P3-07 | Procurement WPF client reaches usable state | `p3-07-procurement-client.txt`, `p3-07-live-clickthrough-2026-08-28/` | ⚠ §4.3 |
+| P3-07 | Procurement WPF client reaches usable state | `p3-07-procurement-client.txt`, `p3-07-focus-order.txt`, `p3-07-live-clickthrough-2026-08-28/` | ✅ §4.3 |
 | P3-08 | `docs/api-specification.md` — procurement section | `p3-08-api-specification.txt` | ✅ |
 | P3-09 | Closure pack — suite green, clean clone, this index | `p3-09-clean-clone.log`, this file | ✅ |
 
-**P3-01 and P3-07 stay ⚠ rather than round up to a plain ✅.** Neither is a failing test or a
-partial implementation — both are fully green — but each records a limit on what its own
-evidence proves, in the same spirit P2-01/P2-03 were held at 🟡 in the Phase 2 index rather
-than silently rounded up. See §4.
+**P3-01 stays ⚠ rather than round up to a plain ✅.** It is not a failing test or a partial
+implementation — it is fully green — but it records a limit on what its own evidence proves,
+in the same spirit P2-01/P2-03 were held at 🟡 in the Phase 2 index rather than silently
+rounded up. See §4.
+
+**P3-07 was ⚠ at the first sitting of this gate and is now ✅ — but only after the gate
+rejected it.** Its seventh box was carried on a claim that its own arithmetic refuted, and
+behind that claim sat a real defect. §4.3 records what was found, what changed, and what
+genuinely remains Phase 7's.
 
 ---
 
@@ -127,14 +132,54 @@ carried forward as **CARRY-03** (`tasks.md` line 50) with Phase 4 named as its n
 since receiving reads a line before it writes one — the first command that would actually be
 bitten by it.
 
-### 4.3 P3-07 — one box open by the card's own admission, deferred to Phase 7
+### 4.3 P3-07 — the deferred box was hiding a defect; found and fixed at the gate
 
-`p3-07-procurement-client.txt` records six of seven done-when boxes ticked. The seventh —
-*"keyboard navigation and focus order work at 1366×768 and 125% scaling"* — is authored
-(TabIndex ordering throughout, window sized to fit) but not walked through with the OS
-actually set to that resolution and scaling, because this workstation runs 1920×1200 @ 100%.
-The card states this is the Phase 7 UI pass's job to *finish*, not to *start* — Phase 7's
-own scope. Not counted as a Phase 3 shortfall; counted as exactly what the card says it is.
+**This is the row this gate exists for, so it is written out in full.**
+
+At the first sitting, `p3-07-procurement-client.txt` recorded six of seven done-when boxes
+ticked, and deferred the seventh — *"keyboard navigation and focus order work at 1366×768 and
+125% scaling"* — to the Phase 7 UI pass. The gate rejected the deferral on two grounds.
+
+**The card says the opposite.** Its parenthetical reads *"the Phase 7 UI pass refines this; it
+does not start it"* — Phase 7 refines what Phase 3 built, so deferring the whole box inverted
+the instruction.
+
+**The supporting sentence refuted itself.** It claimed the window *"(1024x680, MinWidth 960,
+MinHeight 620) fits inside a 1366x768 desktop at 125% scaling (effective ~1093x614 minus
+taskbar) with room to spare."* Both 680 and 620 exceed the 614 the same clause computes. The
+figures were right; the conclusion was not. WPF lays out in DIPs and `Window.Height` is in
+DIPs, so this was not a unit confusion — it was a comparison nobody made.
+
+**What that hid.** `MinHeight` is the value that matters: a minimum taller than the work area
+cannot be dragged or resized into it, so the status bar along the bottom — the one carrying
+every server message and correlation ID — would have been permanently off-screen on a
+1366×768 demo laptop. The three classmates who must demonstrate this system (ADR-012) are
+exactly the people who would have hit it.
+
+**Fixed, and the fix found a second defect.** `Height` 680→560 and `MinHeight` 620→520 against
+a work area of 1092.8 × **576.0** DIP (1366/1.25 × (768−48)/1.25). With the window corrected,
+measurement showed the New Order tab's fixed `260` DIP row could not give way: the Lines grid
+arranged to **0.0 DIP** — laid out, focusable, invisible. That row is now proportional with a
+minimum.
+
+**Proven, not asserted.** `ProcurementLayoutTests` (3 tests, `Merchandising.Tests.Unit`) holds
+the four declared sizes against the computed work area, lays every screen out at the window's
+own minimum and fails any grid below 48 DIP, and checks every interactive control has a unique
+TabIndex ascending in reading order per screen. Both size and starvation tests were **proven
+falsifiable** against the pre-fix XAML before being trusted — the failure messages are quoted
+in `p3-07-focus-order.txt` §2. The traversal itself was then performed for real: a window
+shown at 1093.0 × 576.0 DIP, walked with `MoveFocus`, all four screens, every visited control
+inside the window bounds, ascending TabIndex, Sign out (99) last, and every skipped control
+reconciled to a named WPF reason (a disabled command, or an empty grid with no focusable
+cell). No unexplained skip.
+
+**⚠ What is genuinely still Phase 7's**, and is not this box: rendering fidelity at a real
+125% DPI (glyph hinting, hairline borders), whether the focus rectangle reads clearly against
+each background, and traversal with the grids populated. The first two are look questions
+rather than reachability questions; the third is `DataGrid`'s own internal cell navigation,
+not this window's authoring. The DIP argument in `p3-07-focus-order.txt` §1 is what makes the
+fit and order claims valid without setting this workstation to 1366×768 @ 125%; it is stated
+there explicitly rather than left implicit, because it is the load-bearing step.
 
 ### 4.4 Carried from Phase 2, still open, not a Phase 3 obligation
 

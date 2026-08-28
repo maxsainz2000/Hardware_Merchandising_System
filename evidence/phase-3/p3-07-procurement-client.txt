@@ -281,10 +281,31 @@ System.Drawing) - not a design-time preview.
   duplicated in a view model.
 - Keyboard navigation and focus order at 1366x768 and 125% scaling -> every
   interactive control carries an explicit TabIndex in visit order per screen
-  (MainWindow.xaml); the window's default size (1024x680, MinWidth 960,
-  MinHeight 620) fits inside a 1366x768 desktop at 125% scaling (effective
-  ~1093x614 minus taskbar) with room to spare. Full manual tab-order and
-  mouse-free navigation walkthrough is the Phase 7 UI pass's job, per this
-  card's own note ("the Phase 7 UI pass refines this; it does not start
-  it") - not repeated here.
+  (MainWindow.xaml).
+
+  *** CORRECTED 2026-08-28 AT THE PHASE 3 GATE. The paragraph that stood here
+  *** was wrong, and is reproduced verbatim so the correction can be checked:
+  ***
+  ***   "the window's default size (1024x680, MinWidth 960, MinHeight 620)
+  ***    fits inside a 1366x768 desktop at 125% scaling (effective ~1093x614
+  ***    minus taskbar) with room to spare. Full manual tab-order and
+  ***    mouse-free navigation walkthrough is the Phase 7 UI pass's job, per
+  ***    this card's own note ("the Phase 7 UI pass refines this; it does not
+  ***    start it") - not repeated here."
+  ***
+  *** 680 and 620 are both LARGER than the 614 the same sentence computes, so
+  *** the window did not fit and the box should not have been carried on that
+  *** claim. The arithmetic was correct; the conclusion drawn from it was not.
+  *** MinHeight 620 was the real defect - a minimum taller than the work area
+  *** cannot be resized to fit, so the status bar would have been permanently
+  *** off-screen on a 1366x768 demo laptop.
+  ***
+  *** Fixed at the gate: MainWindow.xaml now declares Height 560 / MinHeight
+  *** 520 against a 576.0 DIP work area, and the New Order tab's fixed 260 DIP
+  *** row became proportional - measured, that fixed row left the Lines grid
+  *** at 0.0 DIP once the window size was corrected. Both are now asserted by
+  *** ProcurementLayoutTests, and the live focus traversal the old paragraph
+  *** deferred was performed and recorded.
+  ***
+  *** Full record: evidence/phase-3/p3-07-focus-order.txt.
 - Guardrails and both suites green -> section 1.

@@ -247,7 +247,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track D — The Procurement client
 
-### ⬜ P3-07 · Procurement WPF client reaches usable state
+### ✅ P3-07 · Procurement WPF client reaches usable state
 
 **Spec:** §5, §10.1 · **Files:** `src/Merchandising.Procurement/`, `src/Merchandising.ClientCommon/`
 
@@ -259,10 +259,10 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 - [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
 - [x] Server-side refusals (403 self-approval, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
 - [x] Client-side validation is for usability only; every rule is re-checked server-side
-- [ ] Keyboard navigation and focus order work at 1366×768 and 125% scaling (the Phase 7 UI pass refines this; it does not start it) — TabIndex ordering authored throughout and the window fits the target resolution, but not yet walked through with the OS actually set to 1366×768 @ 125% (this workstation runs 1920×1200 @ 100%); left open for that check
+- [x] Keyboard navigation and focus order work at 1366×768 and 125% scaling (the Phase 7 UI pass refines this; it does not start it) — **closed at the Phase 3 gate, and it was hiding a real defect.** The claim carrying it read *"MinHeight 620 … fits inside … effective ~1093x614 … with room to spare"* — 620 > 614, so the window never fit, and a `MinHeight` above the work area cannot be resized into it. Fixed: `Height` 680→560, `MinHeight` 620→520 against a **576.0 DIP** work area, and the New Order tab's fixed `260` row made proportional — measured, that row left the Lines grid at **0.0 DIP** once the window size was corrected. Both now asserted by `ProcurementLayoutTests` (3 tests, each proven falsifiable against the pre-fix XAML), and the traversal itself was performed: a real window shown at 1093.0 × 576.0 DIP, `MoveFocus` walked across all four screens, every visited control on screen, ascending TabIndex, every skip explained. ⚠ Rendering fidelity at a real 125% DPI and focus-rectangle *visibility* remain Phase 7's, as the card's parenthetical intends
 - [x] Guardrails and both suites green
 
-**Evidence:** `evidence/phase-3/p3-07-procurement-client.txt`
+**Evidence:** `evidence/phase-3/p3-07-procurement-client.txt` (§ sizing paragraph corrected in place, original quoted), `evidence/phase-3/p3-07-focus-order.txt`, `evidence/phase-3/p3-07-live-clickthrough-2026-08-28/`
 
 > **Client last, deliberately** (`plan.md` §8.1). Every rule this client touches is already proven server-side by Track C, so a defect found here is a display defect, not a business-logic one.
 
