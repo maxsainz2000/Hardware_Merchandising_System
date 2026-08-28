@@ -1,0 +1,191 @@
+# Phase 3 — Procurement primitives · Evidence Index
+
+**Built at P3-09, 2026-08-28, against commit `70df014`.**
+**Spec:** `documentations/Merchandising System for a Mid-Scale Hardware Store.md` §9, §10.1, §12, §13, §14, §20
+**Plan:** `plan.md` §7 (Phase 3), §10 (risk register mapping)
+
+---
+
+## How to read this file
+
+This index maps every Phase 3 exit criterion and every task card to a file that exists on
+disk, and records the gap-register outcome for **G-23**. It continues
+`../phase-2/INDEX.md` rather than starting a new register — the same three rules apply,
+because an index is only worth as much as its weakest row:
+
+1. **Every artifact path was checked to exist**, and to be non-empty.
+2. **No row says "verified informally."** Where a claim rests on inspection rather than
+   execution, the row says so and is not counted as proven.
+3. **Where the evidence proves something narrower than the row's wording, the row records
+   the narrower claim** — marked ⚠ rather than ✅, and explained in §4.
+
+Status marks: ✅ proven by executed evidence · ⚠ proven, with a stated limit on the claim ·
+⬜ not proven.
+
+---
+
+## 1. Phase 3 exit criteria → artifact
+
+From `plan.md` §7 (Phase 3 *Exit*) and the `Phase 3 exit gate` checklist in the Phase 3
+`tasks.md`.
+
+| # | Criterion | Card | Artifact | Status |
+|---|---|---|---|---|
+| 1 | Every legal transition passes and every illegal one is rejected with a stable error code | P3-01, P3-04, P3-05 | `p3-01-transition-matrix.txt`, `p3-04-approval.txt`, `p3-05-cancellation.txt` | ✅ |
+| 2 | A user cannot approve their own restricted order, proven end-to-end over HTTP | P3-04 | `p3-04-self-approval-denied.txt` | ✅ |
+| 3 | A cancelled order cannot proceed | P3-05 | `p3-05-cancellation.txt` | ✅ |
+| 4 | Approvals are attributable and audited | P3-04 | `p3-04-approval.txt` | ✅ |
+| 5 | `docs/api-specification.md` procurement section written | P3-08 | `p3-08-api-specification.txt`, `../../docs/api-specification.md` | ✅ |
+| 6 | G-23 closed in the gap register | P3-09 | this file, §3 | ✅ |
+| 7 | ADR-020 ACCEPTED | P3-01 | `../../docs/adr.md` line 950 | ✅ |
+| 8 | Clean-clone build and both test suites green | P3-09 | `p3-09-clean-clone.log` | ✅ |
+
+---
+
+## 2. Task card → evidence
+
+| Card | Title | Artifact | Status |
+|---|---|---|---|
+| P3-01 | Seven-state transition table and a single `CanTransition` 🎯 | `p3-01-transition-matrix.txt` | ⚠ §4.1 |
+| P3-02 | Migration 0008 — `PurchaseOrders`, `PurchaseOrderLines`, grants 0010 | `p3-02-schema.txt`, `p3-02-grants.txt` | ✅ |
+| P3-03 | Create and read purchase orders and lines | `p3-03-purchase-orders.txt` | ⚠ §4.2 |
+| P3-04 | Submit and approve, self-approval prohibited 🎯 | `p3-04-approval.txt`, `p3-04-self-approval-denied.txt` | ✅ |
+| P3-05 | Cancellation and closure rules | `p3-05-cancellation.txt` | ✅ |
+| P3-06 | Purchase history and order tracking | `p3-06-purchase-history.txt` | ✅ |
+| P3-07 | Procurement WPF client reaches usable state | `p3-07-procurement-client.txt`, `p3-07-live-clickthrough-2026-08-28/` | ⚠ §4.3 |
+| P3-08 | `docs/api-specification.md` — procurement section | `p3-08-api-specification.txt` | ✅ |
+| P3-09 | Closure pack — suite green, clean clone, this index | `p3-09-clean-clone.log`, this file | ✅ |
+
+**P3-01 and P3-07 stay ⚠ rather than round up to a plain ✅.** Neither is a failing test or a
+partial implementation — both are fully green — but each records a limit on what its own
+evidence proves, in the same spirit P2-01/P2-03 were held at 🟡 in the Phase 2 index rather
+than silently rounded up. See §4.
+
+---
+
+## 3. Gap register — the Phase 3 row
+
+Continuing `../phase-2/INDEX.md` §3, which left G-23 assigned to this phase.
+
+| Gap | Mitigation (spec §23) | Phase 3 cards | Artifact | Status now |
+|---|---|---|---|---|
+| **G-23** · Receiving phase preceded procurement dependency | Reorder phases so procurement primitives precede receiving integration | P3-01–P3-06 (structure), P3-09 (closure) | `../../tasks.md` (Phase 3 header, line 67), `../../plan.md` §7 (line 379), `p3-01-transition-matrix.txt`, `p3-04-approval.txt`, `p3-05-cancellation.txt` | ✅ **closed** |
+
+**G-23 closed.** Unlike G-19/G-21 in Phase 2, this gap is not a checklist of components —
+it is a single structural claim: *procurement primitives exist and are provable before
+receiving is built on top of them.* Two things make that true rather than merely stated:
+
+1. **The reordering itself.** `plan.md` §7 places Phase 3 (Procurement Primitives) before
+   Phase 4 (Inventory and Receiving), and Phase 3's own `tasks.md` header states it as a
+   deliberate constraint: *"Procurement precedes receiving deliberately — this is the
+   spec's G-23 reordering. Do not merge these phases."* That sentence predates this card;
+   P3-09 is where it gets recorded as closed rather than merely asserted.
+2. **The dependency is real, not cosmetic.** P3-01's transition table models all seven
+   spec §10.1 states — including `PartiallyReceived` and `FullyReceived`, which Phase 4's
+   receiving command will drive — so Phase 4 has a closed, tested table to consume on day
+   one rather than needing to invent status handling itself. P3-04's self-approval rule and
+   P3-05's cancellation/closure rules are proven server-side, over real HTTP, before a
+   single receiving endpoint exists. Phase 4's dependency review is therefore: consume
+   `CanTransition`, do not re-decide it (P3-01's own closing note) — a mechanism Phase 4
+   inherits rather than a review Phase 4 still owes.
+
+No G-23 component is deferred to a later phase. This is the only gap Phase 3 owns, and it
+closes here in full.
+
+Gaps G-06, G-08, G-15, G-16, G-17, G-21 (Phase 2's own carry, per its §4.2), G-22, G-24,
+G-25, G-26, G-27, G-28, G-30 remain assigned to Phases 4–7 by `plan.md` §7 and §10, and are
+correctly untouched here.
+
+---
+
+## 4. Where the claim is narrower than the wording
+
+### 4.1 P3-01 — "no `Select Case` on status anywhere else" is a lint, not a proof
+
+The done-when box reads *"no `Select Case` on status anywhere else in the solution"* and is
+enforced by a source-scan lint over the compiled solution. That lint catches the idiomatic
+`Select Case … Status` form. It does **not** catch an `If order.Status = …` chain written
+some other way, and it cannot see a transition decision made in SQL. P3-01's own test
+summary and ADR-020 both state this rather than let the box read as a stronger guarantee
+than the mechanism backing it. No such bypass exists in the Phase 3 codebase today — the
+limit is on what the *check* proves, not a known gap in the code.
+
+### 4.2 P3-03 — the isolation-level divergence is real, carried, and does not affect any
+proven claim
+
+Measured directly inside a transaction (`p3-03-purchase-orders.txt` §5): MySqlConnector's
+`BeginTransaction` sends its own `SET TRANSACTION ISOLATION LEVEL`, overriding the
+`SET SESSION` `ConnectionFactory` issues. Only `PurchaseOrderService` passes
+`IsolationLevel.ReadCommitted` explicitly at `BeginTransaction`; every other call site
+(`StockService`, `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`,
+and three controllers) still opens `REPEATABLE READ` in practice, though `ADR-006`'s text
+says `READ COMMITTED`. **No test of theirs fails**, because their correctness rests on
+InnoDB row-locking on a conditional `UPDATE` — a locking read is current at either isolation
+level, which is why P1-11/P1-13's concurrency proofs stand unchanged. This is a divergence
+between ADR-006's text and the running system, not a known-broken guarantee, and it is
+carried forward as **CARRY-03** (`tasks.md` line 50) with Phase 4 named as its natural home,
+since receiving reads a line before it writes one — the first command that would actually be
+bitten by it.
+
+### 4.3 P3-07 — one box open by the card's own admission, deferred to Phase 7
+
+`p3-07-procurement-client.txt` records six of seven done-when boxes ticked. The seventh —
+*"keyboard navigation and focus order work at 1366×768 and 125% scaling"* — is authored
+(TabIndex ordering throughout, window sized to fit) but not walked through with the OS
+actually set to that resolution and scaling, because this workstation runs 1920×1200 @ 100%.
+The card states this is the Phase 7 UI pass's job to *finish*, not to *start* — Phase 7's
+own scope. Not counted as a Phase 3 shortfall; counted as exactly what the card says it is.
+
+### 4.4 Carried from Phase 2, still open, not a Phase 3 obligation
+
+**CARRY-01** (account recovery — `tasks.md` line 44) and **CARRY-02** (off-host backup copy
+with the volume present — `tasks.md` line 56) both surfaced before this phase and remain
+unassigned or assigned to Phase 6 respectively. Neither names a Phase 3 card, neither is
+listed in Phase 3's *Build* scope (`plan.md` §7), and no Phase 3 card claims to close either
+one. Recorded here only so a reader of this index does not mistake their continued
+open-ness for something this phase missed.
+
+---
+
+## 5. Test-suite growth across Phase 3
+
+| Point | Unit | Integration | Total |
+|---|---|---|---|
+| Phase 2 gate (`229748e`, 2026-08-25) | 24 | 136 | 160 |
+| Phase 3 gate (`70df014`, 2026-08-28) | **41** | **211** | **252** |
+
+Unit grew by 17 tests — P3-01's transition matrix, computed exhaustively over every state ×
+action pair from the enums rather than hand-listed, so a new state cannot be added without
+the suite growing with it. Integration grew by 75 tests across Tracks B, C and D, against the
+real pinned MariaDB 10.4.32 throughout — never a substitute, never an in-memory provider. 0
+skipped in both suites at the gate.
+
+---
+
+## 6. ADR status at the Phase 3 gate
+
+**One entry resolved this phase: ADR-020** (the purchase-order status machine is a table,
+not a set of checks), raised and settled at P3-01, `Status: ACCEPTED`.
+
+**21 top-level entries** (`ADR-000`…`ADR-020`) plus **8 sub-entries** (003.1, 003.2, 004.1,
+009.1, 009.2, 011.1, 013.1, 015.1) — 29 entries in total. Every `**Status:**` line among them
+reads **ACCEPTED**; none reads `PENDING`. The historical mentions of the word "PENDING"
+inside ADR-009 and ADR-011 are narration of a *past* resolved state (P1-11/P1-12's progress
+notes, and ADR-008's own resolution note), not live status lines. The only current `PENDING`
+string in the file is the placeholder inside the *Template for new entries* fence, unchanged
+since the Phase 2 gate.
+
+**ADR-020 is appended before the template section, not inside its fence** — `## ADR-020`
+starts at line 950, `## Template for new entries` at line 1010, the template's own fence
+opens at line 1012. The formatting defect P2-13 repaired (ADR-015–018 rendering as a code
+block) has not recurred.
+
+---
+
+## 7. What Phase 3 did not touch
+
+`P2-10` (supplier master) was built early in Phase 2 and is consumed, not rebuilt, here —
+see `../phase-2/INDEX.md` for its evidence. The product master (`0006`), the audit pipeline
+(P2-04), the 29-policy registry, the error envelope, idempotency, and the ADR-006 transaction
+pattern are all Phase 1/2 mechanisms this phase consumed under the "frozen: no phase below
+may re-litigate" rule stated in `tasks.md`'s Phase 2 closure note (line 22).

@@ -292,7 +292,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ---
 
-### ⬜ P3-09 · Phase 3 closure pack
+### ✅ P3-09 · Phase 3 closure pack
 
 **Spec:** §20 · **Files:** `evidence/phase-3/`
 
@@ -300,12 +300,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at 0 warnings and passes guardrails plus both suites → `p3-09-clean-clone.log`
-- [ ] `evidence/phase-3/INDEX.md` maps every Phase 3 exit criterion and every card to an artifact, continuing `phase-2/INDEX.md`'s register
-- [ ] **G-23 recorded closed** in that register
-- [ ] Any claim narrower than its wording is marked ⚠ and explained, never rounded up
-- [ ] Every ADR this phase owed (ADR-020) is ACCEPTED, not PENDING
-- [ ] ADR-020 appended **before** the *Template for new entries* section — not inside its fence, which is how ADR-015–018 ended up rendering as a code block until P2-13 repaired it
+- [x] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at 0 warnings and passes guardrails plus both suites → `p3-09-clean-clone.log` — 41/41 unit, 211/211 integration, 0 skipped, at `70df014`
+- [x] `evidence/phase-3/INDEX.md` maps every Phase 3 exit criterion and every card to an artifact, continuing `phase-2/INDEX.md`'s register
+- [x] **G-23 recorded closed** in that register
+- [x] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — §4 of the index (P3-01's lint limit, P3-03's isolation divergence/CARRY-03, P3-07's open Phase-7 box)
+- [x] Every ADR this phase owed (ADR-020) is ACCEPTED, not PENDING
+- [x] ADR-020 appended **before** the *Template for new entries* section — not inside its fence, which is how ADR-015–018 ended up rendering as a code block until P2-13 repaired it — verified: `## ADR-020` at line 950, `## Template for new entries` at line 1010
 
 **Evidence:** `evidence/phase-3/p3-09-clean-clone.log`, `evidence/phase-3/INDEX.md`
 
@@ -315,13 +315,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-3/` — a file someone else could read.
 
-- [ ] Every legal transition passes and every illegal one is rejected with a stable error code (P3-01, P3-04, P3-05)
-- [ ] A user cannot approve their own restricted order, proven end-to-end over HTTP (P3-04)
-- [ ] A cancelled order cannot proceed (P3-05)
-- [ ] Approvals are attributable and audited (P3-04)
-- [ ] `docs/api-specification.md` procurement section written (P3-08)
-- [ ] G-23 closed in the gap register (P3-09)
-- [ ] ADR-020 ACCEPTED
-- [ ] Clean-clone build and both test suites green (P3-09)
+- [x] Every legal transition passes and every illegal one is rejected with a stable error code (P3-01, P3-04, P3-05)
+- [x] A user cannot approve their own restricted order, proven end-to-end over HTTP (P3-04)
+- [x] A cancelled order cannot proceed (P3-05)
+- [x] Approvals are attributable and audited (P3-04)
+- [x] `docs/api-specification.md` procurement section written (P3-08)
+- [x] G-23 closed in the gap register (P3-09)
+- [x] ADR-020 ACCEPTED
+- [x] Clean-clone build and both test suites green (P3-09)
 
 **Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7**. CARRY-02 belongs to **Phase 6** (ADR-019). **CARRY-01 has no owner yet and needs a decision** — it is not a Phase 3 blocker, but do not let Phase 6 planning close without placing it.

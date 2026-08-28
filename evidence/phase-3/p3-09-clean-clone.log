@@ -1,0 +1,122 @@
+===============================================================================
+P3-09 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
+Captured 2026-08-28 08:26:50 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P3-09  |  Gate: Phase 3 exit criterion "Clean-clone build and
+both test suites green"  |  plan.md section 7 (Phase 3 Exit), section 9
+(Phase definition of done)
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds all
+eleven projects at zero warnings, and passes the guardrails and BOTH test
+suites - including the integration suite, which runs against the real pinned
+MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. A clone that had to create
+those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
+on a machine the author has never configured is a Phase 6 exit criterion
+(plan.md section 7, promoted by ADR-012) - not this one. Same wording as
+P1-20 and P2-13, deliberately: the claim has not grown.
+
+Source commit    : 70df014dda9be8e6c0dfc303632c4944e5ece4fb
+                   (70df014) "P3-07: supplementary live click-through
+                   against the redeployed API"
+Clone target     : <scratchpad>\cleanclone-p3  (outside the repository,
+                   deleted after capture)
+bin/obj at clone : 0 directories - verified by find before building
+dotnet SDK       : 10.0.301
+MariaDB          : mysql.exe Ver 15.1 Distrib 10.4.32-MariaDB, Win64 (AMD64)
+                   source revision c4143f909528e3fab0677a28631d10389354c491
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+                   -RepoRoot <clone>
+Exit code        : 0
+
+
+===============================================================================
+1. GUARDRAILS - run twice, once by the script and once by the build
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+(Repeated identically inside the dotnet build step below - both runs pass.)
+
+
+===============================================================================
+2. BUILD - eleven projects, restored from nothing
+===============================================================================
+
+All eleven .vbproj restored (nothing cached - "Restored", not "up-to-date
+for restore", which is what distinguishes this from an in-place build):
+
+  Merchandising.ClientCommon       (242 ms)
+  Merchandising.POS                (257 ms)
+  Merchandising.Inventory          (242 ms)
+  Merchandising.Contracts          (248 ms)
+  Merchandising.Domain             (13 ms)
+  Merchandising.Procurement        (16 ms)
+  Merchandising.Infrastructure     (1.71 sec)
+  Merchandising.Api                (1.72 sec)
+  Merchandising.Maintenance        (1.74 sec)
+  Merchandising.Tests.Unit         (1.98 sec)
+  Merchandising.Tests.Integration  (1.67 sec)
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:29.21
+
+
+===============================================================================
+3. BOTH TEST SUITES - green
+===============================================================================
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    41, Skipped:     0, Total:    41,
+           Duration: 572 ms - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   211, Skipped:     0, Total:   211,
+           Duration: 31 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+Skipped: 0 in both suites. Nothing was excluded, conditioned out, or marked
+inconclusive to reach this result.
+
+
+===============================================================================
+4. GROWTH SINCE THE PHASE 2 GATE
+===============================================================================
+
+  Point                                    Unit   Integration   Total
+  Phase 2 gate (229748e, 2026-08-25)         24           136     160
+  Phase 3 gate (70df014, 2026-08-28)         41           211     252
+
+Unit grew by 17 tests (the P3-01 transition matrix, computed exhaustively
+over all state x action pairs rather than hand-listed). Integration grew by
+75 tests across Track B/C/D, against the real pinned MariaDB 10.4.32
+throughout - never a substitute, never an in-memory provider.
+
+
+===============================================================================
+5. WHAT THIS RUN DOES NOT COVER
+===============================================================================
+
+- The Procurement WPF client's UI is not exercised by either automated
+  suite - P3-07's own evidence (live click-through against the running API)
+  is the artifact for that, not this log.
+- The one open P3-07 box - keyboard navigation and focus order walked with
+  the OS actually set to 1366x768 @ 125% scaling - remains open here for the
+  same reason it is open on the card: this workstation runs 1920x1200 @
+  100%. Left to the Phase 7 UI pass, per the card's own wording.
