@@ -1,6 +1,9 @@
 # Phase 3 — Procurement primitives · Evidence Index
 
-**Built at P3-09, 2026-08-28, against commit `70df014`.**
+**Built at P3-09, 2026-08-28. Revised at the Phase 3 gate the same day, against commit `edc4054`.**
+*The gate returned FAIL on its first sitting — P3-07's last box was carried on a claim its own
+arithmetic refuted, and a real defect sat behind it. §4.3 is the record. This index describes
+the tree after that was fixed.*
 **Spec:** `documentations/Merchandising System for a Mid-Scale Hardware Store.md` §9, §10.1, §12, §13, §14, §20
 **Plan:** `plan.md` §7 (Phase 3), §10 (risk register mapping)
 
@@ -39,6 +42,7 @@ From `plan.md` §7 (Phase 3 *Exit*) and the `Phase 3 exit gate` checklist in the
 | 6 | G-23 closed in the gap register | P3-09 | this file, §3 | ✅ |
 | 7 | ADR-020 ACCEPTED | P3-01 | `../../docs/adr.md` line 950 | ✅ |
 | 8 | Clean-clone build and both test suites green | P3-09 | `p3-09-clean-clone.log` | ✅ |
+| 9 | *(CLAUDE.md §9)* Every task done — P3-07 was the one open card | P3-07 | `p3-07-focus-order.txt`, §4.3 | ✅ |
 
 ---
 
@@ -197,13 +201,24 @@ open-ness for something this phase missed.
 | Point | Unit | Integration | Total |
 |---|---|---|---|
 | Phase 2 gate (`229748e`, 2026-08-25) | 24 | 136 | 160 |
-| Phase 3 gate (`70df014`, 2026-08-28) | **41** | **211** | **252** |
+| Phase 3, first P3-09 capture (`70df014`) | 41 | 211 | 252 |
+| Phase 3 gate (`edc4054`, 2026-08-28) | **44** | **211** | **255** |
 
-Unit grew by 17 tests — P3-01's transition matrix, computed exhaustively over every state ×
-action pair from the enums rather than hand-listed, so a new state cannot be added without
-the suite growing with it. Integration grew by 75 tests across Tracks B, C and D, against the
-real pinned MariaDB 10.4.32 throughout — never a substitute, never an in-memory provider. 0
-skipped in both suites at the gate.
+Unit grew by 17 tests to the first capture — P3-01's transition matrix, computed exhaustively
+over every state × action pair from the enums rather than hand-listed, so a new state cannot
+be added without the suite growing with it — then by 3 more when this gate reopened P3-07
+(`ProcurementLayoutTests`). Integration grew by 75 tests across Tracks B, C and D, against the
+real pinned MariaDB 10.4.32 throughout — never a substitute, never an in-memory provider, and
+unchanged by the P3-07 fix, because that defect was in client layout and no server-side test
+could have caught it. 0 skipped in both suites at the gate.
+
+**One intermittent build failure is recorded rather than omitted.** The first clean-clone
+attempt at `edc4054` failed with `MSB3030` copying `runtimeconfig.json` from the two `WinExe`
+projects `Merchandising.Tests.Unit` references. It did not reproduce in eight further
+clean-clone builds across both commits, and both project references predate this gate, so it
+is a pre-existing parallel-build fragility one run exposed — not a regression. Measured
+attribution and the reason it is left recorded rather than repaired: `p3-09-clean-clone.log`
+§5.
 
 ---
 

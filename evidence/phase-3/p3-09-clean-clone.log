@@ -1,9 +1,14 @@
 ===============================================================================
 P3-09 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
-Captured 2026-08-28 08:26:50 +08:00 on LAPTOP-3HH6OHHE
+Captured 2026-08-28 on LAPTOP-3HH6OHHE
 Card: tasks.md P3-09  |  Gate: Phase 3 exit criterion "Clean-clone build and
 both test suites green"  |  plan.md section 7 (Phase 3 Exit), section 9
 (Phase definition of done)
+
+RE-CAPTURED at the Phase 3 gate. The first capture was taken at 70df014,
+before the gate reopened P3-07; this one is taken at edc4054, which closes
+it. The earlier run is superseded rather than deleted - its numbers were
+correct for the tree it measured (41 unit tests); this tree has 44.
 ===============================================================================
 
 WHAT THIS PROVES, AND WHAT IT DOES NOT.
@@ -20,17 +25,17 @@ MariaDB instance, and its installed .NET SDK. A clone that had to create
 those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
 on a machine the author has never configured is a Phase 6 exit criterion
 (plan.md section 7, promoted by ADR-012) - not this one. Same wording as
-P1-20 and P2-13, deliberately: the claim has not grown.
+P1-20, P2-13 and the first P3-09 capture, deliberately: the claim has not
+grown.
 
-Source commit    : 70df014dda9be8e6c0dfc303632c4944e5ece4fb
-                   (70df014) "P3-07: supplementary live click-through
-                   against the redeployed API"
-Clone target     : <scratchpad>\cleanclone-p3  (outside the repository,
-                   deleted after capture)
-bin/obj at clone : 0 directories - verified by find before building
+Source commit    : edc4054db67322f282c582e716b584061f9b0514
+                   (edc4054) "P3-07: keyboard navigation and focus order at
+                   1366x768 @ 125%"
+Clone target     : <scratchpad>\cc-retry  (outside the repository, deleted
+                   after capture)
+bin/obj at clone : 0 directories - verified by enumeration before building
 dotnet SDK       : 10.0.301
-MariaDB          : mysql.exe Ver 15.1 Distrib 10.4.32-MariaDB, Win64 (AMD64)
-                   source revision c4143f909528e3fab0677a28631d10389354c491
+MariaDB          : 10.4.32-MariaDB (XAMPP 8.2.12-0)
 Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
                    -RepoRoot <clone>
 Exit code        : 0
@@ -55,26 +60,26 @@ All guardrails passed.
 2. BUILD - eleven projects, restored from nothing
 ===============================================================================
 
-All eleven .vbproj restored (nothing cached - "Restored", not "up-to-date
-for restore", which is what distinguishes this from an in-place build):
+All eleven .vbproj restored ("Restored", not "up-to-date for restore", which
+is what distinguishes this from an in-place build), then built:
 
-  Merchandising.ClientCommon       (242 ms)
-  Merchandising.POS                (257 ms)
-  Merchandising.Inventory          (242 ms)
-  Merchandising.Contracts          (248 ms)
-  Merchandising.Domain             (13 ms)
-  Merchandising.Procurement        (16 ms)
-  Merchandising.Infrastructure     (1.71 sec)
-  Merchandising.Api                (1.72 sec)
-  Merchandising.Maintenance        (1.74 sec)
-  Merchandising.Tests.Unit         (1.98 sec)
-  Merchandising.Tests.Integration  (1.67 sec)
+  Merchandising.Domain
+  Merchandising.Contracts
+  Merchandising.ClientCommon
+  Merchandising.Infrastructure
+  Merchandising.Maintenance
+  Merchandising.POS
+  Merchandising.Api
+  Merchandising.Inventory
+  Merchandising.Procurement
+  Merchandising.Tests.Unit
+  Merchandising.Tests.Integration
 
 Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:29.21
+Time Elapsed 00:00:21.61
 
 
 ===============================================================================
@@ -82,12 +87,12 @@ Time Elapsed 00:00:29.21
 ===============================================================================
 
 === Unit tests ===
-Passed!  - Failed:     0, Passed:    41, Skipped:     0, Total:    41,
-           Duration: 572 ms - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44,
+           Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
 
 === Integration tests (real MariaDB) ===
 Passed!  - Failed:     0, Passed:   211, Skipped:     0, Total:   211,
-           Duration: 31 s - Merchandising.Tests.Integration.dll (net10.0)
+           Duration: 51 s - Merchandising.Tests.Integration.dll (net10.0)
 
 All checks passed.
 
@@ -101,22 +106,53 @@ inconclusive to reach this result.
 
   Point                                    Unit   Integration   Total
   Phase 2 gate (229748e, 2026-08-25)         24           136     160
-  Phase 3 gate (70df014, 2026-08-28)         41           211     252
+  Phase 3, first P3-09 capture (70df014)     41           211     252
+  Phase 3 gate (edc4054, 2026-08-28)         44           211     255
 
-Unit grew by 17 tests (the P3-01 transition matrix, computed exhaustively
-over all state x action pairs rather than hand-listed). Integration grew by
-75 tests across Track B/C/D, against the real pinned MariaDB 10.4.32
-throughout - never a substitute, never an in-memory provider.
+The three added unit tests are ProcurementLayoutTests, written when the gate
+reopened P3-07. Integration is unchanged: that card's defect was in client
+layout, which no server-side test could have caught.
 
 
 ===============================================================================
-5. WHAT THIS RUN DOES NOT COVER
+5. ONE INTERMITTENT BUILD FAILURE, OBSERVED ONCE AND NOT REPRODUCED
 ===============================================================================
 
-- The Procurement WPF client's UI is not exercised by either automated
-  suite - P3-07's own evidence (live click-through against the running API)
-  is the artifact for that, not this log.
-- The one open P3-07 box - keyboard navigation and focus order walked with
-  the OS actually set to 1366x768 @ 125% scaling - remains open here for the
-  same reason it is open on the card: this workstation runs 1920x1200 @
-  100%. Left to the Phase 7 UI pass, per the card's own wording.
+Recorded because a gate that only reports its successful runs is not a gate.
+
+The FIRST clean-clone attempt at edc4054 failed the build with two errors:
+
+  error MSB3030: Could not copy the file
+  "...\src\Merchandising.Inventory\bin\Debug\net10.0-windows\
+   Merchandising.Inventory.runtimeconfig.json" because it was not found.
+  [...\src\tests\Merchandising.Tests.Unit\Merchandising.Tests.Unit.vbproj]
+
+  (and the same for Merchandising.Procurement.runtimeconfig.json)
+
+This is not a compile error and names no source file. Merchandising.Tests.Unit
+references two OutputType=WinExe projects - Inventory (since P1-15) and
+Procurement (since P3-07) - and in a parallel build the referenced
+executable's runtimeconfig.json can be listed as a copy-local item before the
+task that generates it has run.
+
+ATTRIBUTION, measured rather than assumed. Nine clean-clone builds were run:
+
+  commit    full runs (build + both suites)   build-only runs   MSB3030
+  -------   ------------------------------    ---------------   -------
+  edc4054   2                                 3                 1 of 5
+  7480c43   2                                 3                 0 of 4
+
+It appeared once, on the first run at edc4054, and never again on either
+commit. The project references that cause it BOTH predate this gate - the
+Procurement reference is in the vbproj that shipped with P3-07's original
+commit, not added here - so this is a pre-existing fragility that one run
+happened to expose, not a regression introduced by closing P3-07. Four out
+of four later runs at edc4054 were clean, including the two full runs whose
+output is quoted above.
+
+NOT claimed: that it is fixed, or that the true rate is 1 in 9. It was seen
+once and has not been reproduced, and nine runs is too small a sample to put
+a number on it. It is left recorded rather than repaired because the repair
+belongs to whoever owns build infrastructure, not to P3-07, and because the
+condition it threatens - a classmate's first build from a clean clone
+(ADR-012) - is retried by simply building again. Worth a card if it recurs.
