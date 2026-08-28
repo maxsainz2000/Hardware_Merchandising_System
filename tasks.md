@@ -84,7 +84,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track A — The ledger invariant, before anything new writes to the ledger
 
-### ⬜ P4-01 · `SUM(StockMovements) = StockBalances` for every product, as a standing assertion 🎯
+### ✅ P4-01 · `SUM(StockMovements) = StockBalances` for every product, as a standing assertion 🎯
 
 **Spec:** §11, §12 · **Closes:** G-12 (begins) · **Decides:** ADR-021
 **Files:** `src/Merchandising.Infrastructure/Data/LedgerReconciliation.vb`, `src/tests/Merchandising.Tests.Integration/LedgerReconciliationTests.vb`
@@ -93,13 +93,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The query covers **every** product, including ones with no movements and ones with no balance row — a product missing from either side is a discrepancy, not a skip
-- [ ] It reports **all** disagreeing products with expected, actual and delta, not just a boolean or the first failure
-- [ ] It runs automatically after the integration suite and fails the run on any drift — proven by **deliberately introducing drift** (a movement row with no matching balance change, inserted as `merch_migrator`) and confirming the failure names that product, then removing it. A reconciliation test never proven to fail is decoration
-- [ ] Decimal comparison is exact at the stored scale (`DECIMAL(19,3)`), never a floating-point tolerance
-- [ ] It is not fooled by an in-flight transaction — the check reads committed state only
-- [ ] ADR-021 records the query, where it runs, and why an automated assertion beat a report
-- [ ] Both suites green; guardrails pass; build 0 warnings
+- [x] The query covers **every** product, including ones with no movements and ones with no balance row — a product missing from either side is a discrepancy, not a skip
+- [x] It reports **all** disagreeing products with expected, actual and delta, not just a boolean or the first failure
+- [x] It runs automatically after the integration suite and fails the run on any drift — proven by **deliberately introducing drift** (a movement row with no matching balance change, inserted as `merch_migrator`) and confirming the failure names that product, then removing it. A reconciliation test never proven to fail is decoration. It also proved itself against real data on its first run: it found genuine pre-existing drift in four Phase 1/2 fixture products, caused by test setup helpers resetting `StockBalances` directly with no matching movement — fixed at the fixtures and healed with a one-time compensating correction, never an edit or delete (`evidence/phase-4/p4-01-ledger-reconciliation.txt`, `p4-01-drift-correction.sql`)
+- [x] Decimal comparison is exact at the stored scale (`DECIMAL(19,3)`), never a floating-point tolerance
+- [x] It is not fooled by an in-flight transaction — the check reads committed state only
+- [x] ADR-021 records the query, where it runs, and why an automated assertion beat a report
+- [x] Both suites green; guardrails pass; build 0 warnings
 
 **Evidence:** `evidence/phase-4/p4-01-ledger-reconciliation.txt` — including the induced-drift run that proves it fails
 

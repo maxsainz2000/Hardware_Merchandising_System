@@ -1007,6 +1007,41 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-021 · Ledger reconciliation is a standing automated assertion, not a report
+
+**Status:** ACCEPTED
+**Date:** 2026-08-29
+**Decides:** how `SUM(StockMovements) = StockBalances` is checked for every product, where that check runs, and what counts as a discrepancy. Raised and settled at P4-01, first and alone per `plan.md` section 7 — every later Phase 4 card writes to the ledger.
+
+**Decision.**
+
+1. **One query, driven from `Products`.** `LedgerReconciliation.FindDiscrepanciesAsync` (`src/Merchandising.Infrastructure/Data/LedgerReconciliation.vb`) LEFT JOINs a `SUM(Delta) GROUP BY ProductId` subquery over `StockMovements` and `StockBalances` onto every row of `Products`, `COALESCE`s both sides to `0.000`, and returns every product where they disagree — `ProductId`, `ExpectedQuantity` (ledger sum), `ActualQuantity` (balance), `Delta` (`LedgerDiscrepancy.vb`). `Products` is the driving table, not a UNION of the two ledgers, because every `StockMovements`/`StockBalances` row carries a `FOREIGN KEY` to `Products` and products are never deleted (spec section 12) — so `Products` already names every `ProductId` either ledger could reference.
+2. **`COALESCE(...,0.000)` on both sides is what makes "missing from either side is a discrepancy, not a skip" true with no special-casing.** A product with movements but no balance row compares a real sum against `0`; a product with a balance but no movements compares `0` against a real balance; a product genuinely untouched by both compares `0 = 0` and is silent.
+3. **The inequality runs in SQL, as `DECIMAL(19,3) <> DECIMAL(19,3)`.** MariaDB's `DECIMAL` comparison is exact — this is where "never a floating-point tolerance" is actually enforced, not a property hoped for once the values reach VB.
+4. **No explicit transaction is opened.** `ConnectionFactory` already pins every connection's session to `tx_isolation = READ-COMMITTED` (ADR-006), so a single autocommit `SELECT` here can only ever see committed rows without this query needing to know a concurrent transaction exists.
+5. **Wired via MSTest `<AssemblyCleanup>`** (`LedgerReconciliationTests.ReconcileLedgerAfterSuiteAsync`), not a report. It runs once, automatically, after every other integration test in the assembly finishes, and calls `Assert.Fail` naming every discrepant product with expected/actual/delta if any exist — `dotnet test` fails the whole run. This is what `plan.md` section 7 means by "found automatically in Phase 4, not Phase 7": nobody has to remember to read anything.
+6. **"Removing" an induced discrepancy always means closing the gap with a compensating `StockBalances` write, never editing or deleting the `StockMovements` row that proved detection worked.** `StockMovements` is append-only (CLAUDE.md section 5); section 7 stop condition 7 forbids `UPDATE`/`DELETE` on it regardless of which database account is technically capable (`merch_migrator` does hold that grant at the schema level — db/grants/0001 — the prohibition is a project rule layered on top, not gated by the grant). `LedgerReconciliationTests`'s induced-drift test inserts one unmatched movement as `merch_migrator`, asserts it is named with the exact expected/actual/delta, then reconciles the balance to the new ledger sum — the same "write the movement, then the balance must agree" shape every real command already follows.
+
+**What P4-01 found immediately, and how it was resolved.** The first real run against the pinned database — not a synthetic fixture — found genuine pre-existing drift in four Phase 1/2 test fixture products (`p1_11_fixture_sku`, `p1_13_fixture_sku`, `p2_03_fixture_sku`, `p2_09_fixture_sku`). Root cause: `StockDecrementTests`, `ProductLifecycleTests`, and `AuthorizationMatrixTests` each reuse one fixed fixture product across every integration-test run ever executed, and their setup helpers reset `StockBalances.Quantity` directly — a bare `UPDATE`, or an initial `INSERT` of a nonzero baseline — with no matching movement, before every run. `StockMovements` is append-only, so every historical decrement from every prior run stayed in the ledger while the balance was repeatedly force-reset outside of it; the two had been silently diverging since Phase 1. This is precisely the failure mode the card exists to catch, caught exactly where `plan.md` section 7 predicted it should be. Put to the user, who chose to fix it rather than defer it: the three fixture helpers now write a compensating `StockMovements` row in the same transaction as any direct balance change (and their initial fixture-creation inserts now start every product at `0.000`, matching zero movements, instead of a nonzero baseline with nothing behind it), and a one-time correction (`evidence/phase-4/p4-01-drift-correction.sql`, run once via `merch_migrator` credentials, attributed to the permanent seeded `admin` account) closed the four existing gaps with compensating movements — never an edit or delete. Full detail: `evidence/phase-4/p4-01-ledger-reconciliation.txt`.
+
+**Reasoning.**
+
+- **An assertion beats a report because a report only works if someone remembers to run and read it.** `plan.md` section 7 states the cost asymmetry directly: drift found in Phase 7 is a nightmare, found automatically in Phase 4 it is a small bug. `<AssemblyCleanup>` makes the check unavoidable — it runs every time `dotnet test` runs this project, which `run-tests.ps1` already always does.
+- **`Products` as the driving table, rather than a `FULL OUTER JOIN`-shaped UNION of the two ledgers, avoids a construct MariaDB 10.4 does not have** (no native `FULL OUTER JOIN`) while still being provably exhaustive, because of the `FOREIGN KEY` argument in point 1.
+- **Finding real drift on the first run, rather than treating it as a test-only inconvenience, is the point of building this card first and alone.** Silently excluding known fixture products from the check, or loosening the comparison to ignore old drift, would have been the exact "found in Phase 7 instead" failure this ADR exists to prevent — just relocated to Phase 4 and then hidden.
+
+**Rejected.**
+
+- **A report/dashboard someone checks periodically.** Exactly the failure mode named in `plan.md` section 7.
+- **Comparing values in VB after fetching both sides, rather than in SQL.** Works, but moves the "exact decimal, no tolerance" guarantee out of the database's own type system and into application code that could someday cast through `Double` by accident. Comparing in SQL makes that class of mistake structurally unavailable.
+- **A `FULL OUTER JOIN` emulated with `UNION`.** Correct in principle, more complex than driving from `Products`, and loses the direct "every `ProductId` either ledger could reference already appears in `Products`" argument that makes exhaustiveness obvious on inspection.
+- **Deleting or editing the pre-existing drift's underlying movement rows to make the numbers agree.** Directly forbidden (CLAUDE.md section 5, section 7 stop condition 7) regardless of which account could technically do it. Every correction here is an `INSERT`.
+- **Silently excluding the four already-drifted fixture products from the assertion, or shipping the card with the check red.** Both would have defeated the card's own purpose — the first by hiding a real invariant violation, the second by leaving the ledger un-trustworthy at the exact point the phase begins building on top of it.
+
+**Evidence.** `evidence/phase-4/p4-01-ledger-reconciliation.txt` (induced-drift proof, the real pre-existing-drift discovery and its resolution, and the full green suite run), `evidence/phase-4/p4-01-drift-correction.sql` (the one-time correction), `LedgerReconciliationTests` (3 tests: settled-fixture silence, induced-drift detection-then-healing, and the `<AssemblyCleanup>` itself) in the integration suite.
+
+---
+
 ## Template for new entries
 
 ```markdown

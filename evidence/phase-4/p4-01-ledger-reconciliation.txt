@@ -1,0 +1,172 @@
+P4-01 — SUM(StockMovements) = StockBalances for every product, as a
+standing assertion
+=========================================================================
+
+Files:
+  src/Merchandising.Infrastructure/Data/LedgerReconciliation.vb
+  src/Merchandising.Infrastructure/Data/LedgerDiscrepancy.vb
+  src/tests/Merchandising.Tests.Integration/LedgerReconciliationTests.vb
+
+-------------------------------------------------------------------------
+SECTION 1 — first run against the real database: the check works, and it
+immediately finds REAL pre-existing drift (not a synthetic example)
+-------------------------------------------------------------------------
+
+Command:
+  dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+    --configuration Debug --no-build --nologo \
+    --filter "FullyQualifiedName~LedgerReconciliationTests&FullyQualifiedName~SettledFixture"
+
+This filter runs ONLY the no-op "no discrepancy expected" test - it touches
+no data belonging to any other fixture. The AssemblyCleanup still ran
+afterwards (it always does, once per assembly) and failed the run:
+
+  Failed FindDiscrepanciesAsync_SettledFixture_ReportsNothingForIt [340 ms]
+  Error Message:
+   Assembly Cleanup method LedgerReconciliationTests.ReconcileLedgerAfterSuiteAsync failed. Error Message: Assert.Fail failed. Ledger reconciliation found 4 product(s) where SUM(StockMovements) <> StockBalances after the integration suite:
+  ProductId=2 Expected=-1914.000 Actual=96.000 Delta=2010.000
+  ProductId=3 Expected=-156.000 Actual=0.000 Delta=156.000
+  ProductId=5 Expected=-132.000 Actual=99.000 Delta=231.000
+  ProductId=70 Expected=-132.000 Actual=19.000 Delta=151.000.
+   at Microsoft.VisualStudio.TestTools.UnitTesting.Assert.Fail(String message) ...
+   at Merchandising.Tests.Integration.LedgerReconciliationTests.ReconcileLedgerAfterSuiteAsync() in
+      C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\LedgerReconciliationTests.vb:line 154
+
+  Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 401 ms
+
+DIAGNOSIS. This is genuine, pre-existing drift in four Phase 1/2 fixture
+products, not a defect in this card's own code:
+
+  ProductId  Sku                  LedgerSum   Balance   MovementCount
+  2          p1_11_fixture_sku    -1914.000   96.000    513
+  3          p1_13_fixture_sku    -156.000    0.000     156
+  5          p2_03_fixture_sku    -132.000    99.000    132
+  70         p2_09_fixture_sku    -132.000    19.000    66
+
+Root cause: StockDecrementTests, ProductLifecycleTests, and
+AuthorizationMatrixTests each reuse ONE fixed fixture product across every
+integration-test run ever executed, and their <TestInitialize> setup reset
+StockBalances.Quantity directly (a bare UPDATE, or an initial INSERT of a
+nonzero baseline) to a known starting value before each run.
+StockMovements is append-only, so every historical decrement from every
+past run stayed in the ledger forever, while the balance was repeatedly
+force-reset to the baseline outside of any movement - the two have been
+silently diverging since Phase 1. This is exactly the class of bug
+plan.md section 7 wrote this card to catch before Phase 7: "Ledger drift
+found in Phase 7 is a nightmare; found automatically in Phase 4 it is a
+small bug."
+
+Reported to the user; decision was "fix fixtures + heal now" (see
+conversation). Two changes follow.
+
+-------------------------------------------------------------------------
+SECTION 2 — fix: fixture helpers now write a compensating movement
+-------------------------------------------------------------------------
+
+Three helpers, in three already-gated Phase 1/2 test files, changed to
+write a compensating StockMovements row in the SAME transaction as any
+direct balance change, and their initial fixture-creation INSERTs changed
+to start every product at Quantity = 0.000 (matching zero movements)
+instead of a nonzero baseline with no movement behind it:
+
+  - StockDecrementTests.ResetStockBalanceAsync
+    + StockDecrementTests.EnsureFixtureProductAsync / EnsureConcurrencyFixtureProductAsync
+  - ProductLifecycleTests.ResetStockBalanceDirectlyAsync
+  - AuthorizationMatrixTests.ResetStockBalanceDirectlyAsync
+    + AuthorizationMatrixTests.EnsureFixtureProductAsync
+
+None of these touch, edit, or delete any existing StockMovements or
+AuditLogs row (CLAUDE.md section 5 / section 7 stop condition 7) - each
+only ever INSERTs a new row alongside the balance write it already made,
+inside the same transaction, the same shape every real stock-changing
+command already follows.
+
+Reviewed every existing assertion that reads StockMovements for these
+fixtures to confirm the extra "Test fixture balance reset (...)" movement
+row cannot break it: StockDecrementTests filters by the test's own
+correlation ID or takes the newest row by Id (the reset always runs before
+the test's own decrement); ProductLifecycleTests only asserts COUNT(*) > 0.
+Neither depends on an exact row count.
+
+-------------------------------------------------------------------------
+SECTION 3 — heal: one-time compensating correction for the drift found in
+Section 1
+-------------------------------------------------------------------------
+
+evidence/phase-4/p4-01-drift-correction.sql - four INSERT statements, one
+per drifted product, each Delta = current Balance - current LedgerSum
+(exactly the "Delta" LedgerReconciliation itself reported above). Run once
+via mysql.exe as root, against the one pinned MariaDB instance, not part
+of any application code path.
+
+Before:
+  Id  Sku                  LedgerSum   Balance  MovementCount
+  2   p1_11_fixture_sku    -1914.000   96.000   513
+  3   p1_13_fixture_sku    -156.000    0.000    156
+  5   p2_03_fixture_sku    -132.000    99.000   132
+  70  p2_09_fixture_sku    -132.000    19.000   66
+
+After running p4-01-drift-correction.sql:
+  Id  Sku                  LedgerSum  Balance  MovementCount
+  2   p1_11_fixture_sku    96.000     96.000   514
+  3   p1_13_fixture_sku    0.000      0.000    157
+  5   p2_03_fixture_sku    99.000     99.000   133
+  70  p2_09_fixture_sku    19.000     19.000   67
+
+Every row reconciles.
+
+-------------------------------------------------------------------------
+SECTION 4 — full verification run after both fixes, from scratch
+-------------------------------------------------------------------------
+
+Command: pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   213, Skipped:     0, Total:   213, Duration: 51 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+This 213-test run includes LedgerReconciliationTests' own induced-drift
+proof (FindDiscrepanciesAsync_InducedDrift_NamesTheProductThenIsHealed):
+inside that single test, a real unmatched StockMovements row is inserted
+directly as merch_migrator, LedgerReconciliation.FindDiscrepanciesAsync is
+asked for discrepancies and asserted to name exactly the fixture product
+with the correct expected/actual/delta (exact DECIMAL(19,3) equality, no
+tolerance), the balance is then reconciled to the ledger sum (a compensating
+StockBalances write - never an edit or delete of the movement row that
+proved detection worked), and a final read confirms the product is no
+longer reported. It also includes the AssemblyCleanup
+(ReconcileLedgerAfterSuiteAsync) running once, automatically, after every
+other integration test in the assembly finished, and passing - proving the
+"wired as an assertion after the suite" requirement now holds cleanly.
+
+-------------------------------------------------------------------------
+SECTION 5 — post-suite spot check
+-------------------------------------------------------------------------
+
+Same query as Section 1/3, re-run immediately after the full
+run-tests.ps1 pass above (movement counts are higher - that run's own
+tests, including the fixed reset helpers, added more rows - but every
+product still reconciles):
+
+  Id  Sku                  LedgerSum  Balance  MovementCount
+  2   p1_11_fixture_sku    96.000     96.000   540
+  3   p1_13_fixture_sku    0.000      0.000    165
+  5   p2_03_fixture_sku    99.000     99.000   145
+  70  p2_09_fixture_sku    19.000     19.000   75

@@ -801,12 +801,18 @@ Public Class AuthorizationMatrixTests
                 productId = CInt(insertCommand.LastInsertedId)
             End Using
 
+            ' 0.000, not BaselineQuantity: no StockMovements row is written
+            ' for this initial creation, and P4-01's ledger reconciliation
+            ' asserts SUM(StockMovements) = StockBalances for every product,
+            ' so a starting balance of anything but 0 here would be drift
+            ' from the moment this fixture is first created. Whichever test
+            ' needs BaselineQuantity calls ResetStockBalanceDirectlyAsync,
+            ' which raises it with a matching compensating movement.
             Using balanceCommand As MySqlCommand = connection.CreateCommand()
                 balanceCommand.CommandText =
                     "INSERT INTO StockBalances (ProductId, Quantity, RowVersion, UpdatedAtUtc) " &
-                    "VALUES (@productId, @quantity, 0, UTC_TIMESTAMP(6));"
+                    "VALUES (@productId, 0.000, 0, UTC_TIMESTAMP(6));"
                 balanceCommand.Parameters.AddWithValue("@productId", productId)
-                balanceCommand.Parameters.AddWithValue("@quantity", BaselineQuantity)
                 Await balanceCommand.ExecuteNonQueryAsync()
             End Using
 
@@ -902,15 +908,72 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' Resets the fixture's balance to <paramref name="quantity"/>. P4-01's
+    ''' ledger reconciliation asserts SUM(StockMovements) = StockBalances
+    ''' for every product, so this now writes the matching compensating
+    ''' StockMovements row in the same transaction first, the same "no
+    ''' balance change without a movement" shape every real command follows
+    ''' - a bare balance UPDATE here would otherwise break that invariant
+    ''' for this fixture on every run. Attributed to the fixture SuperAdmin
+    ''' user, which every caller of this method has already ensured exists
+    ''' via EnsureAllFixtureUsersAsync.
+    ''' </summary>
     Private Async Function ResetStockBalanceDirectlyAsync(productId As Integer, quantity As Decimal) As Task
 
         Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
-            Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText =
-                    "UPDATE StockBalances SET Quantity = @quantity, UpdatedAtUtc = UTC_TIMESTAMP(6) WHERE ProductId = @productId;"
-                command.Parameters.AddWithValue("@quantity", quantity)
-                command.Parameters.AddWithValue("@productId", productId)
-                Await command.ExecuteNonQueryAsync()
+            Using transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+                Dim currentQuantity As Decimal = 0D
+                Using selectCommand As MySqlCommand = connection.CreateCommand()
+                    selectCommand.Transaction = transaction
+                    selectCommand.CommandText = "SELECT Quantity FROM StockBalances WHERE ProductId = @productId;"
+                    selectCommand.Parameters.AddWithValue("@productId", productId)
+                    Dim existing As Object = Await selectCommand.ExecuteScalarAsync()
+                    If existing IsNot Nothing Then
+                        currentQuantity = CDec(existing)
+                    End If
+                End Using
+
+                Dim delta As Decimal = quantity - currentQuantity
+
+                If delta <> 0D Then
+
+                    Dim actorUserId As Integer
+                    Using actorCommand As MySqlCommand = connection.CreateCommand()
+                        actorCommand.Transaction = transaction
+                        actorCommand.CommandText = "SELECT Id FROM Users WHERE Username = @username;"
+                        actorCommand.Parameters.AddWithValue("@username", FixtureUsername(RoleNames.SuperAdmin))
+                        actorUserId = CInt(Await actorCommand.ExecuteScalarAsync())
+                    End Using
+
+                    Using movementCommand As MySqlCommand = connection.CreateCommand()
+                        movementCommand.Transaction = transaction
+                        movementCommand.CommandText =
+                            "INSERT INTO StockMovements (ProductId, Delta, QuantityBefore, QuantityAfter, Reason, ActorUserId, CorrelationId, CreatedAtUtc) " &
+                            "VALUES (@productId, @delta, @before, @after, 'Test fixture balance reset (AuthorizationMatrixTests)', @actorUserId, @correlationId, UTC_TIMESTAMP(6));"
+                        movementCommand.Parameters.AddWithValue("@productId", productId)
+                        movementCommand.Parameters.AddWithValue("@delta", delta)
+                        movementCommand.Parameters.AddWithValue("@before", currentQuantity)
+                        movementCommand.Parameters.AddWithValue("@after", quantity)
+                        movementCommand.Parameters.AddWithValue("@actorUserId", actorUserId)
+                        movementCommand.Parameters.AddWithValue("@correlationId", Guid.NewGuid().ToString())
+                        Await movementCommand.ExecuteNonQueryAsync()
+                    End Using
+
+                End If
+
+                Using balanceCommand As MySqlCommand = connection.CreateCommand()
+                    balanceCommand.Transaction = transaction
+                    balanceCommand.CommandText =
+                        "UPDATE StockBalances SET Quantity = @quantity, RowVersion = RowVersion + 1, UpdatedAtUtc = UTC_TIMESTAMP(6) WHERE ProductId = @productId;"
+                    balanceCommand.Parameters.AddWithValue("@quantity", quantity)
+                    balanceCommand.Parameters.AddWithValue("@productId", productId)
+                    Await balanceCommand.ExecuteNonQueryAsync()
+                End Using
+
+                Await transaction.CommitAsync()
+
             End Using
         End Using
 

@@ -338,17 +338,62 @@ Public Class ProductLifecycleTests
 
     End Function
 
+    ''' <summary>
+    ''' Resets the fixture's balance to <paramref name="quantity"/>. P4-01's
+    ''' ledger reconciliation asserts SUM(StockMovements) = StockBalances
+    ''' for every product, so this now writes the matching compensating
+    ''' StockMovements row in the same transaction first, the same "no
+    ''' balance change without a movement" shape every real command follows
+    ''' - a bare balance write here would otherwise break that invariant for
+    ''' this fixture on every run.
+    ''' </summary>
     Private Async Function ResetStockBalanceDirectlyAsync(productId As Integer, quantity As Decimal) As Task
 
         Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
-            Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText =
-                    "INSERT INTO StockBalances (ProductId, Quantity, RowVersion, UpdatedAtUtc) " &
-                    "VALUES (@productId, @quantity, 0, UTC_TIMESTAMP(6)) " &
-                    "ON DUPLICATE KEY UPDATE Quantity = VALUES(Quantity), UpdatedAtUtc = VALUES(UpdatedAtUtc);"
-                command.Parameters.AddWithValue("@productId", productId)
-                command.Parameters.AddWithValue("@quantity", quantity)
-                Await command.ExecuteNonQueryAsync()
+            Using transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+                Dim currentQuantity As Decimal = 0D
+                Using selectCommand As MySqlCommand = connection.CreateCommand()
+                    selectCommand.Transaction = transaction
+                    selectCommand.CommandText = "SELECT Quantity FROM StockBalances WHERE ProductId = @productId;"
+                    selectCommand.Parameters.AddWithValue("@productId", productId)
+                    Dim existing As Object = Await selectCommand.ExecuteScalarAsync()
+                    If existing IsNot Nothing Then
+                        currentQuantity = CDec(existing)
+                    End If
+                End Using
+
+                Dim delta As Decimal = quantity - currentQuantity
+
+                If delta <> 0D Then
+                    Using movementCommand As MySqlCommand = connection.CreateCommand()
+                        movementCommand.Transaction = transaction
+                        movementCommand.CommandText =
+                            "INSERT INTO StockMovements (ProductId, Delta, QuantityBefore, QuantityAfter, Reason, ActorUserId, CorrelationId, CreatedAtUtc) " &
+                            "VALUES (@productId, @delta, @before, @after, 'Test fixture balance reset (ProductLifecycleTests)', @actorUserId, @correlationId, UTC_TIMESTAMP(6));"
+                        movementCommand.Parameters.AddWithValue("@productId", productId)
+                        movementCommand.Parameters.AddWithValue("@delta", delta)
+                        movementCommand.Parameters.AddWithValue("@before", currentQuantity)
+                        movementCommand.Parameters.AddWithValue("@after", quantity)
+                        movementCommand.Parameters.AddWithValue("@actorUserId", _actorUserId)
+                        movementCommand.Parameters.AddWithValue("@correlationId", Guid.NewGuid().ToString())
+                        Await movementCommand.ExecuteNonQueryAsync()
+                    End Using
+                End If
+
+                Using balanceCommand As MySqlCommand = connection.CreateCommand()
+                    balanceCommand.Transaction = transaction
+                    balanceCommand.CommandText =
+                        "INSERT INTO StockBalances (ProductId, Quantity, RowVersion, UpdatedAtUtc) " &
+                        "VALUES (@productId, @quantity, 0, UTC_TIMESTAMP(6)) " &
+                        "ON DUPLICATE KEY UPDATE Quantity = VALUES(Quantity), RowVersion = RowVersion + 1, UpdatedAtUtc = VALUES(UpdatedAtUtc);"
+                    balanceCommand.Parameters.AddWithValue("@productId", productId)
+                    balanceCommand.Parameters.AddWithValue("@quantity", quantity)
+                    Await balanceCommand.ExecuteNonQueryAsync()
+                End Using
+
+                Await transaction.CommitAsync()
+
             End Using
         End Using
 
