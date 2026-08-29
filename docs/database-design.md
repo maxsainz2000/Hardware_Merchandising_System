@@ -1,12 +1,20 @@
 # Database Design
 
-**Status: first complete draft (P2-12), extended at P3-02.** Covers every table that exists after
-migrations `0001_foundation.sql` through `0008_purchase-orders.sql` — 22 tables, all applied and
-grant-verified against the real pinned MariaDB instance. This document is finalised in Phase 4,
-once the rest of Procurement (receiving, returns) and Inventory/POS (Phase 5) have added their
-own tables; until then, the entity groups spec section 12 names that are still unbuilt
-(`GoodsReceipts`, `StockCounts`, `Sales`, …) are called out below as not-yet-built, not omitted
-by mistake.
+**Status: finalised (P4-13).** Covers every table through migration `0010_counts-and-adjustments.sql`
+— 28 tables, all applied and grant-verified against the real pinned MariaDB instance, its exact
+declared types read live from `information_schema` rather than transcribed from the migration
+files (CLAUDE.md section 6.3: a migration is what was asked for, not necessarily what the server
+is running). First drafted at P2-12 (22 tables through `0006`), extended at P3-02 (`0008`), and
+finalised here with the four Procurement tables `0009_receiving.sql` added and the three
+Inventory tables `0010_counts-and-adjustments.sql` added. Every fact this document states about
+the schema is checked on every test run by `DatabaseDesignDocumentationTests` — a drift check in
+the P2-12/P3-08 shape, so this document cannot silently fall out of date with the server the way
+a sentence in an evidence file can (`plan.md`'s Phase 3 lesson, `tasks.md` line 20). **This
+closes G-21** (spec section 23's gap register: "Data model lacked invariants and precision").
+
+The `Sales`, `SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`, and
+`CashierClosings` tables spec section 12's POS entity group names are Phase 5 and do not exist in
+the schema yet — called out here so their absence reads as "not built", not "forgotten".
 
 **Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP
 because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as intended
@@ -35,9 +43,9 @@ These hold for every table below; they are stated once here rather than repeated
 
 ## 2. Entity-relationship diagram
 
-Every table that exists as of `0008_purchase-orders.sql`. `GoodsReceipts`/`StockCounts`/`Sales`/etc.
-(the rest of spec section 12's Procurement/Inventory/POS rows) are Phase 4/5 and are not shown —
-they do not exist in the schema yet.
+Every table that exists through `0010_counts-and-adjustments.sql`. The POS entity group (`Sales`,
+`SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`, `CashierClosings`)
+is Phase 5 and is not shown — it does not exist in the schema yet.
 
 ```mermaid
 erDiagram
@@ -63,6 +71,25 @@ erDiagram
     Users ||--o{ PurchaseOrders : "approves"
     PurchaseOrders ||--o{ PurchaseOrderLines : "has lines"
     Products ||--o{ PurchaseOrderLines : "ordered as"
+
+    PurchaseOrders ||--o{ Receipts : "received against"
+    Users ||--o{ Receipts : "receives"
+    Receipts ||--o{ ReceiptLines : "has lines"
+    PurchaseOrderLines ||--o{ ReceiptLines : "receives against"
+    Products ||--o{ ReceiptLines : "received as"
+
+    Receipts ||--o{ PurchaseReturns : "returned from"
+    Users ||--o{ PurchaseReturns : "requests/approves"
+    PurchaseReturns ||--o{ PurchaseReturnLines : "has lines"
+    ReceiptLines ||--o{ PurchaseReturnLines : "returns against"
+    Products ||--o{ PurchaseReturnLines : "returned as"
+
+    Users ||--o{ StockCounts : "counts/approves"
+    StockCounts ||--o{ StockCountLines : "has lines"
+    Products ||--o{ StockCountLines : "counted as"
+
+    Products ||--o{ StockAdjustments : "adjusted for"
+    Users ||--o{ StockAdjustments : "requests/approves"
 
     Users {
         int Id PK
@@ -206,6 +233,65 @@ erDiagram
         decimal ReceivedQuantity
         bigint RowVersion
     }
+    Receipts {
+        int Id PK
+        int PurchaseOrderId FK
+        int ReceivedByUserId FK
+        datetime ReceivedAtUtc
+        varchar ReferenceNumber UK
+    }
+    ReceiptLines {
+        int Id PK
+        int ReceiptId FK
+        int PurchaseOrderLineId FK
+        int ProductId FK
+        decimal QuantityReceived
+        decimal Cost
+    }
+    PurchaseReturns {
+        int Id PK
+        int ReceiptId FK
+        int RequestedByUserId FK
+        int ApprovedByUserId FK
+        varchar Status
+        varchar ReferenceNumber UK
+        bigint RowVersion
+    }
+    PurchaseReturnLines {
+        int Id PK
+        int PurchaseReturnId FK
+        int ReceiptLineId FK
+        int ProductId FK
+        decimal QuantityReturned
+        decimal Cost
+        tinyint RemovesStock
+    }
+    StockCounts {
+        int Id PK
+        varchar Status
+        int CountedByUserId FK
+        int ApprovedByUserId FK
+        bigint RowVersion
+    }
+    StockCountLines {
+        int Id PK
+        int StockCountId FK
+        int ProductId FK
+        decimal CountedQuantity
+        decimal SystemQuantity
+        decimal Variance
+    }
+    StockAdjustments {
+        int Id PK
+        int ProductId FK
+        decimal QuantityVariance
+        varchar Reason
+        int RequestedByUserId FK
+        int ApprovedByUserId FK
+        tinyint ExceedsThreshold
+        varchar Status
+        bigint RowVersion
+    }
 ```
 
 `Suppliers` gained its first consumer at `0008`: `PurchaseOrders.SupplierId`, an unadorned
@@ -253,27 +339,68 @@ the grants file that gave `merch_api` its runtime privileges (§4 explains the g
 | `MaintenanceLocks` | `0004` → `0005` (INSERT+UPDATE, no DELETE) | PK `Id`; FK `RequestedByUserId`/`ReleasedByUserId` → `Users`; UK `IsActive` (generated) | **Not** append-only — a release is an `UPDATE` of the acquiring row (operational state, not a ledger; the immutable trail lives in `AuditLogs`). "One active lock at a time" is enforced by a `PERSISTENT` generated column (`1` while held, `NULL` once released) under a plain `UNIQUE KEY` — MariaDB's unique index treats every `NULL` as distinct, so released rows never collide and a second concurrent acquisition is refused by the database itself (measured: `ERROR 1062` on a second unreleased row), not by a check-then-insert race. |
 | `IdempotencyKeys` | `0001` → `0002` (INSERT+UPDATE+DELETE) | PK `Id`; UK (`Scope`,`KeyValue`) | ADR-007: insert-first strategy — a command claims its key before doing work, and the committed response payload is stored and replayed verbatim on a repeat. `DELETE` is granted for an eventual expiry sweep. |
 
-### 3.4 Procurement — spec section 12, partly built
-
-Three tables in this group exist after `0008`:
+### 3.4 Procurement
 
 | Table | Migration → Grants | Key columns | Notes |
 |---|---|---|---|
 | `Suppliers` | `0007` → `0009` (INSERT+UPDATE, no DELETE) | PK `Id`; UK `Name` | Same lifecycle shape as `Products`: `IsActive` + `RowVersion`, deactivation is the only removal story. Contact fields (`ContactName`/`Phone`/`Email`/`Address`) are free-text and nullable — a supplier record created before every detail is known must still be usable. `PurchaseOrders` (`0008`) is its first consumer. |
 | `PurchaseOrders` | `0008` → `0010` (INSERT+UPDATE, no DELETE) | PK `Id`; UK `OrderNumber`; FK `SupplierId` → `Suppliers`, `RequestedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `CreatedAtUtc` | **Not** append-only, and the grants file argues why rather than assuming it: a ledger records what *happened*, a purchase order records what is *intended*, and spec §10.1's status machine is a sequence of in-place changes to one row. The immutable trail lives in `AuditLogs`. `Status` stores the **enum name** (ADR-020 §5) under a `CHECK` over the seven spec §10.1 states — and carries `COLLATE utf8mb4_bin`, the one binary-collated column in the schema, because under the table's case-insensitive `utf8mb4_unicode_ci` the `CHECK` accepts `'draft'` and stores it verbatim. `RequestedByUserId` and `ApprovedByUserId` are deliberately two columns: ADR-017 §6's self-approval veto compares them. |
 | `PurchaseOrderLines` | `0008` → `0010` (INSERT+UPDATE, no DELETE) | PK `Id`; UK (`PurchaseOrderId`,`LineNumber`); FK → `PurchaseOrders`, `Products` | `OrderedQuantity`/`ReceivedQuantity` `DECIMAL(19,3)`, `PurchaseCost` `DECIMAL(19,4)` captured on the line so a later cost change never restates what was agreed. `ReceivedQuantity` starts at `0.000` and accumulates across partial receipts in Phase 4. `CHECK (ReceivedQuantity <= OrderedQuantity)` enforces spec §12's "receipt quantity bounded by ordered quantity" at the server; spec §10.1's future over-receiving override would need a new migration to relax it. The same product may appear on two lines, so there is deliberately no UK on (`PurchaseOrderId`,`ProductId`). **Removing a line from a `Draft` has no route** — no `DELETE` grant, and no Phase 3 card needs one; see the `0010` header. |
+| `Receipts` | `0009` → `0011` (**INSERT only**) | PK `Id`; UK `ReferenceNumber`; FK `PurchaseOrderId` → `PurchaseOrders`, `ReceivedByUserId` → `Users` | Records something that **happened** — spec section 11's "Goods received" row commits once; no endpoint edits a receipt afterward, the same `CreatedAtUtc`-only, no-`RowVersion` shape as `StockMovements`/`AuditLogs`. `ReferenceNumber` is the receiving clerk's own document number, distinct from the ADR-007 idempotency key (which lives only in `IdempotencyKeys`, never on the row it protects). |
+| `ReceiptLines` | `0009` → `0011` (**INSERT only**) | PK `Id`; FK `ReceiptId` → `Receipts`, `PurchaseOrderLineId` → `PurchaseOrderLines`, `ProductId` → `Products`; `CHECK (QuantityReceived > 0)`, `CHECK (Cost >= 0)` | `Cost` is captured on the line, the same as `PurchaseOrderLines.PurchaseCost` — the actual received cost can differ from what was ordered, and spec section 10.2 requires historical transactions to keep captured cost even after a product is deactivated. No unique key on (`ReceiptId`,`PurchaseOrderLineId`) — nothing forbids two lines on one receipt against the same order line. |
+| `PurchaseReturns` | `0009` → `0011` (INSERT, UPDATE — `Status`/`ApprovedByUserId`/`ApprovedAtUtc`/`RowVersion`) | PK `Id`; UK `ReferenceNumber`; FK `ReceiptId` → `Receipts`, `RequestedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `ReturnedAtUtc`; `CHECK (Status IN ('Requested','Approved','Rejected'))` | Records something that is **decided** — the approval state changes in place, the same `PurchaseOrders`/`Status` shape. `Status` carries `COLLATE utf8mb4_bin` for the identical reason `PurchaseOrders.Status` does: under `utf8mb4_unicode_ci` the `CHECK` would accept `'requested'` and store it verbatim. `RequestedByUserId`/`ApprovedByUserId` are two columns, kept available even before a self-approval rule is decided for returns. One return points at exactly one receipt — spec section 10.1 never describes a return spanning goods received on two different receipts. |
+| `PurchaseReturnLines` | `0009` → `0011` (**INSERT only**) | PK `Id`; FK `PurchaseReturnId` → `PurchaseReturns`, `ReceiptLineId` → `ReceiptLines`, `ProductId` → `Products`; `CHECK (QuantityReturned > 0)`, `CHECK (Cost >= 0)` | `RemovesStock` (`TINYINT(1)`, default `1`) is spec section 10.1's "whether stock is removed" — a resalable return decrements stock the normal way, a defective item already written off by a prior adjustment does not. No database `CHECK` bounds `QuantityReturned` against "received quantity less prior returns" — that bound is an aggregate over every prior sibling row for the same `ReceiptLineId`, which a MariaDB `CHECK` (evaluated one row at a time) cannot express; enforced at the API (P4-08), computed from committed rows. |
 
-**On the name `PurchaseOrderLines`.** Spec §12's entity list writes `PurchaseOrderItems`; spec
-§10.1's prose, `plan.md` §7 and the P3-02/P3-03/P3-06 cards all write *purchase-order lines*.
-Spec §12 opens by delegating exactly this — *"Exact columns, names, and indexes are finalized in
-the database design deliverable"* — so this document is where it is settled, and it is settled as
-`PurchaseOrderLines`. Confirmed with the user at P3-02.
+**On the names `Receipts`/`ReceiptLines`/`PurchaseReturns`/`PurchaseReturnLines`.** Spec §12's
+entity list writes `GoodsReceipts`/`GoodsReceiptItems`/`PurchaseReturns`/`PurchaseReturnItems`;
+`0009_receiving.sql`'s own header, `plan.md` §7 and the P4-02 card all write the shorter *receipt*
+form and *Lines*, not *Items* — the same delegation spec §12 grants and P3-02 already exercised
+for `PurchaseOrderLines`. Settled here as `Receipts`/`ReceiptLines`/`PurchaseReturns`/`PurchaseReturnLines`.
 
-`GoodsReceipts`, `GoodsReceiptItems`, `PurchaseReturns`, `PurchaseReturnItems` (Phase 4),
-`StockCounts`, `StockCountItems`, `StockAdjustments` (Phase 5's Inventory half), and `Sales`,
-`SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`, `CashierClosings`
-(Phase 5's POS half) do not exist in the schema yet. Listed here so this document's absence of
-them reads as "not built", not "forgotten" — this draft is finalised in Phase 4.
+### 3.5 Inventory — counts and adjustments
+
+| Table | Migration → Grants | Key columns | Notes |
+|---|---|---|---|
+| `StockCounts` | `0010` → `0012` (INSERT, UPDATE — `Status`/`ApprovedByUserId`/`ApprovedAtUtc`/`RowVersion`) | PK `Id`; FK `CountedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `CountedAtUtc`; `CHECK (Status IN ('Open','Closed','Approved','Rejected'))` | Four statuses model the whole lifecycle now, including two (`Approved`/`Rejected`) not yet driven by an endpoint — the same forward-naming precedent `PurchaseOrderStatus` set at P3-02, so a later card wires a transition rather than a migration. `Status` carries `COLLATE utf8mb4_bin` for the same reason `PurchaseOrders.Status` does. `CountedByUserId` is not nullable — a count session cannot exist without someone performing it. |
+| `StockCountLines` | `0010` → `0012` (**INSERT only**) | PK `Id`; FK `StockCountId` → `StockCounts`, `ProductId` → `Products`; `CHECK (CountedQuantity >= 0)`, `CHECK (SystemQuantity >= 0)` | `SystemQuantity` and `Variance` are captured **at count time**, never recomputed — "the whole point of a count is what was true then" (`0010`'s own header). No `CHECK` ties `Variance` to `CountedQuantity - SystemQuantity`: the API computes and writes all three together in one `INSERT` (P4-09), so there is no path where they could disagree once written. |
+| `StockAdjustments` | `0010` → `0012` (INSERT, UPDATE — `Status`/`ApprovedByUserId`/`RowVersion`) | PK `Id`; FK `ProductId` → `Products`, `RequestedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `CreatedAtUtc`; `CHECK (QuantityVariance <> 0)`, `CHECK (Status IN ('Pending','Approved','Rejected','Applied'))` | `RequestedByUserId`/`ApprovedByUserId` are two columns so the threshold-approval rule (ADR-017 §6) can compare them, the same shape `PurchaseOrders` and `PurchaseReturns` use. `QuantityVariance` is **signed** — an adjustment's whole purpose is a correction that can move stock up or down, unlike a receipt or sale quantity. `ExceedsThreshold` (`TINYINT(1)`) is captured at request time, not derived by a `CHECK` against `SystemSettings`' threshold value — a MariaDB 10.4 `CHECK` cannot reference another table, and the threshold itself can change after the request without silently reinterpreting a past decision. Carries **no** `StockCountId` — nothing in spec section 10.2 requires an adjustment to originate from a count; if a later card needs that link, it is a new numbered migration. |
+
+`Sales`, `SaleItems`, `Payments`, `SalesReturns`, `SalesReturnItems`, `CashierSessions`,
+`CashierClosings` (Phase 5's POS half) do not exist in the schema yet. Listed here so this
+document's absence of them reads as "not built", not "forgotten".
+
+### 3.6 Foreign keys and delete behaviour
+
+Every foreign key in this schema is an **unadorned** `FOREIGN KEY` — no migration through `0010`
+has ever written an `ON DELETE`/`ON UPDATE` clause — so MariaDB's default applies uniformly:
+**`RESTRICT` on both delete and update, on every one of the 39 foreign keys this schema carries**,
+confirmed live against `information_schema.REFERENTIAL_CONSTRAINTS` (`DatabaseDesignDocumentationTests.
+EveryForeignKey_IsRestrictOnDeleteAndUpdate`, re-run on every suite pass — not a one-time count).
+This is spec section 12's requirement stated as a database fact: *"Foreign-key behavior must
+prevent accidental deletion of records referenced by sales, receipts, returns, movements, or
+audit events."*
+
+| Table | Column | References |
+|---|---|---|
+| `UserRoles` | `UserId`, `RoleId`, `AssignedByUserId` | `Users`, `Roles`, `Users` |
+| `Sessions` | `UserId` | `Users` |
+| `AuditLogs` | `ActorUserId` | `Users` |
+| `Products` | `CategoryId`, `BrandId`, `UnitId` | `Categories`, `Brands`, `Units` |
+| `ProductBarcodes` | `ProductId` | `Products` |
+| `PriceHistory` | `ProductId`, `ActorUserId` | `Products`, `Users` |
+| `StockBalances` | `ProductId` | `Products` |
+| `StockMovements` | `ProductId`, `ActorUserId` | `Products`, `Users` |
+| `SystemSettings` | `UpdatedByUserId` | `Users` |
+| `MaintenanceLocks` | `RequestedByUserId`, `ReleasedByUserId` | `Users`, `Users` |
+| `PurchaseOrders` | `SupplierId`, `RequestedByUserId`, `ApprovedByUserId` | `Suppliers`, `Users`, `Users` |
+| `PurchaseOrderLines` | `PurchaseOrderId`, `ProductId` | `PurchaseOrders`, `Products` |
+| `Receipts` | `PurchaseOrderId`, `ReceivedByUserId` | `PurchaseOrders`, `Users` |
+| `ReceiptLines` | `ReceiptId`, `PurchaseOrderLineId`, `ProductId` | `Receipts`, `PurchaseOrderLines`, `Products` |
+| `PurchaseReturns` | `ReceiptId`, `RequestedByUserId`, `ApprovedByUserId` | `Receipts`, `Users`, `Users` |
+| `PurchaseReturnLines` | `PurchaseReturnId`, `ReceiptLineId`, `ProductId` | `PurchaseReturns`, `ReceiptLines`, `Products` |
+| `StockCounts` | `CountedByUserId`, `ApprovedByUserId` | `Users`, `Users` |
+| `StockCountLines` | `StockCountId`, `ProductId` | `StockCounts`, `Products` |
+| `StockAdjustments` | `ProductId`, `RequestedByUserId`, `ApprovedByUserId` | `Products`, `Users`, `Users` |
 
 ---
 
@@ -311,16 +438,34 @@ denied), not a subtle bug — that is the point.
 | `suppliers` | INSERT, UPDATE | `maintenancelocks` | INSERT, UPDATE |
 | `productbarcodes` | INSERT, UPDATE, DELETE | `idempotencykeys` | INSERT, UPDATE, DELETE |
 | `userroles` | INSERT, DELETE | `sessions` | INSERT, DELETE |
+| `purchaseorders` | INSERT, UPDATE | `purchaseorderlines` | INSERT, UPDATE |
+| `receipts` | INSERT only | `receiptlines` | INSERT only |
+| `purchasereturns` | INSERT, UPDATE | `purchasereturnlines` | INSERT only |
+| `stockcounts` | INSERT, UPDATE | `stockcountlines` | INSERT only |
+| `stockadjustments` | INSERT, UPDATE | | |
 
 Two absences carry the whole guarantee: `stockmovements` and `auditlogs` are the **only** tables
-that receive `INSERT` and nothing else, at any scope, to anyone but `merch_migrator`. A
-correction is a new row — a compensating movement, a new audit entry — never an edit to an old
-one. `pricehistory` and `backuplogs` follow the identical pattern for the same reason.
+that receive `INSERT` and nothing else, at any scope, to anyone but `merch_migrator` — the two
+CLAUDE.md section 5 names as **permanently** excluded from ever gaining a write-back grant.
+`pricehistory` and `backuplogs` follow the identical INSERT-only pattern for the same reason. A
+correction to any of these four is a new row — a compensating movement, a new audit entry —
+never an edit to an old one.
+
+`receipts`, `receiptlines`, `purchasereturnlines` and `stockcountlines` are INSERT-only too, but
+for a narrower reason argued in their own grants files (`0011`, `0012`), not the permanent
+CLAUDE.md exclusion: each records something that **happened** and no card in this phase (or any
+later one named so far) edits it after it is written — the argument is "nothing needs the write
+yet," not "this table must never be writable." `purchaseorders`, `purchasereturns` and
+`stockcounts` are the opposite shape — a status that changes in place — the same reasoning
+`0010_purchase-order-grants.sql` gives `purchaseorders` and `0011`/`0012` repeat for the two new
+in-place-status tables.
 
 Proven, not asserted: `evidence/phase-1/p1-04a-grant-model-proof.txt` (the original two-table
-proof) and every phase-2 card's own evidence (`p2-06-schema.txt`, `p2-08-atomicity.txt`,
-`p2-10-suppliers.txt`, …) re-run the same `UPDATE`/`DELETE`-must-fail check against its own new
-table before calling that card done.
+proof), every phase-2/3/4 card's own evidence (`p2-06-schema.txt`, `p2-08-atomicity.txt`,
+`p2-10-suppliers.txt`, `p3-02-schema.txt`, `p4-05-receiving.txt`, `p4-09-stock-counts.txt`, …) —
+each re-runs the same `UPDATE`/`DELETE`-must-fail check against its own new table before calling
+that card done — and `DatabaseDesignDocumentationTests.MerchApiGrants_MatchTheDocumentedPostureForEveryTable`,
+which checks the grant table above against `information_schema.TABLE_PRIVILEGES` on every run.
 
 ---
 
@@ -343,12 +488,17 @@ exist yet (`ERROR 1146`).
 | 5 | `0005_identity.sql` | `0007_identity-grants.sql` | `PermissionPolicies` |
 | 6 | `0006_product-master.sql` | `0008_product-master-grants.sql` | `Categories`, `Brands`, `Units`, `Products` columns, `ActiveBarcode`, `ProductBarcodes`, `PriceHistory` |
 | 7 | `0007_suppliers.sql` | `0009_supplier-grants.sql` | `Suppliers` |
+| 8 | `0008_purchase-orders.sql` | `0010_purchase-order-grants.sql` | `PurchaseOrders`, `PurchaseOrderLines` |
+| 9 | `0009_receiving.sql` | `0011_receiving-grants.sql` | `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines` |
+| 10 | `0010_counts-and-adjustments.sql` | `0012_counts-and-adjustments-grants.sql` | `StockCounts`, `StockCountLines`, `StockAdjustments` |
 
 `db/grants/` and `db/migrations/` are two independent numbering sequences, not a matched pair —
 `db/grants/0006_restore-grants.sql` grants `merch_migrator` `LOCK TABLES` (a privilege fix
 discovered while proving restore against the real production identity, unrelated to any single
 migration), which is why the table above pairs migration 5 with grants file `0007`, migration 6
-with `0008`, and migration 7 with `0009` rather than matching numbers straight across.
+with `0008`, and migration 7 with `0009` rather than matching numbers straight across. From
+migration 8 onward the numbering happens to run in step (`0008`→`0010`, `0009`→`0011`,
+`0010`→`0012`) — coincidence of no further `LOCK TABLES`-style fixes since, not a rule.
 
 ---
 
@@ -374,4 +524,5 @@ SQL.
 | `BackupLogs` | Row retention: never purged (same append-only reasoning as the two ledgers). **File** retention is separate and configurable: `SystemSettings.backup.retentionCount` (seeded to `7`) is how many local dump *files* `BackupCommand` keeps on disk, pruning older ones after a successful run — it deletes files, not `BackupLogs` rows. |
 | `Sessions` | Deleted outright on logout, not soft-revoked (`0002_authentication.sql`'s own header) — this table is operational state, not a ledger, so CLAUDE.md's append-only rule does not apply to it. |
 | `IdempotencyKeys` | `DELETE` is granted for an eventual expiry sweep (not yet implemented as of this draft) — a repeated key must return the original committed result for as long as the key is retained (ADR-007). |
+| `PurchaseOrders`, `PurchaseOrderLines`, `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines`, `StockCounts`, `StockCountLines`, `StockAdjustments` | **Never purged.** Spec section 12: "Transactional records are never physically deleted." No identity holds a `DELETE` grant on any of the nine; the four in-place-status tables (`PurchaseOrders`, `PurchaseReturns`, `StockCounts`, `StockAdjustments`) reach their terminal status by `UPDATE`, never by removal. |
 | Everything else (`Products`, `Suppliers`, `Categories`, `Brands`, `Units`, `Users`, …) | Master data is **deactivated**, never deleted — no identity holds a `DELETE` grant on any of them. Foreign keys use MariaDB's default `RESTRICT` behavior, so a referenced row cannot be deleted even by `merch_migrator` without first removing the reference. |

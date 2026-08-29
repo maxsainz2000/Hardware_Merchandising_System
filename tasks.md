@@ -39,7 +39,7 @@ Two of its boxes need nobody but you and can still invalidate ADR-015: whether M
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; `database-design.md` finalised → **P4-13, this phase**; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
+Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; ~~`database-design.md` finalised → P4-13~~ **written**; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
 
 ### ⬜ CARRY-01 · Account recovery has no implementation and no card — **unassigned, decision owed**
 
@@ -330,7 +330,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track G — Documents and closure
 
-### ⬜ P4-13 · `docs/database-design.md` finalised
+### ✅ P4-13 · `docs/database-design.md` finalised
 
 **Spec:** §12, §20 · **Closes:** G-21 · **Files:** `docs/database-design.md`
 
@@ -338,13 +338,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Every table through `0010` documented with its exact declared types, read from `information_schema` rather than transcribed from the migrations
-- [ ] The append-only guarantee stated per table, naming `StockMovements` and `AuditLogs` as the two that hold **no** write-back grant, with ADR-013's ordering argument
-- [ ] Every foreign key and its delete behaviour listed
-- [ ] Verified against the running database rather than transcribed by hand, in the P2-12 / P3-08 shape — a drift check that fails when the schema moves
-- [ ] States the academic-prototype framing required by `plan.md` §5
-- [ ] One of P0-07's remaining documents struck from its list
-- [ ] **G-21 recorded closed** in the gap register
+- [x] Every table through `0010` documented with its exact declared types, read from `information_schema` rather than transcribed from the migrations
+- [x] The append-only guarantee stated per table, naming `StockMovements` and `AuditLogs` as the two that hold **no** write-back grant, with ADR-013's ordering argument
+- [x] Every foreign key and its delete behaviour listed
+- [x] Verified against the running database rather than transcribed by hand, in the P2-12 / P3-08 shape — a drift check that fails when the schema moves (`DatabaseDesignDocumentationTests.vb`, 7 tests, watched fail on the undocumented `Receipts` table before the doc was written)
+- [x] States the academic-prototype framing required by `plan.md` §5
+- [x] One of P0-07's remaining documents struck from its list
+- [x] **G-21 recorded closed** in the gap register (stated in the document's own header; `evidence/phase-4/INDEX.md` records it formally at P4-14)
 
 **Evidence:** `evidence/phase-4/p4-13-database-design.txt`
 
