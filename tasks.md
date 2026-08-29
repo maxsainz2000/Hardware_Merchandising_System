@@ -1,4 +1,4 @@
-# tasks.md — Phase 4 (Inventory and receiving)
+# tasks.md — Phase 5 (POS)
 
 **Scope:** current phase only. Regenerated at each phase entry from `plan.md`.
 **Rules:** one task = one commit, prefixed with the task ID. Never tick a `Done when` box on a failing test or a partial implementation. Stop conditions are in `CLAUDE.md` §7.
@@ -7,19 +7,22 @@
 
 ---
 
-> ## Phase 3 closed 2026-08-28 — PASS, at commit `4e0bc09`
+> ## Phase 4 closed 2026-08-29 — PASS, at commit `76aaa7d`
 >
-> Nine cards. A clean clone outside the tree, with **0** `bin`/`obj` directories at clone time, restores eleven projects from nothing, builds at **0 warnings / 0 errors**, and passes guardrails G-A–G-D plus **44/44 unit and 211/211 integration tests, 0 skipped**, against the real pinned MariaDB 10.4.32. **G-23 closed.** Full record: `evidence/phase-3/INDEX.md`.
+> Fifteen cards. A clean clone outside the tree, with **0** `bin`/`obj` at clone time, restores eleven projects from nothing, builds at **0 warnings / 0 errors**, and passes guardrails G-A–G-D plus **47/47 unit and 348/348 integration tests, 0 skipped**, against the real pinned MariaDB 10.4.32. **G-12 closed for receiving, returns, counts and adjustments; G-21 closed.** Full record: `evidence/phase-4/INDEX.md`.
 >
-> **The gate returned FAIL on its first sitting, and that is the most useful thing Phase 3 produced.** P3-07's last box — *keyboard navigation and focus order at 1366×768 @ 125%* — was carried to Phase 7 on this sentence in its own evidence file:
+> **The gate returned FAIL on its first sitting — for the second phase running — and both failures were predicted in writing by the phase's own closure pack.** `evidence/phase-4/INDEX.md` §4.1 and §4.2 named them rather than rounding them up, and the review's job was to refuse to wave them through:
 >
-> > *"the window's default size (1024x680, MinWidth 960, MinHeight 620) fits inside a 1366x768 desktop at 125% scaling (effective ~1093x614 minus taskbar) with room to spare"*
+> 1. **Exit criterion 5 cited two evidence files that never fired the scenario.** "Concurrent receive-and-adjust on the same product is safe" rested on an argument by analogy from P1-13 and P4-08. P4-15 wrote the test: 4 receives and 4 adjustments in flight settle to the exact arithmetic total, and a +5.000/−5.000 race over 6 rounds lands on one of only two consistent end states with **both orderings genuinely observed**.
+> 2. **P4-12 had an open box, and a real defect was sitting under it.** The authenticated pass found the deployed `MerchandisingApi` Windows Service was a **2026-08-28 (Phase 3) build returning 404 for every Phase 4 route**. `WebApplicationFactory` builds the host in-process and can never see a stale deployment; the suite would have passed with no service installed at all.
 >
-> **680 and 620 are both larger than the 614 the same sentence computes.** The arithmetic was right and nobody made the comparison. Behind it sat a real defect: a `MinHeight` above the work area cannot be resized into it, so the status bar carrying every server message and correlation ID would have been permanently off-screen on a 1366×768 demo laptop — the exact hardware three classmates must demonstrate on (ADR-012). Correcting the window size then exposed a second defect the first had masked: a fixed `260` DIP row that left the Lines grid at **0.0 DIP**. Both are now asserted by `ProcurementLayoutTests`, each proven falsifiable against the pre-fix XAML before being trusted, and the traversal itself was performed at 1093.0 × 576.0 DIP rather than deferred.
+> **Two lessons Phase 5 inherits, stated as rules.**
 >
-> **The lesson Phase 4 inherits, stated as a rule: a sentence in an evidence file is not a check.** Every quantitative claim a card makes about something a machine could measure must be measured by something that fails when it stops being true. P4-12 carries the same 1366×768 box for the Inventory client — it is the card most likely to repeat this mistake.
+> **A test that has never been watched fail is not a check — and neither is one that *cannot* fail.** P4-15's first draft of the ordering test passed and proved nothing: a never-received product has no `StockBalances` row, so row-*absence* refused the adjustment and the `Quantity >= @qty` guard was never reached; and a *transient* negative balance is erased by the later receive, so no assertion on the final balance could see it. Both were only found by deliberately breaking `StockRepository` and discovering the test stayed green. **Break the mechanism, watch the test fail, then trust it.** Phase 5's concurrency and idempotency cards are where this bites next.
 >
-> **Frozen: no phase below may re-litigate a Phase 1, 2 or 3 decision.** The connector, transaction pattern (ADR-006), auth scheme, error envelope (ADR-014), grant model (ADR-013), policy naming and self-approval (ADR-017), the barcode rule (ADR-018), and the purchase-order status machine (ADR-020) are settled. Phase 4 consumes them.
+> **Green tests say nothing about what is deployed.** Every suite in this repository reaches the API in-process. Phase 5 adds the POS client, which a classmate will run against a *deployed* service on demo day. Redeploy before believing a client-side result, and treat "the service is Running" as unrelated to "the service is current".
+>
+> **Frozen: no phase below may re-litigate a Phase 1–4 decision.** The connector, transaction pattern (ADR-006, and its P4-04 amendment that isolation must be passed per `BeginTransaction`), auth scheme, error envelope (ADR-014), grant model (ADR-013), policy naming and self-approval (ADR-017), the barcode rule (ADR-018), the purchase-order status machine (ADR-020), and the ledger reconciliation assertion (ADR-021) are settled. Phase 5 consumes them.
 
 ---
 
@@ -39,13 +42,13 @@ Two of its boxes need nobody but you and can still invalidate ADR-015: whether M
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; ~~`database-design.md` finalised → P4-13~~ **written**; `ui-specification.md` → Phase 5; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
+Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; ~~`database-design.md` finalised → P4-13~~ **written**; `ui-specification.md` → **P5-14, this phase**; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
 
-### ⬜ CARRY-01 · Account recovery has no implementation and no card — **unassigned, decision owed**
+### ⬜ CARRY-01 · Account recovery has no implementation and no card — **place it before Phase 6 planning closes**
 
 **Surfaced at the Phase 2 gate** (`evidence/phase-2/INDEX.md` §4.3). Spec §23's G-19 remediation names *account recovery* among seven components; six are proven. Lockout self-recovers (`LockedUntilUtc` = `UtcNow` + 15 min), but **a forgotten password has no route**: ADR-017 §4 puts all user management on the `Merchandising.Maintenance` CLI, and that CLI has `create-user` with no `reset-password` and no `unlock-user`.
 
-> **Not a Phase 4 blocker, and deliberately not silently assigned.** The natural home is **Phase 6** (operations, beside backup/restore) as a `reset-password` subcommand — roughly one card. Confirm that placement, or place it earlier, **before Phase 6 planning closes**. This is its second phase carried without an owner; do not let it reach a third.
+> **Now carried through three phases without an owner (2 → 3 → 4), and this is the fourth.** Not a Phase 5 blocker. The natural home is **Phase 6** (operations, beside backup/restore) as a `reset-password` subcommand — roughly one card. **`tasks.md` said at Phase 4 entry "do not let it reach a third." It has. Place it when Phase 6 planning opens, or accept that a classmate who forgets a password on demo day has no route back in.**
 
 ### ⬜ CARRY-02 · Off-host backup copy, volume present — **owed at the Phase 6 gate (ADR-019)**
 
@@ -53,357 +56,360 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ### ⬜ CARRY-04 · Intermittent `MSB3030` on a clean-clone build — **watch, no owner yet**
 
-**Observed once at the Phase 3 gate**, then not reproduced in eight further clean-clone builds across two commits (`p3-09-clean-clone.log` §5). `Merchandising.Tests.Unit` references two `OutputType=WinExe` projects, and in a parallel build the referenced executable's `runtimeconfig.json` can be listed as a copy-local item before the task that generates it has run. Both references predate Phase 3, so it is pre-existing fragility, not a regression.
+**Observed once at the Phase 3 gate**, and not reproduced since across eleven further clean-clone builds spanning three commits (`p3-09`, `p4-14`, `p4-15` logs). `Merchandising.Tests.Unit` references two `OutputType=WinExe` projects, and in a parallel build the referenced executable's `runtimeconfig.json` can be listed as a copy-local item before the task that generates it has run. Pre-existing fragility, not a regression. **Raise a card only on a second sighting.**
 
-> **Not a card, because nine runs cannot support a rate and the fix belongs to whoever owns build infrastructure.** It matters only because it threatens a classmate's first build from a clean clone (ADR-012), and it is retried by building again. **Raise a card if it recurs** — a second sighting changes it from noise into a pattern.
+### ⬜ CARRY-05 · Nothing detects a stale deployment — **new at the Phase 4 gate, owed at the Phase 6 gate**
+
+**Found by P4-15's authenticated pass** (`evidence/phase-4/p4-15-authenticated-client-pass.txt` §2). The deployed Windows Service was four weeks of work behind the source and served 404 for every Phase 4 route, and **no mechanism in this repository could have noticed**: the integration suite builds the host in-process, and `scripts/install-service.ps1` verifies that *something* is listening on 8443, not that what is listening is current.
+
+> Phase 6 builds health monitoring and release packaging (`plan.md` §7, closing G-15/G-16). A **commit identifier and build timestamp on a health endpoint**, compared against the tree, turns this into a one-line check — and turns "the demo laptop is running last month's build" from a silent failure into a visible one. Recorded, not assigned, because Phase 6 planning has not opened. **This phase must not close without a redeploy before the POS client is believed** — see the Phase 4 closure note's second lesson.
 
 ---
 
-# Phase 4 — Inventory and receiving
+# Phase 5 — POS
 
-**Entry:** Phase 3 gate passed. **Closes:** G-12 (extended to receiving/adjustments), G-21.
-**Docs produced:** `docs/database-design.md` finalised.
+**Entry:** Phase 4 gate passed. **Closes:** G-24.
+**Docs produced:** `docs/ui-specification.md` (all three clients).
 
-*This phase inherits the Phase 1 transaction pattern wholesale (`plan.md` §7). Do not invent a second one.*
+*This phase inherits the Phase 1 transaction pattern and the Phase 4 ledger invariant wholesale. Do not invent a second one, and do not weaken the reconciliation assertion to make a sale fit.*
 
-**What already exists, so no card below rebuilds it.** `StockBalances` and the append-only `StockMovements` ledger (migration `0001`), with the conditional-update decrement proven atomic and concurrency-safe at P1-11/P1-13 — `StockRepository`, `StockMovementWriter`, `StockService` and `InventoryController.DecrementStock` are all live. The product master (`0006`), suppliers (`0007`), purchase orders and `CanTransition` (`0008`, ADR-020). The audit pipeline (P2-04), the error envelope (ADR-014), idempotency (ADR-007), and **every policy this phase needs is already registered**: `Receiving.Prepare`, `Receiving.Confirm`, `PurchaseReturns.Manage`, `StockCounts.Perform`, `Adjustments.Request`, `Adjustments.Approve`, `LowStock.Review`, `Stock.Read`, `Stock.ReviewMovements`.
+**What already exists, so no card below rebuilds it.** `StockBalances`, the append-only `StockMovements` ledger and `StockRepository.TryDecrementAsync`'s conditional decrement — proven atomic and concurrency-safe at P1-11/P1-13 and again under receive-vs-adjust contention at P4-15. The product master with SKU and optional barcode (`0006`, ADR-018), suppliers (`0007`), purchase orders (`0008`), receiving and purchase returns (`0009`), counts and adjustments (`0010`). The audit pipeline (P2-04), the error envelope (ADR-014), idempotency (ADR-007), `SystemSettings` (P2-06), the ledger reconciliation assertion (P4-01/ADR-021), and **every policy this phase needs is already registered**: `Sales.Create`, `CashierSessions.Manage`, `SalesReturns.Create`, `SalesReturns.ApproveExceptional`, `Stock.Read`, `Products.Read`.
 
 > ### Five things that will bite in this phase specifically
 >
-> **1. The reconciliation query is the phase's key design call, and it must exist before anything new writes to the ledger.** `plan.md` §7: *"a reconciliation query that proves `SUM(movements) = balance` for every product, run as an automated test after every integration suite. Ledger drift found in Phase 7 is a nightmare; found automatically in Phase 4 it is a small bug."* That is P4-01, and it is written first and alone for the same reason P3-01 was.
+> **1. The sale line captures the *effective* price and cost AT SALE TIME, and this is the phase's key design call.** `plan.md` §7: *"A later price change must not retroactively alter historical sales analysis. This is easy to get right now and very hard to fix later."* A sale line that stores a `ProductId` and joins to `Products.Price` for reporting is the defect this warns about, and it will not show up until Phase 6's reports disagree with the receipts. That is P5-01 and P5-07.
 >
-> **2. Phase 3 left `PartiallyReceived` and `FullyReceived` reachable by no command. This phase writes them.** The transition table already models them (ADR-020) and **must not be re-decided** — P4-04/P4-05 call `CanTransition` and add no rule of their own. P3-01's closing note is binding: *consume the table, do not re-decide it.*
+> **2. Money is `DECIMAL(19,4)` and change calculation must be exact — never `Double`, never `Single`, anywhere.** CLAUDE.md §5. And per CLAUDE.md §6.3, **decimal *scale* is not enforced by the database even under strict mode**: `1.99999` into a `DECIMAL(19,4)` stores `2.0000` and reports success. Validate scale at the API boundary before the parameter is bound (ADR-004.1). A correctly-scaled stored value proves nothing on its own.
 >
-> **3. `CK_PurchaseOrderLines_ReceivedQuantity` already enforces the ordered-quantity bound at the server** (P3-02). Over-receiving is therefore refused by the **database** before any API check runs. P4-06's job is to turn that into a controlled 409 with a stable error code, not to re-implement the bound — and spec §10.1's future over-receiving override would need a **new numbered migration** to relax it.
+> **3. The sale is the biggest transaction in the system — seven effects, not five.** Spec §11: sale header, sale lines, payment record(s), stock-out movements, balance changes, cashier-session totals, audit. All seven commit or none do. Receiving's five-effect forced-failure test (P4-05) is the shape; this one has two more ways to be half-done.
 >
-> **4. Next free numbers: migrations `0009`, `0010`; grants `0011`, `0012`.** Install order is always migration → grants; MariaDB 10.4 rejects a table-level `GRANT` naming a table that does not exist (`ERROR 1146`). Table names in grant files are **lowercase**. A new table is `SELECT`-only until its grants file adds writes back per table (ADR-013), and `StockMovements`/`AuditLogs` stay absent from every grants file forever.
+> **4. Next free numbers: migrations `0011`, `0012`; grants `0013`, `0014`.** Install order is always migration → grants; MariaDB 10.4 rejects a table-level `GRANT` naming a table that does not exist (`ERROR 1146`). Table names in grant files are **lowercase**. A new table is `SELECT`-only until its grants file adds writes back per table (ADR-013), and `StockMovements`/`AuditLogs` stay absent from every grants file forever. **`Sales` and `SalePayments` are append-only too** — a completed sale is never edited (spec §10.3), so argue hard before granting `UPDATE` on either.
 >
-> **5. Receiving is the first command that reads a line before it writes one — which is exactly what CARRY-03 predicted would bite.** P4-11 fixes the isolation level, and it is sequenced **before** Track C for that reason, not after it.
+> **5. G-24 is a wording gap, and wording is the only thing that closes it.** *"Payment recording could be mistaken for payment authorization."* The system must never imply a card or e-wallet payment was authorised by anyone. That is a claim about **UI labels and report column headers**, provable only by reading them — so P5-12 asserts the strings by test, not by looking at a screenshot.
 
 ---
 
-## Track A — The ledger invariant, before anything new writes to the ledger
+## Track A — The money primitive, before anything computes a total
 
-### ✅ P4-01 · `SUM(StockMovements) = StockBalances` for every product, as a standing assertion 🎯
+*Independent of the schema. Can run in parallel with Track B.*
 
-**Spec:** §11, §12 · **Closes:** G-12 (begins) · **Decides:** ADR-021
-**Files:** `src/Merchandising.Infrastructure/Data/LedgerReconciliation.vb`, `src/tests/Merchandising.Tests.Integration/LedgerReconciliationTests.vb`
+### ⬜ P5-01 · Fixed-precision sale arithmetic in `Domain`, with no database at all 🎯
 
-**Do:** `plan.md` §7 names this the key design call of the phase. One query that, for **every** product, sums the movement ledger and compares it to the stored balance, reporting every product that disagrees rather than the first. Wire it so it runs as an assertion after the integration suite, not as a report someone remembers to read.
+**Spec:** §10.3, §11 · **Decides:** ADR-022
+**Files:** `src/Merchandising.Domain/Sales/`, `src/tests/Merchandising.Tests.Unit/SaleArithmeticTests.vb`
+
+**Do:** Line totals, sale total, cash tendered vs. total, and change — all `Decimal`, all exact at the stored scale, all in `Domain` where they can be tested exhaustively without a server. `plan.md` §7 names the price-capture rule the phase's key design call; this card builds the type that *carries* the captured price so a later card cannot accidentally re-read it from `Products`.
 
 **Done when:**
 
-- [x] The query covers **every** product, including ones with no movements and ones with no balance row — a product missing from either side is a discrepancy, not a skip
-- [x] It reports **all** disagreeing products with expected, actual and delta, not just a boolean or the first failure
-- [x] It runs automatically after the integration suite and fails the run on any drift — proven by **deliberately introducing drift** (a movement row with no matching balance change, inserted as `merch_migrator`) and confirming the failure names that product, then removing it. A reconciliation test never proven to fail is decoration. It also proved itself against real data on its first run: it found genuine pre-existing drift in four Phase 1/2 fixture products, caused by test setup helpers resetting `StockBalances` directly with no matching movement — fixed at the fixtures and healed with a one-time compensating correction, never an edit or delete (`evidence/phase-4/p4-01-ledger-reconciliation.txt`, `p4-01-drift-correction.sql`)
-- [x] Decimal comparison is exact at the stored scale (`DECIMAL(19,3)`), never a floating-point tolerance
-- [x] It is not fooled by an in-flight transaction — the check reads committed state only
-- [x] ADR-021 records the query, where it runs, and why an automated assertion beat a report
-- [x] Both suites green; guardrails pass; build 0 warnings
+- [ ] Every value is `Decimal`. No `Double` or `Single` appears anywhere in the file — asserted by a source scan in the test, not by inspection, because this is the rule that is easiest to break by accident and hardest to see
+- [ ] Rounding is explicit and uses the `currency.roundingPolicy` `SystemSettings` value (P2-06), never an implicit default — and a changed policy changes the result, asserted
+- [ ] Change = tendered − total, exact to `DECIMAL(19,4)`; tendered < total is a refusal, not a negative change
+- [ ] Scale validation refuses an over-scale input **before** it could be silently rounded (ADR-004.1, CLAUDE.md §6.3) — proven with `1.99999` against a 4-scale field
+- [ ] A sale line holds its **captured** unit price and cost as data. A test constructs a line, then changes the product's price, and asserts the line is unmoved — the P5-07 defect, caught in `Domain` where it is cheap
+- [ ] Boundary cases enumerated, not spot-checked: zero-quantity line refused, exact tender giving `0.0000` change, the largest total the column allows
+- [ ] ADR-022 records the rounding policy, where rounding happens, and why it is not the database's job
+- [ ] Unit suite green; guardrails pass; build 0 warnings
 
-**Evidence:** `evidence/phase-4/p4-01-ledger-reconciliation.txt` — including the induced-drift run that proves it fails
-
-> **Write this card first and alone.** Every later card in the phase writes to the ledger, and this is the one thing that tells you whether any of them got it wrong. Building it after the writers is how drift gets baked in and then blessed.
+**Evidence:** `evidence/phase-5/p5-01-sale-arithmetic.txt`
 
 ---
 
 ## Track B — Schema
 
-*Sequential. Migration then grants, and `0009` before `0010`.*
+*Sequential. Migration then grants, and `0011` before `0012`.*
 
-### ✅ P4-02 · Migration 0009 — `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines`, and grants 0011
+### ⬜ P5-02 · Migration 0011 — `CashierSessions`, `Sales`, `SaleLines`, `SalePayments`, and grants 0013
 
-**Spec:** §11, §12 · **Files:** `db/migrations/0009_receiving.sql`, `db/grants/0011_receiving-grants.sql`
+**Spec:** §10.3, §11, §12 · **Files:** `db/migrations/0011_pos.sql`, `db/grants/0013_pos-grants.sql`
 
-**Do:** The receipt header (purchase order, received-by, received-at UTC, reference), its lines (purchase-order line, quantity received, cost), and the same shape for purchase returns. Money `DECIMAL(19,4)`, quantities `DECIMAL(19,3)`, timestamps `DATETIME(6)` UTC, `COLLATE utf8mb4_unicode_ci` stated explicitly on every table.
-
-**Done when:**
-
-- [x] All four tables created; foreign keys to `PurchaseOrders`, `PurchaseOrderLines`, `Products` and `Users` **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
-- [x] Receipt reference is unique where the spec requires it, proven by a concurrent double-insert that bypasses any API check (the P2-07 / P3-02 shape) — `success | ERROR 1062`
-- [x] Applies clean as `merch_migrator` on a database already carrying `0001`–`0008`; runner applies it exactly once
-- [x] `db/grants/0011` applied **after**, lowercase table names, no `UPDATE`/`DELETE` beyond what the file argues for in its own header — and **nothing at all** added for `stockmovements` or `auditlogs` (ADR-013)
-- [x] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns, **plus** the declared column types read back from `information_schema` — CLAUDE.md §6.3 means a correctly stored value proves the value and never the column
-- [x] Integration suite green against pinned MariaDB
-
-**Evidence:** `evidence/phase-4/p4-02-receiving-schema.txt`, `evidence/phase-4/p4-02-receiving-grants.txt`
-
-### ✅ P4-03 · Migration 0010 — `StockCounts`, `StockCountLines`, `StockAdjustments`, and grants 0012
-
-**Spec:** §10.2, §12 · **Files:** `db/migrations/0010_counts-and-adjustments.sql`, `db/grants/0012_counts-and-adjustments-grants.sql`
-
-**Do:** The count header (status, counted-by, approved-by, timestamps UTC), its lines (product, counted quantity, system quantity at count time, variance), and the adjustment table with its reason, requester, approver and threshold outcome.
+**Do:** The cashier session (opening float, opened/closed by, timestamps UTC, status), the sale header (session, cashier, total, status, timestamps), its lines (product, quantity, **captured** unit price and cost), and the payment records (method, amount). Money `DECIMAL(19,4)`, quantities `DECIMAL(19,3)`, timestamps `DATETIME(6)` UTC, `COLLATE utf8mb4_unicode_ci` stated explicitly on every table.
 
 **Done when:**
 
-- [x] Variance is **stored as counted-minus-system at the moment of counting**, not recomputed later from a balance that has since moved — the whole point of a count is what was true then
-- [x] `RequestedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — the threshold rule compares them and cannot if they are one field. Asserted from `information_schema`, not from reading the migration
-- [x] Status stored as a stable identifier the Domain enum maps to — not a display string, not a renumbering ordinal. Every name walked from `[Enum].GetNames`, an ordinal refused. ⚠ **`COLLATE utf8mb4_bin` on that column**, or the `CHECK` accepts `'draft'` under the table's case-insensitive collation and stores it verbatim — the exact defect P3-02 hit and found only because a test looked
-- [x] Applies clean as `merch_migrator` on a database carrying `0001`–`0009`; applied exactly once
-- [x] `db/grants/0012` applied after, lowercase, justified per table in its own header
-- [x] Integration suite green
+- [ ] All four tables created; foreign keys to `Products`, `Users` and each other **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
+- [ ] `SaleLines` carries its own `UnitPrice` and `Cost` columns — **not** a join to `Products`. Asserted from `information_schema`, because this is the one schema decision the whole phase's reporting integrity rests on
+- [ ] Payment method stored as a stable identifier the Domain enum maps to, `COLLATE utf8mb4_bin` on that column so the `CHECK` cannot accept `'cash'` under the table's case-insensitive collation — the P3-02 / P4-03 defect, which has now been found twice and must not be found a third time
+- [ ] Applies clean as `merch_migrator` on a database already carrying `0001`–`0010`; runner applies it exactly once
+- [ ] `db/grants/0013` applied **after**, lowercase table names, and **argue per table in its own header why any `UPDATE` exists at all**. A completed sale is never edited (spec §10.3) — nothing at all for `stockmovements` or `auditlogs` (ADR-013)
+- [ ] Round-trip test: `0.0001` and `123456789012345.6789` exact through the new decimal columns, **plus** the declared column types read back from `information_schema`
+- [ ] Integration suite green against pinned MariaDB
 
-**Evidence:** `evidence/phase-4/p4-03-counts-schema.txt`, `evidence/phase-4/p4-03-counts-grants.txt`
+**Evidence:** `evidence/phase-5/p5-02-pos-schema.txt`, `evidence/phase-5/p5-02-pos-grants.txt`
+
+### ⬜ P5-03 · Migration 0012 — `SalesReturns`, `SalesReturnLines`, and grants 0014
+
+**Spec:** §10.3, §11, §12 · **Files:** `db/migrations/0012_sales-returns.sql`, `db/grants/0014_sales-returns-grants.sql`
+
+**Do:** The return header (original sale, returned-by, approver where exceptional, reason, timestamps UTC) and its lines (original sale line, quantity returned, **stock-eligibility flag**, operational payment-reversal record).
+
+**Done when:**
+
+- [ ] The stock-eligibility flag is a real column, not inferred — a returned item may be damaged and must not re-enter stock, and spec §10.3 requires that recorded per line
+- [ ] `ReturnedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — `SalesReturns.ApproveExceptional` is a distinct policy from `SalesReturns.Create` and cannot be compared if they are one field. Asserted from `information_schema`
+- [ ] A return line's FK to `SaleLines` prevents deleting a sale line, proven with `ERROR 1451`
+- [ ] Applies clean as `merch_migrator` on a database carrying `0001`–`0011`; applied exactly once
+- [ ] `db/grants/0014` applied after, lowercase, justified per table in its own header
+- [ ] Integration suite green
+
+**Evidence:** `evidence/phase-5/p5-03-returns-schema.txt`, `evidence/phase-5/p5-03-returns-grants.txt`
 
 ---
 
-## Track C — The isolation level CARRY-03 predicted would bite
+## Track C — Cashier sessions
 
-*Runs before Track D. Receiving reads a line before it writes one, which is the case CARRY-03 named.*
+*Sequential. Runs after Track B. A sale cannot exist without an open session, so this precedes Track D.*
 
-### ✅ P4-04 · CARRY-03 — `READ COMMITTED` at every call site, asserted inside a transaction
+### ⬜ P5-04 · Open and close a cashier session; a sale requires an open one
 
-**Spec:** ADR-006 · **Decides:** ADR-006 amendment
-**Files:** `src/Merchandising.Infrastructure/Data/`, `src/Merchandising.Api/Controllers/`, `src/tests/Merchandising.Tests.Integration/ConnectionFactoryTests.vb`
+**Spec:** §10.3 · **Files:** `src/Merchandising.Api/Controllers/CashierSessionsController.vb`, `src/Merchandising.Api/Sales/CashierSessionService.vb`, `src/Merchandising.Infrastructure/Data/CashierSessionRepository.vb`, `src/Merchandising.Contracts/Sales/`
 
-**Do:** Close the divergence measured at P3-03. `ConnectionFactory` issues `SET SESSION tx_isolation = 'READ-COMMITTED'` and `ConnectionFactoryTests` asserts it — but MySqlConnector's `BeginTransaction` sends its own `SET TRANSACTION ISOLATION LEVEL`, so **inside** a transaction the level is `REPEATABLE-READ` everywhere except `PurchaseOrderService`. ADR-006's text and the running system disagree.
+**Do:** `POST /api/v1/cashier-sessions` opens a session with a declared opening float; `POST /api/v1/cashier-sessions/{id}/close` closes it. `CashierSessions.Manage`. The session is the thing a sale attaches to and the thing daily closing reports on.
 
 **Done when:**
 
-- [x] `IsolationLevel.ReadCommitted` passed explicitly at every `BeginTransaction` call site: `StockService`, `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`, `SuppliersController`, `ProductsController`, `MaintenanceController` — enumerated from a source scan, so a call site added later is not silently missed ⚠ the card's own list was stale: `MaintenanceController` opens no transaction (nothing to fix); the source scan additionally found and fixed `SystemSettingsController` and three more `PurchaseOrderService` sites the list omitted. See `evidence/phase-4/p4-04-isolation-level.txt` §0
-- [x] `ConnectionFactoryTests` gains the assertion it lacks: `@@tx_isolation` read **inside** a transaction, not only on the session. The old session-level assertion stays — both are true and only one was checked
-- [x] The existing P1-11/P1-13 concurrency proofs still pass unchanged, demonstrating this is a text-vs-reality fix and not a behaviour change
-- [x] ADR-006 amended to state the mechanism explicitly — that a session-level `SET` does **not** survive `BeginTransaction`, and why passing the level per transaction is the only form that holds
-- [x] Both suites green
+- [ ] One cashier cannot hold two open sessions at once — enforced by a **unique index**, proven by a concurrent double-open that bypasses any API check (the P2-07 / P3-02 / P4-02 shape), `success | ERROR 1062`
+- [ ] Opening float is validated for scale at the API boundary before binding (ADR-004.1)
+- [ ] A closed session is immutable and remains fully readable
+- [ ] Open and close each write an audit row with the actor and correlation ID
+- [ ] **Matrix suite extended** for every route added — `CashierSessions.Manage` positive and negative cells, 403 not 401/404
+- [ ] Integration suite green
 
-**Evidence:** `evidence/phase-4/p4-04-isolation-level.txt` — `@@tx_isolation` measured inside a transaction at every call site, before and after
+**Evidence:** `evidence/phase-5/p5-04-cashier-sessions.txt`
 
-> **This is a Phase 1/2 mechanism being corrected, so it is the one card in this phase that touches evidenced work from earlier phases.** If any existing concurrency test changes behaviour rather than merely passing, that is `CLAUDE.md` §7 item 5 — halt and report, do not adjust the test.
+### ⬜ P5-05 · Daily closing — declared vs. calculated, with variance
+
+**Spec:** §10.3, §14 · **Files:** `src/Merchandising.Api/Sales/CashierSessionService.vb`, `src/Merchandising.Infrastructure/Data/CashierSessionRepository.vb`
+
+**Do:** Closing records session totals **by payment method**, declared cash, calculated cash, the variance between them, closing user and timestamp. The calculated figure is derived server-side from committed rows and never from a client-supplied total.
+
+**Done when:**
+
+- [ ] Calculated cash is computed from committed `SalePayments` rows, never from a client figure — asserted by sending a wrong client total and confirming it is ignored, not merely by not sending one
+- [ ] Variance is stored as declared − calculated **at closing time**, not recomputed later, for the same reason P4-03's count variance is
+- [ ] Totals are broken down by payment method, and card/e-wallet rows are labelled as **recorded, not authorised** (G-24 — the wording is P5-12's to assert, the data shape is this card's)
+- [ ] A session with no sales closes cleanly with zero totals rather than failing
+- [ ] **Matrix suite extended**; integration suite green
+
+**Evidence:** `evidence/phase-5/p5-05-daily-closing.txt`
 
 ---
 
-## Track D — Receiving over HTTP
+## Track D — The atomic sale
 
-*Sequential. One worker, in order — each card consumes the last.*
+*Sequential. One worker, in order — each card consumes the last. This is the track the phase exists for.*
 
-### ✅ P4-05 · Receive goods: receipt + lines + movements + balance + audit, in one transaction 🎯
+### ⬜ P5-06 · Fast product lookup by SKU, barcode, or name
 
-**Spec:** §10.1, §11 · **Closes:** G-12 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`, `src/Merchandising.Contracts/Receiving/`
+**Spec:** §10.3, §13 · **Files:** `src/Merchandising.Api/Controllers/ProductsController.vb`, `src/Merchandising.Infrastructure/Data/ProductRepository.vb`
 
-**Do:** `POST /api/v1/receipts` against an `Approved` purchase order. **This is the card the phase exists for.** One transaction commits the receipt, its lines, one `StockMovements` row per line, the conditional balance update, and the audit row — or none of them.
-
-**Done when:**
-
-- [x] Exactly **one** atomic stock increase per line, using the ADR-006 conditional update with the affected-row count verified before returning success — never a read-then-write ⚠ an increase has no insufficiency case to verify a row count against; `StockRepository.IncrementAsync` is the equivalent one-statement atomic upsert (`INSERT ... ON DUPLICATE KEY UPDATE`), needed because a product can reach receiving with no prior `StockBalances` row at all
-- [x] Status moves through `CanTransition` only (ADR-020); the controller adds no status rule of its own
-- [x] Receiving against a `Cancelled`, `Draft` or `Submitted` order is refused with the stable error code P3-01 assigned — asserted over every non-receivable state, not spot-checked (`ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode`: Draft, Submitted, Cancelled, Closed, FullyReceived)
-- [x] Idempotency key honoured per ADR-007: a repeated key returns the original committed receipt, never a second stock increase
-- [x] All five effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 shape
-- [x] The P4-01 reconciliation passes after the receipt, and is asserted **in this card's own test**, not only by the suite-wide fixture
-- [x] **Matrix suite extended** for every route added — positive and negative cells, 403 not 401/404
-- [x] Integration suite green (267/267, including the AssemblyCleanup ledger reconciliation)
-
-**Evidence:** `evidence/phase-4/p4-05-receiving-atomic.txt`
-
-### ✅ P4-06 · Partial receiving accumulates across receipts
-
-**Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`
-
-**Do:** A partial quantity moves the order to `PartiallyReceived`; a second receipt against the same line accumulates; reaching the ordered quantity moves it to `FullyReceived`. Both states are the ones Phase 3 modelled and could not drive.
+**Do:** One lookup a cashier can drive from the keyboard: exact SKU, exact barcode (ADR-018's rule stands — do not re-decide it), or partial name. Shapes the query the POS client types into.
 
 **Done when:**
 
-- [x] Two sequential partial receipts sum to the ordered quantity → `FullyReceived`, asserted on the stored `ReceivedQuantity`, not inferred from the status
-- [x] Three or more receipts accumulate correctly, including a final one that exactly closes the line
-- [x] Each receipt writes its **own** movement rows; the ledger reconciles after every one
-- [x] Mixed lines behave independently — one line fully received and another partially leaves the order `PartiallyReceived`
-- [x] **Matrix suite extended**; integration suite green ⚠ no new route exists for this card (same `POST /api/v1/receipts` P4-05's `ReceivingConfirm_MatrixMatchesPolicyRegistry` already covers); extended instead with an HTTP round-trip test proving accumulation over the live authorized path, not only the direct-service tests
+- [ ] Exact SKU and exact barcode match before any partial-name match, so a scanned barcode never returns a list
+- [ ] Inactive products are excluded by default and the response says so — an inactive product must be refused by the sale command anyway (spec §11), and a cashier should not be able to add one to a cart in the first place
+- [ ] Available stock is returned with each hit, so the client shows it without a second call
+- [ ] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
+- [ ] Measured: the lookup returns within a stated budget against the seeded catalogue, with the number recorded rather than described
+- [ ] **Matrix suite extended** — `Products.Read`; integration suite green
 
-**Evidence:** `evidence/phase-4/p4-06-partial-receiving.txt`
+**Evidence:** `evidence/phase-5/p5-06-product-lookup.txt`
 
-### ✅ P4-07 · Over-receiving rejected by default
+### ⬜ P5-07 · The atomic sale — seven effects, one transaction 🎯
 
-**Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`
+**Spec:** §10.3, §11 · **Closes:** G-12 (sale component) · **Files:** `src/Merchandising.Api/Controllers/SalesController.vb`, `src/Merchandising.Api/Sales/SaleService.vb`, `src/Merchandising.Infrastructure/Data/SaleRepository.vb`, `src/Merchandising.Contracts/Sales/`
 
-**Do:** Total received may not exceed ordered. `CK_PurchaseOrderLines_ReceivedQuantity` already enforces this at the server (P3-02) — this card turns the constraint violation into a controlled response, and proves the constraint is what actually stops it.
-
-**Done when:**
-
-- [x] A receipt exceeding the ordered quantity is refused with a stable error code and a 409, never a 500 and never a leaked SQL message (ADR-014)
-- [x] A third receipt on a fully-received line is refused with the same code — proven on a still-`PartiallyReceived` order (a second line deliberately left open), the case a `CanTransition` status refusal cannot catch on its own
-- [x] **The database is proven to be the thing refusing it**: `PurchaseOrderRepository.IncrementReceivedQuantityAsync` — the production write method — called directly, bypassing the new API guard entirely, still fails as `ERROR 4025` from the `CHECK`
-- [x] The refusal leaves **no** partial trace — no receipt row, no movement, no balance change; asserted by re-reading all three
-- [x] **Matrix suite extended**; integration suite green ⚠ no new route exists for this card (same `POST /api/v1/receipts` route P4-05's matrix test already covers)
-
-**Evidence:** `evidence/phase-4/p4-07-over-receiving.txt`
-
-### ✅ P4-08 · Purchase returns bounded by received-minus-prior-returns
-
-**Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/PurchaseReturnRepository.vb`
-
-**Do:** A return to a supplier is bounded by what was received less what has already been returned, and writes a stock-out movement in the same transactional shape as receiving.
+**Do:** `POST /api/v1/sales` against an open cashier session. **This is the card the phase exists for.** One transaction commits the sale header, its lines, the payment record(s), one `StockMovements` row per line, the conditional balance decrement, the session totals, and the audit row — or none of them.
 
 **Done when:**
 
-- [x] The bound is computed **server-side** from committed rows, never from a client-supplied figure — `RecordPurchaseReturnLineRequest` carries no `ProductId`/`Cost` field at all; both come from the locked `ReceiptLines` row
-- [x] Returning more than received-minus-prior-returns is refused with a stable error code, including when two prior partial returns together exhaust the balance
-- [x] Each return writes its own `StockMovements` row; corrections are **compensating movements, never edits** (CLAUDE.md §5) — asserted by confirming no `UPDATE`/`DELETE` reaches the ledger (fresh `ERROR 1142` proof, not only relying on the Phase-1 evidence)
-- [x] Concurrent returns against the same receipt cannot oversell the bound — proven under real concurrent load in the P1-13 shape (8 simultaneous requests, exactly 1 succeeds), not by two sequential calls
-- [x] The P4-01 reconciliation passes after every return
-- [x] **Matrix suite extended**; integration suite green — a genuinely new route this time (`PurchaseReturnsManage_MatrixMatchesPolicyRegistry`), unlike P4-06/P4-07
+- [ ] The API re-checks **everything** before committing: product activity, current price, available stock, duplicate request state, payment validity (spec §10.3). Each re-check has its own test, and each has its own stable error code
+- [ ] Each sale line stores the **effective unit price and cost at sale time**, taken server-side. A test changes the product's price after the sale and asserts the line is unmoved — the defect `plan.md` §7 names as very hard to fix later
+- [ ] Stock decrements use ADR-006's conditional update with the affected-row count verified before returning success — never a read-then-write, and never a new second pattern
+- [ ] All **seven** effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 / P4-05 shape
+- [ ] For cash, tendered < total is refused with a stable code; change is exact per P5-01 and stored, not recomputed on read
+- [ ] Card/e-wallet is **recorded**, and the response says recorded — never "approved", "authorised", or "accepted" (G-24)
+- [ ] The P4-01 reconciliation passes after the sale, asserted **in this card's own test**, not only by the suite-wide fixture
+- [ ] **Matrix suite extended** — `Sales.Create` positive and negative cells; integration suite green
 
-**Design decision made and recorded:** a purchase return is a single atomic command (`RequestedByUserId = ApprovedByUserId`, `Status` always committed as `Approved`), not a two-actor request/approve workflow — `PurchaseReturns.Manage` is one policy, not a split pair, and ADR-017 §6 names no self-approval veto for returns. `Requested`/`Rejected` stay reachable in the schema, unused by this phase. Full reasoning in the evidence file.
+**Evidence:** `evidence/phase-5/p5-07-atomic-sale.txt`
 
-**Evidence:** `evidence/phase-4/p4-08-purchase-returns.txt`
+### ⬜ P5-08 · Negative stock impossible under concurrent load
+
+**Spec:** §11 · **Files:** `src/tests/Merchandising.Tests.Integration/SaleConcurrencyTests.vb`
+
+**Do:** The exit criterion, fired rather than argued. Concurrent sales of the same product cannot oversell it, and a sale racing a receive or an adjustment cannot produce a negative balance or ledger drift.
+
+**Done when:**
+
+- [ ] N simultaneous sales of the last remaining unit: exactly one succeeds, every other gets the controlled insufficient-stock outcome, never an unexpected exception (the P1-13 / P4-08 / P4-15 shape — launch every task, then await)
+- [ ] Sale racing **receive**, and sale racing **adjustment**, both fired at one product — the pairs P4-15 explicitly did not claim and left to this phase (`p4-15-concurrent-receive-and-adjust.txt` §6)
+- [ ] **No movement row ever records a `QuantityAfter` below zero**, asserted over the append-only ledger — not only that the final balance is non-negative. P4-15 §2.1(b): a transient negative is erased by a later movement and the final balance cannot see it
+- [ ] **Watched fail.** Break the conditional decrement's guard, confirm the tests fail naming the negative, revert, confirm green — and heal any drift the broken run wrote with **compensating movements only**, never an edit or delete (CLAUDE.md §7 item 7; `p4-15-drift-correction.sql` is the precedent and the shape)
+- [ ] Both orderings genuinely observed in the mixed races, and the distribution printed — a test that only ever sees one ordering asserts one path and claims two
+- [ ] Integration suite green
+
+**Evidence:** `evidence/phase-5/p5-08-sale-concurrency.txt` — including the induced-failure run
+
+### ⬜ P5-09 · Idempotent retry returns the original sale, never a second one
+
+**Spec:** §11 · **Files:** `src/Merchandising.Api/Sales/SaleService.vb`
+
+**Do:** ADR-007's idempotency, applied to the largest transaction in the system. A repeated key returns the original committed sale — not a second sale, and not a second stock decrement.
+
+**Done when:**
+
+- [ ] A repeated key returns the original committed payload byte-for-byte, asserted on the response, not merely on the row count
+- [ ] Exactly one stock decrement, one movement row, and one session-total update exist afterwards — asserted on all three, because a duplicate that only shows up in session totals is the one a demo would notice
+- [ ] A key reused with a **different** body is refused with a stable code rather than silently replaying — a client bug must not look like success
+- [ ] Two simultaneous requests carrying the same key: exactly one commits, the other replays, neither errors
+- [ ] Integration suite green
+
+**Evidence:** `evidence/phase-5/p5-09-sale-idempotency.txt`
+
+### ⬜ P5-10 · Completed sales are immutable; cancellation only before completion
+
+**Spec:** §10.3 · **Files:** `src/Merchandising.Api/Sales/SaleService.vb`, `db/grants/0013_pos-grants.sql`
+
+**Do:** A completed sale is never edited or deleted. A sale may be cancelled only before completion. Corrections after completion are **returns** (P5-11), never edits.
+
+**Done when:**
+
+- [ ] Immutability is enforced **by database grant** where it can be, not only by policy — the `merch_api` account's write privileges on `Sales` and `SalePayments` argued explicitly in the grants file header, with the refusal proven as `ERROR 1142` by calling the production write path directly, the P4-07 / P4-08 shape
+- [ ] Every route that could mutate a completed sale is refused with a stable code, asserted **over every completed state**, not spot-checked
+- [ ] Cancelling a completed sale is refused; cancelling an in-progress one succeeds and leaves no stock effect
+- [ ] **Matrix suite extended**; integration suite green
+
+**Evidence:** `evidence/phase-5/p5-10-sale-immutability.txt`
 
 ---
 
-## Track E — Counts, adjustments, and low stock
+## Track E — Sale returns
 
-*Sequential. Files overlap with each other but not with Track D.*
+*Runs after Track D. Files overlap with Track D's service, not with Track F or G.*
 
-### ✅ P4-09 · Stock counts with variance
+### ⬜ P5-11 · Sale returns bounded by sold-minus-prior-returns, with the stock-eligibility flag
 
-**Spec:** §10.2, §11 · **Files:** `src/Merchandising.Api/Controllers/StockCountsController.vb`, `src/Merchandising.Infrastructure/Data/StockCountRepository.vb`, `src/Merchandising.Contracts/Inventory/`
+**Spec:** §10.3, §11 · **Files:** `src/Merchandising.Api/Controllers/SalesReturnsController.vb`, `src/Merchandising.Api/Sales/SalesReturnService.vb`, `src/Merchandising.Infrastructure/Data/SalesReturnRepository.vb`
 
-**Do:** Open a count, record counted quantities per product, compute variance against the system quantity **at the moment of counting**, and close it. The count itself changes no stock — that is the adjustment's job (P4-10).
-
-**Done when:**
-
-- [x] Variance is computed and stored server-side at count time; a later balance change does not retroactively alter a recorded variance
-- [x] A count in progress does not block sales or receiving on the same product
-- [x] Counted quantity scale validated at the API boundary **before** binding (ADR-004.1) — a stored value that looks right proves nothing
-- [x] A closed count is immutable and remains fully readable
-- [x] **Matrix suite extended** — `StockCounts.Perform` positive and negative cells; integration suite green
-
-**Evidence:** `evidence/phase-4/p4-09-stock-counts.txt`
-
-### ✅ P4-10 · Adjustments with threshold-based approval
-
-**Spec:** §10.2, §11 · **Files:** `src/Merchandising.Api/Controllers/AdjustmentsController.vb`, `src/Merchandising.Infrastructure/Data/AdjustmentRepository.vb`, `src/Merchandising.Domain/Inventory/`
-
-**Do:** An adjustment applies a variance to stock. Below the configured threshold it applies directly; at or above it requires a second person's approval. The threshold lives in `SystemSettings`, not in a constant.
+**Do:** A return identifies the **original sale line**, cannot exceed quantity sold less prior returns, records whether the item may re-enter stock, and records the payment reversal **operationally** — no bank or terminal reversal happens.
 
 **Done when:**
 
-- [x] The threshold is read from `SystemSettings` and a changed setting changes the outcome, asserted rather than assumed
-- [x] An adjustment at or above the threshold **cannot** be approved by its own requester — reusing ADR-017 §6's `IOwnershipResource` / `AuthorizeAsync` mechanism, **not a new check** (the P3-04 precedent is binding here)
-- [x] Applying an adjustment writes movement + balance + audit in one transaction, proven by a forced-failure test
-- [x] A rejected or pending adjustment changes no stock — asserted on the balance and the ledger
-- [x] The P4-01 reconciliation passes after every applied adjustment
-- [x] **Matrix suite extended** — `Adjustments.Request` and `Adjustments.Approve`; integration suite green
+- [ ] The bound is computed **server-side** from committed rows, never from a client figure — the P4-08 rule, which also means the request contract carries no product or price field at all
+- [ ] Returning more than sold-minus-prior-returns is refused with a stable code, including when two prior partial returns together exhaust the bound
+- [ ] `RestocksItem = True` writes a stock-in movement and moves the balance; `False` writes **no movement at all** and the bound still accounts for it — both asserted, the P4-08 `RemovesStock` shape
+- [ ] Concurrent returns against the same sale line cannot exceed the bound — proven under real concurrent load, not by two sequential calls
+- [ ] The payment-reversal record says **recorded, not reversed at a bank** (G-24)
+- [ ] `SalesReturns.ApproveExceptional` is a genuinely separate path with a second actor, reusing ADR-017 §6's `IOwnershipResource` mechanism, **not a new check** (the P3-04 / P4-10 precedent is binding)
+- [ ] The P4-01 reconciliation passes after every return
+- [ ] **Matrix suite extended** — `SalesReturns.Create` and `SalesReturns.ApproveExceptional`; integration suite green
 
-**Evidence:** `evidence/phase-4/p4-10-adjustments.txt`
-
-### ✅ P4-11 · Low-stock logic and reconciliation views
-
-**Spec:** §10.2, §14 · **Files:** `src/Merchandising.Api/Controllers/InventoryController.vb`, `src/Merchandising.Infrastructure/Data/StockRepository.vb`
-
-**Do:** The `LowStock.Review` and `Stock.ReviewMovements` surfaces: products at or below reorder level, and the movement history that explains a balance. Spec §14's reports read from these in Phase 6 — shape them so those reports reconcile rather than re-query.
-
-**Done when:**
-
-- [x] Low-stock threshold is per product and read from the product master, never a global constant
-- [x] The movement history for a product **sums to its current balance** — the same invariant P4-01 asserts, now exposed through the API so the Phase 6 report and the detail screen cannot disagree
-- [x] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
-- [x] Date boundaries defined in the **store time zone** and stated in the response (spec §14)
-- [x] **Matrix suite extended** — `LowStock.Review`, `Stock.Read`, `Stock.ReviewMovements`; integration suite green
-
-**Evidence:** `evidence/phase-4/p4-11-low-stock.txt`
+**Evidence:** `evidence/phase-5/p5-11-sale-returns.txt`
 
 ---
 
-## Track F — The Inventory client
+## Track F — G-24: recording is not authorisation
 
-### ✅ P4-12 · Inventory WPF client reaches usable state
+*Files disjoint from every other track. Can run in parallel with Track E or G.*
 
-**Spec:** §10.2, §16 · **Files:** `src/Merchandising.Inventory/`, `src/Merchandising.ClientCommon/`
+### ⬜ P5-12 · Payment-method wording verified non-authorising, in UI and in reports
 
-**Do:** `plan.md` §7: *"Inventory WPF client reaches usable state."* Stock browse, receiving against an approved order, counts, adjustments and low-stock review — every one calling the API, never the database. P1-15's spike window is replaced, not extended.
+**Spec:** §10.3, §23 · **Closes:** G-24 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.Contracts/Sales/`, `src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb`
+
+**Do:** G-24's mitigation is *"label card/e-wallet as operational recording only; exclude terminal/bank integration; test UI wording and reports."* The last four words are the card: **assert the strings**, because a wording gap is invisible to every other kind of test.
 
 **Done when:**
 
-- [x] Login, stock browse, receive, count, adjust and low-stock review all work against the running API — **closed at the Phase 4 gate by P4-15** (`evidence/phase-4/p4-15-authenticated-client-pass.txt`), all six driven through this client's own `MainViewModel` and five tab view models over real TLS to the real service. The credentials stop condition was honoured, not worked around: nothing read `installation-credentials.txt`; two accounts were created through `Merchandising.Maintenance.exe create-user`, ADR-017 §4's own route. ⚠ **The pass found a real defect first** — the deployed Windows Service was a 2026-08-28 (Phase 3) build and returned **404 for every Phase 4 route**; `WebApplicationFactory` cannot see a stale deployment, so nothing else could have caught it. Redeployed and re-run green
-- [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
-- [x] Server-side refusals (over-receiving 409, adjustment threshold 403, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
-- [x] Client-side validation is for usability only; every rule is re-checked server-side
-- [x] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test, not by a sentence.** Extended `ProcurementLayoutTests`' three assertions to this window (`InventoryLayoutTests.vb`): declared sizes against the 1092.8 × 576.0 DIP work area, every screen laid out at the window's own minimum with no grid starved, and unique TabIndex ascending in reading order per screen. All three passed on the first run
-- [x] Guardrails and both suites green — 47/47 unit, 339/339 integration, 0 guardrail failures
+- [ ] A test scans the POS client's XAML and the sales/report contracts for a denylist of authorising words — *approved, authorised/authorized, accepted, cleared, settled, charged* — applied to card/e-wallet contexts, and **fails** if one appears
+- [ ] **Proven falsifiable**: the denylist test is watched fail against a deliberately introduced "Payment approved" label before being trusted. A wording test that has never fired is exactly as decorative as any other
+- [ ] The affirmative wording exists too — the UI and the response both state that card/e-wallet is **recorded** and not authorised, asserted rather than assumed absent
+- [ ] The exclusion is stated where a user reads it, not only in the spec: no terminal, bank, cash drawer, scale, customer display or receipt printer integration
+- [ ] **G-24 recorded closed** in the gap register at P5-15
+- [ ] Unit suite green
 
-**A known, frozen permission gap, recorded rather than silently patched around:** `PurchaseOrders.Track` (needed to look up an order before receiving against it) is `ProcurementAndAbove`; `Receiving.Confirm` is `InventoryAndAbove`. Only `admin`/`superadmin` sit in both groups, so a pure `inventoryclerk` sign-in can confirm a receipt but not look one up first. Phase 2's policy matrix is frozen — this card does not change it. Detail in the evidence file §2.
-
-**Evidence:** `evidence/phase-4/p4-12-inventory-client.txt`
-
-> **Client last, deliberately** (`plan.md` §8.1). Every rule this client touches is already proven server-side by Tracks D and E, so a defect found here is a display defect, not a business-logic one.
+**Evidence:** `evidence/phase-5/p5-12-payment-wording.txt`
 
 ---
 
-## Track G — Documents and closure
+## Track G — The POS client
 
-### ✅ P4-13 · `docs/database-design.md` finalised
+### ⬜ P5-13 · POS WPF client reaches usable state, mouse-free
 
-**Spec:** §12, §20 · **Closes:** G-21 · **Files:** `docs/database-design.md`
+**Spec:** §10.3, §16 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.ClientCommon/`
 
-**Do:** Finalise the document Phase 2 drafted, now that the schema is complete through migration `0010`. Every table, column, type, constraint, index and foreign key, with the grant posture per table and the reason for each `UPDATE`/`DELETE` that exists.
+**Do:** `plan.md` §7: the POS client. Sign in, open a session, look up a product, build a cart, take a payment, complete the sale, show receipt data, take a return, close the session — every one calling the API, never the database.
 
 **Done when:**
 
-- [x] Every table through `0010` documented with its exact declared types, read from `information_schema` rather than transcribed from the migrations
-- [x] The append-only guarantee stated per table, naming `StockMovements` and `AuditLogs` as the two that hold **no** write-back grant, with ADR-013's ordering argument
-- [x] Every foreign key and its delete behaviour listed
-- [x] Verified against the running database rather than transcribed by hand, in the P2-12 / P3-08 shape — a drift check that fails when the schema moves (`DatabaseDesignDocumentationTests.vb`, 7 tests, watched fail on the undocumented `Receipts` table before the doc was written)
-- [x] States the academic-prototype framing required by `plan.md` §5
-- [x] One of P0-07's remaining documents struck from its list
-- [x] **G-21 recorded closed** in the gap register (stated in the document's own header; `evidence/phase-4/INDEX.md` records it formally at P4-14)
+- [ ] All nine operations work against the **running, redeployed** API — an authenticated pass, in the P4-15 shape (`evidence/phase-4/p4-15-authenticated-client-pass.txt`). ⚠ **Redeploy the service first and record the deployed build's identity in the evidence.** CARRY-05: a green suite says nothing about what is deployed, and the Phase 4 gate found exactly that
+- [ ] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
+- [ ] Server-side refusals (insufficient stock 409, tendered-below-total, closed session, over-return) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
+- [ ] Client-side validation is for usability only; every rule is re-checked server-side
+- [ ] **The whole sale workflow is completable without a mouse**, asserted by a test over TabIndex and access keys per screen, not by a sentence — `plan.md` §7 makes mouse-free POS its own Phase 7 criterion, and it is far cheaper to build in now
+- [ ] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test**, extending `ProcurementLayoutTests` / `InventoryLayoutTests`' three assertions to this window. **Check the arithmetic against the 1092.8 × 576.0 DIP work area**: the Phase 3 gate found a window whose own evidence file computed a number larger than the space it claimed to fit
+- [ ] Guardrails and both suites green
 
-**Evidence:** `evidence/phase-4/p4-13-database-design.txt`
+**Evidence:** `evidence/phase-5/p5-13-pos-client.txt`
 
-### ✅ P4-14 · Phase 4 closure pack
+> **Client last, deliberately** (`plan.md` §8.1). Every rule this client touches is already proven server-side by Tracks C, D and E, so a defect found here is a display defect, not a business-logic one.
 
-**Spec:** §20 · **Files:** `evidence/phase-4/`
+---
+
+## Track H — Documents and closure
+
+### ⬜ P5-14 · `docs/ui-specification.md` — all three clients
+
+**Spec:** §16, §20 · **Files:** `docs/ui-specification.md`
+
+**Do:** `plan.md` §7 places this here on purpose: *"the shared visual system is settled once POS forces the hardest layout decisions."* Document the settled system across Procurement, Inventory and POS — layout grid, typography, the status bar that carries every server message and correlation ID, error presentation, focus and keyboard conventions, and the 1366×768 @ 125% constraint.
+
+**Done when:**
+
+- [ ] Every convention is stated as a rule a fourth screen could be built from, not as a description of what three screens happen to do
+- [ ] The 1366×768 @ 125% work area is stated **as a number** (1092.8 × 576.0 DIP), with the rule that a window's `MinWidth`/`MinHeight` must fit inside it — the Phase 3 gate's defect, written down so it cannot recur by forgetting
+- [ ] Error and refusal presentation documented: the API's wording verbatim, the correlation ID always visible, never a client-invented message
+- [ ] Verified against the running clients rather than transcribed by hand, in the P2-12 / P3-08 / P4-13 shape — a drift check that fails when the XAML moves
+- [ ] States the academic-prototype framing required by `plan.md` §5
+- [ ] One of P0-07's remaining documents struck from its list
+
+**Evidence:** `evidence/phase-5/p5-14-ui-specification.txt`
+
+### ⬜ P5-15 · Phase 5 closure pack
+
+**Spec:** §20 · **Files:** `evidence/phase-5/`
 
 **Do:** Run a clean clone outside the tree, capture the build and both suites, and write the evidence index mapping every exit criterion and card to a file that exists.
 
 **Done when:**
 
-- [x] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at 0 warnings and passes guardrails plus both suites → `p4-14-clean-clone.log` ⚠ first capture at `98f0908` built at **9** warnings (MSTEST0037); fixed at `4135d52` (mechanical `Assert.HasCount`/`Assert.IsEmpty` rewrite, behaviour unchanged) and recaptured — see log §5
-- [x] `evidence/phase-4/INDEX.md` maps every Phase 4 exit criterion and every card to an artifact, continuing `phase-3/INDEX.md`'s register
-- [x] **G-12 and G-21 recorded closed** in that register — G-12 closed **for the components this phase owns** (receiving, returns, counts, adjustments); its *sale* component stays Phase 5's, stated explicitly rather than rounded up (INDEX.md §3)
-- [x] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites**, which is precisely what the Phase 3 gate caught. Found here: exit criterion 5 ("concurrent receive-and-adjust... safe") cites `p4-05`/`p4-10`, neither of which fires that scenario — marked ⚠, not ✅ (INDEX.md §4.1); and **P4-12 stays 🟡**, not rounded to done, because its own card still has one open box (INDEX.md §4.2)
-- [x] Every ADR this phase owed (ADR-021, and the ADR-006 amendment from P4-04) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`, not assumed
-- [x] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number (`## ADR-021` at 1014, `## Template for new entries` at 1049), the check P2-13 had to add after ADR-015–018 rendered as a code block
+- [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p5-15-clean-clone.log`
+- [ ] `evidence/phase-5/INDEX.md` maps every Phase 5 exit criterion and every card to an artifact, continuing `phase-4/INDEX.md`'s register
+- [ ] **G-24 recorded closed** in that register, and **G-12's sale component** recorded closed — the one Phase 4 explicitly left open and named as this phase's
+- [ ] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites.** Two gates running have found a real defect behind a box that was reasoned about rather than exercised; assume this one has a third
+- [ ] Every ADR this phase owed (ADR-022, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`, not assumed
+- [ ] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number
+- [ ] **The deployed service is current**, and the evidence records its build identity (CARRY-05). A closure pack that certifies source nobody is running certifies nothing a classmate will see
 
-**Evidence:** `evidence/phase-4/p4-14-clean-clone.log`, `evidence/phase-4/INDEX.md`
-
-> **This card's own boxes are all satisfied — that is not the same claim as "Phase 4 may exit."** `INDEX.md` §4.1 and §4.2 record two real gaps a `/phase-gate` review still needs to see: exit criterion 5's evidence doesn't fire the scenario it names, and P4-12 has one open box (an authenticated manual pass, blocked on a credentials file this session correctly refused to read). Neither is this card's to close.
->
-> **Both were closed by P4-15, raised by the gate review itself.** The card below is what the gate wrote rather than waved through — which is the outcome this closure pack's honesty was for.
-
-### ✅ P4-15 · Close the two gaps the closure pack refused to round up
-
-**Spec:** §10.1, §10.2, §11 · **Raised by:** the `/phase-gate` review of Phase 4
-**Files:** `src/tests/Merchandising.Tests.Integration/ReceiveAndAdjustConcurrencyTests.vb`, `evidence/phase-4/`, `.gitignore`
-
-**Do:** `INDEX.md` §4.1 and §4.2 named two things the gate would find. Fix both rather than argue them away: write the concurrent receive-and-adjust test exit criterion 5 claims and never fired, and perform P4-12's owed authenticated pass without reading the credentials file the previous session correctly refused.
-
-**Done when:**
-
-- [x] A dedicated test fires a receive and an adjustment at the **same product at the same time**, in the P1-13/P4-08 shape — two of them: 4 receives + 4 adjustments in flight settle to the exact arithmetic total (no lost update), and a +5.000/−5.000 race over 6 rounds lands on one of only two consistent end states with **both orderings genuinely observed**, never one assumed
-- [x] **Both tests watched fail before being trusted**, against a deliberately broken `StockRepository` — read-then-write increment → `Expected:<136.000>. Actual:<106.000>`; guard removed → `the ledger records a balance of -3.000`. ⚠ the first draft of box 2 **could not be falsified** and was rewritten: a fresh product has no `StockBalances` row, so row-absence refused the adjustment and the `Quantity >= @qty` guard was never under test; and a transient negative is erased by the later receive, so the assertion had to move to `MIN(QuantityAfter)` in the append-only ledger
-- [x] The drift that falsification wrote to five real products is healed by **compensating movements only** — `p4-15-drift-correction.sql`, never an `UPDATE` or `DELETE` (CLAUDE.md §7 item 7), verified reconciling straight from the database
-- [x] `inventory.adjustmentThreshold` is restored to `SystemSettingRegistry`'s own default in `TestCleanup` — one row for the whole installation, and the class that raised it owns putting it back
-- [x] P4-12's sixth box performed for real: login, stock browse, receive, count, adjust, low-stock review, plus a live 409 refusal surfaced with the API's own code and correlation ID, driven through the client's own view models. **No credential file read** — accounts created via `create-user` (ADR-017 §4)
-- [x] ⚠ **A real defect found and fixed, not written around:** the deployed service was a Phase 3 build serving **404 for every Phase 4 route**. Redeployed from `publish-release.ps1` output via `install-service.ps1`; the pass then went green end to end
-- [x] `**/My Project/launchSettings.json` gitignored — VS 2026 wrote a per-developer launch profile whose `applicationUrl` contradicts the only listener this system has (ADR-011's 8443)
-- [x] Both suites green, guardrails pass, build 0 warnings, clean clone recaptured
-
-**Evidence:** `evidence/phase-4/p4-15-concurrent-receive-and-adjust.txt`, `evidence/phase-4/p4-15-authenticated-client-pass.txt`, `evidence/phase-4/p4-15-drift-correction.sql`
+**Evidence:** `evidence/phase-5/p5-15-clean-clone.log`, `evidence/phase-5/INDEX.md`
 
 ---
 
-## Phase 4 exit gate
+## Phase 5 exit gate
 
-From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-4/` — a file someone else could read.
+From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-5/` — a file someone else could read.
 
-- [ ] Receiving produces exactly one atomic stock increase (P4-05)
-- [ ] Partial receiving accumulates correctly across multiple receipts (P4-06)
-- [ ] Over-receiving rejected (P4-07)
-- [ ] Ledger reconciles for all products (P4-01, asserted after every suite run)
-- [ ] Concurrent receive-and-adjust on the same product is safe (P4-05, P4-10)
-- [ ] Corrections use compensating movements, never edits (P4-08)
-- [ ] `docs/database-design.md` finalised (P4-13)
-- [ ] G-12 and G-21 closed in the gap register (P4-14)
-- [ ] ADR-021 ACCEPTED and ADR-006 amended (P4-01, P4-04)
-- [ ] Clean-clone build and both test suites green (P4-14)
+- [ ] End-to-end sale flow passes (P5-07, P5-13)
+- [ ] End-to-end return flow passes (P5-11, P5-13)
+- [ ] Negative stock impossible under concurrent load (P5-08)
+- [ ] Idempotent retry returns the original result rather than a second sale (P5-09)
+- [ ] Completed sales immutable (P5-10)
+- [ ] Change calculation exact to the stored precision (P5-01, P5-07)
+- [ ] Payment-method wording verified as non-authorising in both UI and reports (P5-12)
+- [ ] `docs/ui-specification.md` written (P5-14)
+- [ ] G-24 closed, and G-12's sale component closed, in the gap register (P5-15)
+- [ ] Clean-clone build and both test suites green (P5-15)
+- [ ] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
 
-**Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7**. CARRY-02 belongs to **Phase 6** (ADR-019). CARRY-04 is a watch item with no owner and becomes a card only on a second sighting. **CARRY-01 has now been carried through two phases without an owner** — it is not a Phase 4 blocker, but do not let Phase 6 planning close without placing it.
+**Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7** — but one of its documents, `ui-specification.md`, *is* owed here as P5-14. CARRY-02 belongs to **Phase 6** (ADR-019). CARRY-04 is a watch item and becomes a card only on a second sighting. **CARRY-01 has now been carried through three phases without an owner and must be placed when Phase 6 planning opens.** **CARRY-05 is new** and belongs to Phase 6's health monitoring — but its consequence binds *this* phase at P5-13 and P5-15: redeploy before believing any client-side result.

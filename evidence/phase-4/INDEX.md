@@ -1,6 +1,10 @@
 # Phase 4 — Inventory and receiving · Evidence Index
 
 **Built at P4-14, 2026-08-29, against commit `4135d52`.**
+**Amended at the Phase 4 gate, 2026-08-29, against commit `76aaa7d`** — the review returned
+**FAIL** on its first sitting, on exactly the two items §4.1 and §4.2 said it would. P4-15
+closed both. Every amendment below is marked; nothing original was deleted, because the record
+of how a gap was found is worth as much as the record of it being closed.
 **Spec:** `documentations/Merchandising System for a Mid-Scale Hardware Store.md` §10.1, §10.2, §11, §12, §14, §20
 **Plan:** `plan.md` §7 (Phase 4), §10 (risk register mapping)
 
@@ -34,13 +38,13 @@ From `tasks.md`'s `Phase 4 exit gate` checklist (mirroring `plan.md` §7 Phase 4
 | 2 | Partial receiving accumulates correctly across multiple receipts | P4-06 | `p4-06-partial-receiving.txt` | ✅ |
 | 3 | Over-receiving rejected | P4-07 | `p4-07-over-receiving.txt` | ✅ |
 | 4 | Ledger reconciles for all products | P4-01, asserted after every suite run | `p4-01-ledger-reconciliation.txt`, `p4-14-clean-clone.log` §3 | ✅ |
-| 5 | Concurrent receive-and-adjust on the same product is safe | P4-05, P4-10 | `p4-05-receiving-atomic.txt`, `p4-10-adjustments.txt` | ⚠ §4.1 |
+| 5 | Concurrent receive-and-adjust on the same product is safe | ~~P4-05, P4-10~~ **P4-15** | `p4-15-concurrent-receive-and-adjust.txt` | ✅ *(was ⚠ §4.1 — closed at the gate)* |
 | 6 | Corrections use compensating movements, never edits | P4-08 | `p4-08-purchase-returns.txt` | ✅ |
 | 7 | `docs/database-design.md` finalised | P4-13 | `p4-13-database-design.txt`, `../../docs/database-design.md` | ✅ |
 | 8 | G-12 and G-21 closed in the gap register | P4-14 | this file, §3 | ⚠ see §3 |
 | 9 | ADR-021 ACCEPTED and ADR-006 amended | P4-01, P4-04 | `../../docs/adr.md` lines 1014, 347 | ✅ |
-| 10 | Clean-clone build and both test suites green | P4-14 | `p4-14-clean-clone.log` | ✅ |
-| — | *(CLAUDE.md §9)* Every task done | — | — | ⚠ §4.2 — **P4-12 is 🟡, not ✅** |
+| 10 | Clean-clone build and both test suites green | P4-14, recaptured **P4-15** | `p4-15-clean-clone.log` (supersedes `p4-14-clean-clone.log`, kept) | ✅ |
+| — | *(CLAUDE.md §9)* Every task done | **P4-15** | `p4-15-authenticated-client-pass.txt` | ✅ *(was ⚠ §4.2 — P4-12 closed at the gate)* |
 
 ---
 
@@ -59,14 +63,17 @@ From `tasks.md`'s `Phase 4 exit gate` checklist (mirroring `plan.md` §7 Phase 4
 | P4-09 | Stock counts with variance | `p4-09-stock-counts.txt` | ✅ |
 | P4-10 | Adjustments with threshold-based approval | `p4-10-adjustments.txt` | ✅ |
 | P4-11 | Low-stock logic and reconciliation views | `p4-11-low-stock.txt` | ✅ |
-| P4-12 | Inventory WPF client reaches usable state | `p4-12-inventory-client.txt` | 🟡 §4.2 |
+| P4-12 | Inventory WPF client reaches usable state | `p4-12-inventory-client.txt`, `p4-15-authenticated-client-pass.txt` | ✅ *(was 🟡 §4.2)* |
 | P4-13 | `docs/database-design.md` finalised | `p4-13-database-design.txt` | ✅ |
 | P4-14 | Closure pack — suite green, clean clone, this index | `p4-14-clean-clone.log`, this file | ✅ |
+| P4-15 | Close the two gaps this pack refused to round up | `p4-15-concurrent-receive-and-adjust.txt`, `p4-15-authenticated-client-pass.txt`, `p4-15-drift-correction.sql`, `p4-15-clean-clone.log` | ✅ |
 
-**P4-12 stays 🟡, not rounded up to ✅.** Every box this closure pack can verify by inspection
-and by the suite run is genuinely green; the one that cannot be discharged that way — a real
-authenticated manual sign-in against the running API — is recorded as owed, not silently
-dropped. See §4.2.
+**P4-12 stayed 🟡 through this closure pack, and that was the right call at the time.** Every
+box P4-14 could verify by inspection and by the suite run was genuinely green; the one that
+could not be discharged that way — a real authenticated sign-in against the running API — was
+recorded as owed, not silently dropped. The `/phase-gate` review then did exactly what §4.2
+asked of it: it held the gate, and then closed the box properly. See §4.2 for how, and for the
+defect that was sitting underneath it.
 
 ---
 
@@ -113,6 +120,22 @@ Phases 5–7 by `plan.md` §7 and §10, and are correctly untouched here.
 ### 4.1 Exit criterion 5 — "concurrent receive-and-adjust on the same product is safe" has no
 dedicated test; the claim rests on mechanism, not a fired scenario
 
+> **CLOSED at the Phase 4 gate by P4-15** (`p4-15-concurrent-receive-and-adjust.txt`). The
+> analysis below stands as written and is kept — it is the record of how the gap was found,
+> and the reason it was found is that this pack refused to mark the row ✅. The test this
+> section named, and even named the shape of, now exists: two tests in
+> `ReceiveAndAdjustConcurrencyTests`, both **watched fail** against a deliberately broken
+> `StockRepository` before being trusted.
+>
+> **One correction to what this section anticipated.** The first draft of the
+> `ExactlyOneOrderingWins` test **could not be falsified**, and would have passed forever
+> while proving nothing. Two reasons, both worth carrying forward: a never-received product
+> has **no `StockBalances` row at all**, so the conditional write's row-*existence* refused the
+> adjustment and the `AND Quantity >= @qty` guard was never reached; and a *transient* negative
+> is erased by the later receive, so an assertion on the final balance cannot see it. Fixed by
+> seeding a real opening balance and asserting `MIN(QuantityAfter) >= 0` over the **append-only
+> ledger**, where a momentary negative is permanent. See that file's §2.1.
+
 `tasks.md`'s Phase 4 exit gate cites `p4-05-receiving-atomic.txt` and `p4-10-adjustments.txt`
 as this criterion's evidence. Both files were read in full for this index. **Neither contains
 the word "concurrent" or "simultaneous," and neither fires a receive and an adjustment at the
@@ -148,6 +171,33 @@ a test under this card's own time pressure risks writing one that passes for the
 
 ### 4.2 Card P4-12 — the client is built and unit-proven; the authenticated manual pass is
 still owed, and is not a defect this card can discharge
+
+> **CLOSED at the Phase 4 gate by P4-15** (`p4-15-authenticated-client-pass.txt`). This
+> section's last paragraph asked a `/phase-gate` review to "find P4-12 open and hold the gate
+> for it." It did, and then closed it: login, stock browse, receive, count, adjust and
+> low-stock review all performed against the live service over TLS, driven through the
+> client's own `MainViewModel` and five tab view models, plus a live 409 refusal surfaced with
+> the API's own error code and correlation ID.
+>
+> **The credentials stop condition was honoured, not circumvented.** Nothing read
+> `installation-credentials.txt`. Two accounts were created through
+> `Merchandising.Maintenance.exe create-user` — the route ADR-017 §4 already assigns to user
+> management — with a password chosen at creation time, which is what the installer itself
+> does. The earlier session's refusal was correct and remains correct; it was never the only
+> way in.
+>
+> **⚠ And the pass found a real defect, which is the point of insisting on it.** The deployed
+> `MerchandisingApi` Windows Service was a **2026-08-28 (Phase 3) build** and returned **404
+> for every Phase 4 route** — receiving, counts, adjustments, and P4-11's stock surfaces all
+> absent from the running binary. Nothing in the test suite could have caught this:
+> `WebApplicationFactory` builds the host in-process from current source and can never observe
+> a stale deployment, and P4-12's own "service is Running" check passed against a service that
+> served none of Phase 4. Under ADR-012 a demo would have failed on the first receipt.
+> Redeployed via `publish-release.ps1` + `install-service.ps1`, and the pass re-run green.
+>
+> **This is the second consecutive gate to find a real defect behind a box that had been
+> reasoned about rather than exercised** — the Phase 3 gate's 1366×768 arithmetic was the
+> first. `tasks.md` line 20's rule for this phase held again.
 
 `p4-12-inventory-client.txt` §0/§4 (as ticked in `tasks.md`) records the Inventory client
 built, calling the API exclusively (guardrail G-B holds), laid out and keyboard-navigable at
@@ -194,7 +244,10 @@ not a second finding to carry forward.
 | Point | Unit | Integration | Total |
 |---|---|---|---|
 | Phase 3 gate (`edc4054`, 2026-08-28) | 44 | 211 | 255 |
-| Phase 4 gate (`4135d52`, 2026-08-29) | **47** | **346** | **393** |
+| P4-14 closure pack (`4135d52`, 2026-08-29) | 47 | 346 | 393 |
+| **Phase 4 gate passed (`76aaa7d`, 2026-08-29)** | **47** | **348** | **395** |
+
+The final +2 are P4-15's `ReceiveAndAdjustConcurrencyTests`, added by the gate review itself.
 
 Unit grew by 3 — `InventoryLayoutTests` (P4-12), extending `ProcurementLayoutTests`' three
 assertions (declared size vs. work area, no starved grid at minimum size, ascending TabIndex)

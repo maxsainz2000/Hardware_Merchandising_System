@@ -1,0 +1,142 @@
+===============================================================================
+P4-15 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
+Captured 2026-08-29 on LAPTOP-3HH6OHHE
+Card: tasks.md P4-15  |  Gate: Phase 4 exit criterion "Clean-clone build and
+both test suites green"  |  plan.md section 7 (Phase 4 Exit), section 9
+(Phase definition of done)
+
+SUPERSEDES p4-14-clean-clone.log, which is kept. That capture was taken at
+4135d52 and was correct for that commit; P4-15 then added a test file and a
+.gitignore rule, so the criterion has to be re-proven at the tree the gate
+actually passes on. Both logs are true of their own commit.
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds all
+eleven projects at zero warnings, and passes the guardrails and BOTH test
+suites - including the integration suite, which runs against the real pinned
+MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. A clone that had to create
+those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
+on a machine the author has never configured is a Phase 6 exit criterion
+(plan.md section 7, promoted by ADR-012) - not this one. Same wording as
+P1-20, P2-13, P3-09 and P4-14, deliberately: the claim has not grown.
+
+ALSO NOT PROVEN BY THIS LOG, and worth saying plainly because P4-15 is the
+card that found it: a clean clone proves the SOURCE builds and passes. It
+says nothing about what is DEPLOYED. The stale Windows Service recorded in
+p4-15-authenticated-client-pass.txt section 2 would have survived this
+capture untouched, at every previous phase gate as well. See that file's
+section 5 for the Phase 6 note.
+
+Source commit    : 76aaa7d460773e0d505f097b1cdc10bcf27c0beb
+                   (76aaa7d) "P4-15: close the two gaps the Phase 4 closure
+                   pack refused to round up"
+Clone target     : <scratchpad>\cc-p4-15  (outside the repository, deleted
+                   after capture)
+bin/obj at clone : 0 directories - verified by enumeration before building
+dotnet SDK       : 10.0.301
+MariaDB          : 10.4.32-MariaDB (XAMPP 8.2.12-0)
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+                   -RepoRoot <clone>
+Exit code        : 0
+Elapsed          : 00:01:20 (build + guardrails + both suites, wall clock)
+
+
+===============================================================================
+1. GUARDRAILS - run twice, once by the script and once by the build
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+(Repeated identically inside the dotnet build step - both runs pass.)
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+
+
+===============================================================================
+2. BUILD - eleven projects, zero warnings
+===============================================================================
+
+  Merchandising.Domain            -> ...\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts         -> ...\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon      -> ...\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure    -> ...\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Maintenance       -> ...\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Api               -> ...\net10.0\Merchandising.Api.dll
+  Merchandising.POS               -> ...\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Inventory         -> ...\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.Procurement       -> ...\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Tests.Unit        -> ...\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Tests.Integration -> ...\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+ZERO WARNINGS, FIRST ATTEMPT. P4-14's own capture needed a second attempt -
+its first, at 98f0908, built with 9 MSTEST0037 warnings. One MSTEST0037 was
+introduced during P4-15 as well (Assert.IsTrue on a comparison the analyzer
+wants as Assert.IsGreaterThanOrEqualTo) and was rewritten rather than
+suppressed, before this capture, which is why this one is clean on the first
+run rather than the second.
+
+
+===============================================================================
+3. TEST SUITES - both green, nothing skipped
+===============================================================================
+
+Passed!  - Failed: 0, Passed:  47, Skipped: 0, Total:  47, Duration:  1 s
+           Merchandising.Tests.Unit.dll (net10.0)
+
+Passed!  - Failed: 0, Passed: 348, Skipped: 0, Total: 348, Duration: 51 s
+           Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+The integration total includes P4-01's <AssemblyCleanup> ledger
+reconciliation, which fails the ENTIRE suite if SUM(StockMovements) <>
+StockBalances for any product. Its passing here is the strongest single
+statement this log makes: after everything Phase 4 wrote to the ledger -
+including P4-15's own concurrency tests, and including the drift its
+falsification run deliberately created and then closed with compensating
+movements (p4-15-drift-correction.sql) - the ledger reconciles for every
+product in the database.
+
+Growth over the phase:
+
+  Phase 3 gate (edc4054, 2026-08-28)   44 unit  |  211 integration  |  255
+  P4-14        (4135d52, 2026-08-29)   47 unit  |  346 integration  |  393
+  P4-15        (76aaa7d, 2026-08-29)   47 unit  |  348 integration  |  395
+
+The +2 are ReceiveAndAdjustConcurrencyTests' two tests, both of which were
+watched fail against a deliberately broken StockRepository before being
+trusted - see p4-15-concurrent-receive-and-adjust.txt section 3.
+
+
+===============================================================================
+4. CARRY-04 - still no recurrence
+===============================================================================
+
+No MSB3030. CARRY-04 (an intermittent copy-local race on a referenced
+WinExe's runtimeconfig.json) was observed ONCE at the Phase 3 gate and has
+not reappeared in any clean-clone run since, including P4-14's two and this
+one. It stays a watch item, not a closed one - the count of runs without a
+recurrence is not evidence the fragility is gone, and tasks.md's own wording
+is that a second sighting is what would turn it into a card.
