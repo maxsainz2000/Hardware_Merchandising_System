@@ -1,0 +1,76 @@
+P4-02 - db/grants/0011_receiving-grants.sql - grants evidence
+Captured 2026-08-29, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Schema evidence is a separate file: p4-02-receiving-schema.txt.
+
+merch_api's password is not known to this shell (it lives in
+%ProgramData%\MerchandisingSystem\config\database.json, ADR-013), so the
+manual mysql-CLI verification this file would otherwise run directly is
+performed instead through ConnectionFactory/DatabaseOptionsLoader, which
+reads that same config - exactly the identity the running API uses. That is
+ReceivingSchemaTests, and its console output is reproduced below rather than
+a second, credential-guessing transcript.
+
+
+===============================================================================
+1. Apply 0011_receiving-grants.sql as root, after migration 0009
+===============================================================================
+
+$ mysql -u root merchandising < db/grants/0011_receiving-grants.sql
+(no output - clean apply)
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';" | grep -E "receipt|purchasereturn"
+GRANT INSERT ON `merchandising`.`receipts` TO `merch_api`@`localhost`
+GRANT INSERT, UPDATE ON `merchandising`.`purchasereturns` TO `merch_api`@`localhost`
+GRANT INSERT ON `merchandising`.`receiptlines` TO `merch_api`@`localhost`
+GRANT INSERT ON `merchandising`.`purchasereturnlines` TO `merch_api`@`localhost`
+
+  [PASS] table names lowercase (@@lower_case_table_names = 1, ADR-003.1).
+  [PASS] receipts / receiptlines / purchasereturnlines: INSERT only.
+  [PASS] purchasereturns: INSERT, UPDATE - the one table this file's own
+         header argues is mutable (approval state changes in place).
+  [PASS] nothing added for stockmovements or auditlogs - unaffected by this
+         file, ADR-013 untouched.
+
+
+===============================================================================
+2. Behaviour - the grant boundary, proven as merch_api (ReceivingSchemaTests)
+===============================================================================
+
+$ dotnet test ... --filter "FullyQualifiedName~ReceivingSchemaTests"
+
+  Passed MerchApi_CanInsertReceiving_AndUpdatePurchaseReturnStatus [63 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnAnyOfTheFourTables [53 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnTheThreeImmutableTables [53 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [28 ms]
+
+  [PASS] merch_api, using the API's own configured credential, can INSERT a
+         receipt, a receipt line, a purchase return and a return line, and
+         can UPDATE PurchaseReturns.Status (+ ApprovedByUserId, ApprovedAtUtc,
+         RowVersion) - proving the grant is sufficient for the shape P4-05
+         and P4-08 will need.
+
+  [PASS] merch_api is refused DELETE on all four tables (ERROR 1142) -
+         Receipts, ReceiptLines, PurchaseReturns, PurchaseReturnLines.
+
+  [PASS] merch_api is refused UPDATE on the three tables this file does not
+         grant it on (Receipts, ReceiptLines, PurchaseReturnLines), all
+         ERROR 1142.
+
+  [PASS] merch_api holds no DDL on either of the two tables tried (ALTER on
+         Receipts, DROP on PurchaseReturnLines) - both ERROR 1142. ADR-013's
+         split is not weakened by adding four tables to it.
+
+
+===============================================================================
+3. What is deliberately not granted, and why (from the file's own header)
+===============================================================================
+
+DELETE, on any of the four, to anyone - spec section 12: "Transactional
+records are never physically deleted."
+
+UPDATE on receipts, receiptlines and purchasereturnlines - nothing in this
+phase's cards edits a receipt, a receipt line, or a return line after it is
+written. If a later card needs one, that grant is argued in a new numbered
+file, not added here by assumption.

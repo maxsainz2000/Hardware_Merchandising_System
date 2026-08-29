@@ -1,0 +1,338 @@
+P4-02 - Migration 0009 (Receipts, ReceiptLines, PurchaseReturns,
+PurchaseReturnLines) - schema evidence
+Captured 2026-08-29, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+Baseline before this task: 22 tables, migrations 0001-0008 applied.
+After this task:           26 tables, migrations 0001-0009 applied.
+
+Grants evidence is a separate file: p4-02-receiving-grants.txt.
+
+WHAT PROVES WHAT IN THIS FILE. Sections 0-3 are a captured transcript - they
+show the state of this server once. Section 4 is the part that keeps being
+true: ReceivingSchemaTests re-proves every behavioural claim below on every
+run of scripts/run-tests.ps1, on any machine, after any restore. Where the
+two overlap, the test is the authority and the transcript is the
+illustration - the same relationship P3-02's evidence establishes for
+PurchaseOrderSchemaTests.
+
+No ADR is owed by this card (unlike P4-01 and P4-04).
+
+
+===============================================================================
+0. Baseline
+===============================================================================
+
+$ mysql -u root -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='merchandising';"
+22
+
+$ mysql -u root -e "SELECT MigrationId, Succeeded FROM merchandising.SchemaMigrations ORDER BY MigrationId;"
+0001_foundation 1 / 0002_authentication 1 / 0003_backup 1 / 0004_maintenance 1
+/ 0005_identity 1 / 0006_product-master 1 / 0007_suppliers 1
+/ 0008_purchase-orders 1
+
+
+===============================================================================
+1. Apply migration 0009_receiving as merch_migrator
+===============================================================================
+
+$ ./src/Merchandising.Maintenance/bin/Debug/net10.0/Merchandising.Maintenance.exe migrate
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0009_receiving
+
+  [PASS] applies clean on a database already carrying 0001-0008 (done-when
+         box 3, first half).
+
+$ mysql -u root -e "SELECT MigrationId, LEFT(Checksum,16), Succeeded FROM merchandising.SchemaMigrations ORDER BY MigrationId;"
+0001_foundation       43d946bee7a7d849  1
+0002_authentication   0a766f2d357fca90  1
+0003_backup           bfc9f02fbaa0e8ab  1
+0004_maintenance      24092a56d4af2657  1
+0005_identity         8895e6660b1d0259  1
+0006_product-master   dec848845838a15f  1
+0007_suppliers        b0224c9c9c51df5a  1
+0008_purchase-orders  c3ad038aeb326b62  1
+0009_receiving        a0a2e981e62bdeea  1
+
+  [PASS] recorded exactly once, with a SHA-256 checksum, on top of its eight
+         predecessors rather than in place of them (done-when box 3, second
+         half). Re-asserted every run by
+         Migration0009_IsRecordedExactlyOnce_AfterMigrations0001To0008.
+
+$ mysql -u root -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='merchandising';"
+26
+
+
+===============================================================================
+2. Shape check - all four tables, from SHOW CREATE TABLE
+===============================================================================
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE Receipts\G"
+
+CREATE TABLE `receipts` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `PurchaseOrderId` int(11) NOT NULL,
+  `ReceivedByUserId` int(11) NOT NULL,
+  `ReceivedAtUtc` datetime(6) NOT NULL,
+  `ReferenceNumber` varchar(50) NOT NULL,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  UNIQUE KEY `UQ_Receipts_ReferenceNumber` (`ReferenceNumber`),
+  KEY `FK_Receipts_PurchaseOrders` (`PurchaseOrderId`),
+  KEY `FK_Receipts_ReceivedBy` (`ReceivedByUserId`),
+  KEY `IX_Receipts_ReceivedAtUtc` (`ReceivedAtUtc`),
+  CONSTRAINT `FK_Receipts_PurchaseOrders` FOREIGN KEY (`PurchaseOrderId`) REFERENCES `purchaseorders` (`Id`),
+  CONSTRAINT `FK_Receipts_ReceivedBy` FOREIGN KEY (`ReceivedByUserId`) REFERENCES `users` (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] no RowVersion, no UpdatedAtUtc - Receipts is immutable once written,
+         the same shape 0001 gives StockMovements/AuditLogs, argued in the
+         migration's own header. ReferenceNumber is UNIQUE, distinct from the
+         ADR-007 idempotency key stored separately in IdempotencyKeys.
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE ReceiptLines\G"
+
+CREATE TABLE `receiptlines` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `ReceiptId` int(11) NOT NULL,
+  `PurchaseOrderLineId` int(11) NOT NULL,
+  `ProductId` int(11) NOT NULL,
+  `QuantityReceived` decimal(19,3) NOT NULL,
+  `Cost` decimal(19,4) NOT NULL,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  KEY `FK_ReceiptLines_Receipts` (`ReceiptId`),
+  KEY `FK_ReceiptLines_PurchaseOrderLines` (`PurchaseOrderLineId`),
+  KEY `FK_ReceiptLines_Products` (`ProductId`),
+  CONSTRAINT `FK_ReceiptLines_Products` FOREIGN KEY (`ProductId`) REFERENCES `products` (`Id`),
+  CONSTRAINT `FK_ReceiptLines_PurchaseOrderLines` FOREIGN KEY (`PurchaseOrderLineId`) REFERENCES `purchaseorderlines` (`Id`),
+  CONSTRAINT `FK_ReceiptLines_Receipts` FOREIGN KEY (`ReceiptId`) REFERENCES `receipts` (`Id`),
+  CONSTRAINT `CK_ReceiptLines_QuantityReceived` CHECK (`QuantityReceived` > 0),
+  CONSTRAINT `CK_ReceiptLines_Cost` CHECK (`Cost` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] ProductId is a direct column, not only reachable through
+         PurchaseOrderLineId - the same denormalized-capture precedent 0008
+         sets for PurchaseCost, argued in the migration header for spec
+         section 14's "Goods-receiving history" report.
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE PurchaseReturns\G"
+
+CREATE TABLE `purchasereturns` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `ReceiptId` int(11) NOT NULL,
+  `RequestedByUserId` int(11) NOT NULL,
+  `ApprovedByUserId` int(11) DEFAULT NULL,
+  `Status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `ReturnedAtUtc` datetime(6) NOT NULL,
+  `ApprovedAtUtc` datetime(6) DEFAULT NULL,
+  `ReferenceNumber` varchar(50) NOT NULL,
+  `RowVersion` bigint(20) NOT NULL DEFAULT 0,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  `UpdatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  UNIQUE KEY `UQ_PurchaseReturns_ReferenceNumber` (`ReferenceNumber`),
+  KEY `FK_PurchaseReturns_Receipts` (`ReceiptId`),
+  KEY `FK_PurchaseReturns_Requester` (`RequestedByUserId`),
+  KEY `FK_PurchaseReturns_Approver` (`ApprovedByUserId`),
+  KEY `IX_PurchaseReturns_Status` (`Status`),
+  KEY `IX_PurchaseReturns_ReturnedAtUtc` (`ReturnedAtUtc`),
+  CONSTRAINT `FK_PurchaseReturns_Approver` FOREIGN KEY (`ApprovedByUserId`) REFERENCES `users` (`Id`),
+  CONSTRAINT `FK_PurchaseReturns_Receipts` FOREIGN KEY (`ReceiptId`) REFERENCES `receipts` (`Id`),
+  CONSTRAINT `FK_PurchaseReturns_Requester` FOREIGN KEY (`RequestedByUserId`) REFERENCES `users` (`Id`),
+  CONSTRAINT `CK_PurchaseReturns_Status` CHECK (`Status` in ('Requested','Approved','Rejected'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] Status carries the same utf8mb4_bin scoping 0008 gives
+         PurchaseOrders.Status - spec section 10.1's "approval state" is a
+         stable identifier here too, mutable in place (RowVersion,
+         UpdatedAtUtc present, unlike Receipts). RequestedByUserId and
+         ApprovedByUserId are two separate, separately-FK'd columns, the
+         same ADR-017 section 6 shape as PurchaseOrders, kept available
+         before a self-approval rule for returns is decided.
+
+$ mysql -u root merchandising -e "SHOW CREATE TABLE PurchaseReturnLines\G"
+
+CREATE TABLE `purchasereturnlines` (
+  `Id` int(11) NOT NULL AUTO_INCREMENT,
+  `PurchaseReturnId` int(11) NOT NULL,
+  `ReceiptLineId` int(11) NOT NULL,
+  `ProductId` int(11) NOT NULL,
+  `QuantityReturned` decimal(19,3) NOT NULL,
+  `Cost` decimal(19,4) NOT NULL,
+  `Reason` varchar(255) NOT NULL,
+  `RemovesStock` tinyint(1) NOT NULL DEFAULT 1,
+  `CreatedAtUtc` datetime(6) NOT NULL,
+  PRIMARY KEY (`Id`),
+  KEY `FK_PurchaseReturnLines_PurchaseReturns` (`PurchaseReturnId`),
+  KEY `FK_PurchaseReturnLines_ReceiptLines` (`ReceiptLineId`),
+  KEY `FK_PurchaseReturnLines_Products` (`ProductId`),
+  CONSTRAINT `FK_PurchaseReturnLines_Products` FOREIGN KEY (`ProductId`) REFERENCES `products` (`Id`),
+  CONSTRAINT `FK_PurchaseReturnLines_PurchaseReturns` FOREIGN KEY (`PurchaseReturnId`) REFERENCES `purchasereturns` (`Id`),
+  CONSTRAINT `FK_PurchaseReturnLines_ReceiptLines` FOREIGN KEY (`ReceiptLineId`) REFERENCES `receiptlines` (`Id`),
+  CONSTRAINT `CK_PurchaseReturnLines_QuantityReturned` CHECK (`QuantityReturned` > 0),
+  CONSTRAINT `CK_PurchaseReturnLines_Cost` CHECK (`Cost` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+  [PASS] RemovesStock is spec section 10.1's "whether stock is removed",
+         TINYINT(1) matching the established boolean convention (0001,
+         0007). No database CHECK bounds QuantityReturned against "received
+         quantity less prior returns" - that bound is an aggregate over
+         every prior sibling row, which a MariaDB CHECK cannot express, and
+         is P4-08's job at the API, computed from committed rows, exactly as
+         that card's own text states.
+
+  [PASS] every table states COLLATE utf8mb4_unicode_ci explicitly (ADR-003);
+         money DECIMAL(19,4), quantities DECIMAL(19,3) (ADR-004), no
+         floating-point type anywhere.
+
+
+===============================================================================
+3. FOUR PARENT TABLE TYPES NAMED BY THE CARD, ALL PROVEN PROTECTED
+===============================================================================
+
+Done-when box 1 names PurchaseOrders, PurchaseOrderLines, Products and Users
+as the parents whose deletion must be refused. All four are proven below,
+plus the four new tables protecting each other where one is itself a parent
+(Receipts of ReceiptLines and PurchaseReturns; PurchaseReturns of
+PurchaseReturnLines; ReceiptLines of PurchaseReturnLines).
+
+
+===============================================================================
+4. Behaviour - ReceivingSchemaTests, 18/18 against the pinned server
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~ReceivingSchemaTests" --logger "console;verbosity=detailed"
+
+  Passed Migration0009_IsRecordedExactlyOnce_AfterMigrations0001To0008 [535 ms]
+  Passed DeletingAPurchaseOrderReferencedByAReceipt_IsRefusedWith1451 [77 ms]
+  Passed DeletingAUserReferencedByAReceipt_IsRefusedWith1451 [58 ms]
+  Passed DeletingAPurchaseOrderLineReferencedByAReceiptLine_IsRefusedWith1451 [78 ms]
+  Passed DeletingAProductReferencedByAReceiptLine_IsRefusedWith1451 [80 ms]
+  Passed DeletingAReceiptReferencedByAReceiptLine_IsRefusedWith1451 [89 ms]
+  Passed DeletingAReceiptReferencedByAPurchaseReturn_IsRefusedWith1451 [70 ms]
+  Passed DeletingAPurchaseReturnReferencedByALine_IsRefusedWith1451 [70 ms]
+  Passed DeletingAReceiptLineReferencedByAReturnLine_IsRefusedWith1451 [91 ms]
+  Passed TwoConcurrentInsertsSameReceiptReference_ExactlyOneSucceeds [85 ms]
+  Passed DecimalColumns_RoundTripBoundaryValuesExactly [79 ms]
+  Passed MoneyAndQuantityColumns_AreDeclaredAtTheRequiredPrecision [223 ms]
+  Passed StatusColumn_AcceptsEveryDeclaredName [55 ms]
+  Passed StatusColumn_RefusesAnUnknownOrMiscasedName [50 ms]
+  Passed MerchApi_CanInsertReceiving_AndUpdatePurchaseReturnStatus [63 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnAnyOfTheFourTables [53 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnTheThreeImmutableTables [53 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [28 ms]
+
+Test Run Successful. Total tests: 18, Passed: 18.
+
+Console output from the run, unedited:
+
+  P4-02 order delete (receipt exists) -> ERROR 1451: Cannot delete or update
+    a parent row: a foreign key constraint fails
+    (`merchandising`.`receipts`, CONSTRAINT `FK_Receipts_PurchaseOrders`
+    FOREIGN KEY (`PurchaseOrderId`) REFERENCES `purchaseorders` (`Id`))
+
+  P4-02 concurrent receipt-reference insert -> success | ERROR 1062
+
+  P4-02 return status 'requested' -> ERROR 4025
+  P4-02 return status 'Pending'   -> ERROR 4025
+  P4-02 return status ''          -> ERROR 4025
+
+-------------------------------------------------------------------------------
+
+  [PASS] DONE-WHEN BOX 1 - all four tables created; FKs to PurchaseOrders,
+         PurchaseOrderLines, Products and Users all prevent deletion, proven
+         with ERROR 1451 rather than asserted by inspection, all eight
+         attempted as merch_migrator (the one identity that holds DELETE -
+         attempting as merch_api would earn 1142 and never reach 1451,
+         proving the grant model instead of the constraint).
+
+  [PASS] DONE-WHEN BOX 2 - Receipts.ReferenceNumber unique at the DATABASE
+         under a genuine race: two inserts fired without awaiting between
+         them, on two separate connections, sharing one reference number -
+         exactly one succeeded and the other was refused 1062 by
+         UQ_Receipts_ReferenceNumber. The P2-07 / P3-02 shape. No API check
+         exists to bypass at this card, which is the point.
+
+  [PASS] DONE-WHEN BOX 3 - applies clean as merch_migrator on top of
+         0001-0008, recorded exactly once (section 1).
+
+  [PASS] DONE-WHEN BOX 4 - grants 0011 verified in
+         p4-02-receiving-grants.txt.
+
+  [PASS] DONE-WHEN BOX 5 - decimal round trip exact through every new
+         decimal column (ReceiptLines and PurchaseReturnLines), plus the
+         declared information_schema types checked separately (CLAUDE.md
+         section 6.3: a correctly stored value proves the value and never
+         the column).
+
+  [PASS] DONE-WHEN BOX 6 - full integration suite green (section 5).
+
+The 18 tests:
+
+  Migration0009_IsRecordedExactlyOnce_AfterMigrations0001To0008
+  DeletingAPurchaseOrderReferencedByAReceipt_IsRefusedWith1451
+  DeletingAUserReferencedByAReceipt_IsRefusedWith1451
+  DeletingAPurchaseOrderLineReferencedByAReceiptLine_IsRefusedWith1451
+  DeletingAProductReferencedByAReceiptLine_IsRefusedWith1451
+  DeletingAReceiptReferencedByAReceiptLine_IsRefusedWith1451
+  DeletingAReceiptReferencedByAPurchaseReturn_IsRefusedWith1451
+  DeletingAPurchaseReturnReferencedByALine_IsRefusedWith1451
+  DeletingAReceiptLineReferencedByAReturnLine_IsRefusedWith1451
+  TwoConcurrentInsertsSameReceiptReference_ExactlyOneSucceeds
+  DecimalColumns_RoundTripBoundaryValuesExactly
+  MoneyAndQuantityColumns_AreDeclaredAtTheRequiredPrecision
+  StatusColumn_AcceptsEveryDeclaredName
+  StatusColumn_RefusesAnUnknownOrMiscasedName
+  MerchApi_CanInsertReceiving_AndUpdatePurchaseReturnStatus
+  MerchApi_HasNoDeleteGrant_OnAnyOfTheFourTables
+  MerchApi_HasNoUpdateGrant_OnTheThreeImmutableTables
+  MerchApi_CannotAlterOrDropTheNewTables
+
+
+===============================================================================
+5. Full verification pass
+===============================================================================
+
+$ pwsh ./scripts/run-tests.ps1
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed!  - Failed: 0, Passed: 44, Skipped: 0, Total: 44
+
+  === Integration tests (real MariaDB) ===
+  Passed!  - Failed: 0, Passed: 231, Skipped: 0, Total: 231
+
+  All checks passed.
+
+Integration count 213 -> 231 (+18, exactly the 18 ReceivingSchemaTests
+methods this card adds - the 213 baseline is P4-01's own recorded total,
+p4-01-ledger-reconciliation.txt, not Phase 3's 211). Unit count unchanged at
+44 - this card adds no Domain code, only schema.
+
+
+===============================================================================
+6. What this card did NOT do
+===============================================================================
+
+No controller, no repository, no contract type, no client, no Domain enum
+for return statuses. P4-05 builds the first receiving endpoint and P4-08 the
+first purchase-return endpoint; until they exist, nothing in the running API
+reads or writes any of these four tables.
+
+The P2-03 authorization matrix suite is NOT extended by this card and its
+count is unchanged - the same note P3-02's evidence makes for the same
+reason: no route is added here, so there is no policy cell to assert.
+
+No self-approval rule is decided for PurchaseReturns.ApprovedByUserId. The
+column exists so that decision costs no new migration when P4-08 makes it;
+it is not decided here by accident.

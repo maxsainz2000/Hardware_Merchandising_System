@@ -111,7 +111,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. Migration then grants, and `0009` before `0010`.*
 
-### ⬜ P4-02 · Migration 0009 — `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines`, and grants 0011
+### ✅ P4-02 · Migration 0009 — `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines`, and grants 0011
 
 **Spec:** §11, §12 · **Files:** `db/migrations/0009_receiving.sql`, `db/grants/0011_receiving-grants.sql`
 
@@ -119,12 +119,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] All four tables created; foreign keys to `PurchaseOrders`, `PurchaseOrderLines`, `Products` and `Users` **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
-- [ ] Receipt reference is unique where the spec requires it, proven by a concurrent double-insert that bypasses any API check (the P2-07 / P3-02 shape) — `success | ERROR 1062`
-- [ ] Applies clean as `merch_migrator` on a database already carrying `0001`–`0008`; runner applies it exactly once
-- [ ] `db/grants/0011` applied **after**, lowercase table names, no `UPDATE`/`DELETE` beyond what the file argues for in its own header — and **nothing at all** added for `stockmovements` or `auditlogs` (ADR-013)
-- [ ] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns, **plus** the declared column types read back from `information_schema` — CLAUDE.md §6.3 means a correctly stored value proves the value and never the column
-- [ ] Integration suite green against pinned MariaDB
+- [x] All four tables created; foreign keys to `PurchaseOrders`, `PurchaseOrderLines`, `Products` and `Users` **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
+- [x] Receipt reference is unique where the spec requires it, proven by a concurrent double-insert that bypasses any API check (the P2-07 / P3-02 shape) — `success | ERROR 1062`
+- [x] Applies clean as `merch_migrator` on a database already carrying `0001`–`0008`; runner applies it exactly once
+- [x] `db/grants/0011` applied **after**, lowercase table names, no `UPDATE`/`DELETE` beyond what the file argues for in its own header — and **nothing at all** added for `stockmovements` or `auditlogs` (ADR-013)
+- [x] Round-trip test: `0.001` and `12345678901234.5678` exact through the new decimal columns, **plus** the declared column types read back from `information_schema` — CLAUDE.md §6.3 means a correctly stored value proves the value and never the column
+- [x] Integration suite green against pinned MariaDB
 
 **Evidence:** `evidence/phase-4/p4-02-receiving-schema.txt`, `evidence/phase-4/p4-02-receiving-grants.txt`
 
