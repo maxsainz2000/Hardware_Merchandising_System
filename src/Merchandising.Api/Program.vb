@@ -16,6 +16,7 @@ Imports Merchandising.Api.Hosting
 Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Procurement
+Imports Merchandising.Api.Receiving
 Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Infrastructure.Security
@@ -266,6 +267,11 @@ Public Module Program
         ' transaction that writes the order, its lines and the audit row, or
         ' none of them.
         builder.Services.AddScoped(Of PurchaseOrderService)()
+
+        ' P4-05 / ADR-006 + ADR-007 + ADR-020: receiving - the claim-first
+        ' transaction that writes the receipt, its lines, the stock effects,
+        ' the order's status transition and the audit row, or none of them.
+        builder.Services.AddScoped(Of ReceivingService)()
 
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.

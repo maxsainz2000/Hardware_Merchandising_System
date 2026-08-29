@@ -45,6 +45,7 @@ Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Maintenance
 Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
+Imports Merchandising.Contracts.Receiving
 Imports Merchandising.Contracts.Settings
 Imports Merchandising.Domain.Security
 Imports Merchandising.Infrastructure.Data
@@ -652,6 +653,54 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P4-05's receiving endpoint - Receiving.Confirm's first live route.
+    ''' Each probed order is created, submitted and approved fresh (SuperAdmin
+    ''' creates/submits, Admin approves - a different actor than the
+    ''' requester, ADR-017 section 6) so a receiving attempt has a real,
+    ''' receivable Approved order to act against. Every probe requests exactly
+    ''' the ordered quantity, so an ALLOWED role's call genuinely commits
+    ''' (FullyReceived), not merely reaches the handler.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function ReceivingConfirm_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.ReceivingConfirm)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim creatorToken As String = Await LoginAsync(client, RoleNames.SuperAdmin)
+            Dim approverToken As String = Await LoginAsync(client, RoleNames.Admin)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim order As PurchaseOrderResponse =
+                    Await CreateApprovedOrderAsync(client, creatorToken, approverToken, supplierId, productId)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using receiveResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/receipts", token, NewReceiveGoodsBody(order))
+                    Await AssertCellAsync("Receiving.Confirm", roleName, allowedRoles.Contains(roleName), receiveResponse)
+                End Using
+
+            Next
+
+            Dim anonymousOrder As PurchaseOrderResponse =
+                Await CreateApprovedOrderAsync(client, creatorToken, approverToken, supplierId, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/receipts", token:=Nothing, requestBody:=NewReceiveGoodsBody(anonymousOrder))
+                Await AssertUnauthenticatedAsync("Receiving.Confirm", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -905,6 +954,53 @@ Public Class AuthorizationMatrixTests
             Return created.Id
 
         End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P4-05: a fresh order created and submitted by <paramref name="creatorToken"/>
+    ''' then approved by <paramref name="approverToken"/> - a DIFFERENT actor,
+    ''' since self-approval is prohibited (ADR-017 section 6) and CreateDraftOrderAsync's
+    ''' caller is always SuperAdmin. Returns the full approved order, whose
+    ''' Lines carry the real, server-assigned PurchaseOrderLineIds
+    ''' ReceivingConfirm_MatrixMatchesPolicyRegistry addresses.
+    ''' </summary>
+    Private Async Function CreateApprovedOrderAsync(
+        client As HttpClient, creatorToken As String, approverToken As String, supplierId As Integer, productId As Integer) As Task(Of PurchaseOrderResponse)
+
+        Dim orderId As Integer = Await CreateDraftOrderAsync(client, creatorToken, supplierId, productId)
+
+        Using submitResponse As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/submit", creatorToken, requestBody:=Nothing)
+            Assert.AreEqual(
+                HttpStatusCode.OK, submitResponse.StatusCode,
+                "Fixture submit must succeed. Body: " & Await submitResponse.Content.ReadAsStringAsync())
+        End Using
+
+        Using approveResponse As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, $"/api/v1/purchase-orders/{orderId}/approve", approverToken, requestBody:=Nothing)
+            Assert.AreEqual(
+                HttpStatusCode.OK, approveResponse.StatusCode,
+                "Fixture approve must succeed. Body: " & Await approveResponse.Content.ReadAsStringAsync())
+            Return Await approveResponse.Content.ReadFromJsonAsync(Of PurchaseOrderResponse)()
+        End Using
+
+    End Function
+
+    ''' <summary>A fresh reference number and idempotency key per call - a matrix probe must never collide with, or replay, an earlier cell's committed receipt. Requests exactly the ordered quantity, so an allowed role's call genuinely moves the order to FullyReceived.</summary>
+    Private Shared Function NewReceiveGoodsBody(order As PurchaseOrderResponse) As ReceiveGoodsRequest
+
+        Return New ReceiveGoodsRequest With {
+            .PurchaseOrderId = order.Id,
+            .ReferenceNumber = "P2-03-GRN-" & Guid.NewGuid().ToString("N").Substring(0, 20),
+            .IdempotencyKey = Guid.NewGuid().ToString("d"),
+            .Lines = New List(Of ReceiveGoodsLineRequest) From {
+                New ReceiveGoodsLineRequest With {
+                    .PurchaseOrderLineId = order.Lines(0).Id,
+                    .QuantityReceived = order.Lines(0).OrderedQuantity,
+                    .Cost = order.Lines(0).PurchaseCost}
+            }
+        }
 
     End Function
 

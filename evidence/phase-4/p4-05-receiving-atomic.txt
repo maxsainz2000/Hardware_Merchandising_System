@@ -1,0 +1,239 @@
+P4-05 — Receive goods: receipt + lines + movements + balance + audit, in
+one transaction
+=========================================================================
+
+Files:
+  src/Merchandising.Contracts/Receiving/ReceiveGoodsRequest.vb
+  src/Merchandising.Contracts/Receiving/ReceiveGoodsLineRequest.vb
+  src/Merchandising.Contracts/Receiving/ReceiptResponse.vb
+  src/Merchandising.Contracts/Receiving/ReceiptLineResponse.vb
+  src/Merchandising.Infrastructure/Data/ReceiptRepository.vb
+  src/Merchandising.Infrastructure/Data/StockRepository.vb            (IncrementAsync added)
+  src/Merchandising.Infrastructure/Data/PurchaseOrderRepository.vb    (GetLinesForUpdateAsync, IncrementReceivedQuantityAsync added)
+  src/Merchandising.Api/Receiving/ReceivingService.vb
+  src/Merchandising.Api/Receiving/ReceivingOutcome.vb
+  src/Merchandising.Api/Controllers/ReceivingController.vb
+  src/Merchandising.Api/Program.vb                                    (DI registration)
+  src/tests/Merchandising.Tests.Integration/ReceivingTests.vb
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (ReceivingConfirm_MatrixMatchesPolicyRegistry added)
+
+-------------------------------------------------------------------------
+SECTION 0 — the design decisions confirmed with the user before
+implementing (see the /task P4-05 restatement)
+-------------------------------------------------------------------------
+
+  1. Route: POST /api/v1/receipts, its own resource rather than a
+     purchase-order sub-route (spec section 14's later "Goods-receiving
+     history" report reads receipts, not purchase-order actions).
+  2. Gated by Receiving.Confirm (InventoryAndAbove), pre-registered at
+     P3-01/P3-03 with no live route until this card.
+  3. No client-supplied productId (derived from the locked PurchaseOrderLine)
+     and no client-supplied receivedAtUtc (server stamps UtcNow).
+  4. Business logic lives in a new Merchandising.Api.Receiving.ReceivingService,
+     following the PurchaseOrderService/StockService split - the controller
+     owns HTTP shape only.
+  5. Partial-vs-Full is decided by locking EVERY line of the order
+     (PurchaseOrderRepository.GetLinesForUpdateAsync), projecting this
+     receipt's quantities onto them, and asking CanTransition for
+     ReceiveFully only if every line would land exactly at its ordered
+     quantity.
+  6. Over-receiving is NOT specially handled here. CK_PurchaseOrderLines_
+     ReceivedQuantity (P3-02) is the backstop; a violation propagates as an
+     unhandled MySqlException, caught by the existing
+     ExceptionHandlingMiddleware and returned as a safe, non-leaking 500
+     INTERNAL_ERROR. Turning this into a controlled 409 with a stable error
+     code is P4-07's job per tasks.md - this card's own Done-when list does
+     not ask for it.
+  7. A duplicate ReferenceNumber maps to 409 RECEIPT_REFERENCE_NUMBER_ALREADY_USED
+     (the clerk's own document number colliding is the caller's problem,
+     the same shape SupplierRepository uses for a duplicate name).
+
+-------------------------------------------------------------------------
+SECTION 1 — the transaction (ReceivingService.ReceiveAsync), one commit
+or none
+-------------------------------------------------------------------------
+
+  0. Claim the idempotency key (IdempotencyStore.TryClaimAsync) - a losing
+     claim replays the original committed receipt verbatim and audits
+     GoodsReceiptReplayed.
+  1. Lock the order's Status (PurchaseOrderRepository.GetStatusForUpdateAsync).
+  2. Lock EVERY line of the order (GetLinesForUpdateAsync) - not just the
+     ones this receipt touches, so two receipts racing against the same
+     order serialize on the Partial-vs-Full decision.
+  3. Validate every request line names a real line of THIS order
+     (LineNotFound otherwise - covers both "no such line" and "that line
+     belongs to a different order").
+  4. Project this receipt onto the locked lines; ReceiveFully only if every
+     line would then equal its OrderedQuantity, else ReceivePartially.
+     PurchaseOrderTransitions.CanTransition makes the actual decision -
+     this card adds no rule of its own (ADR-020, consumed not re-decided).
+  5. Insert the Receipts header (ReceiptRepository.InsertReceiptAsync) -
+     DuplicateReferenceNumber reported as an outcome, never an exception.
+  6. Per line: StockRepository.IncrementAsync (atomic upsert - a product
+     with no prior StockBalances row is handled by the same single
+     statement, never a separate read-then-insert-or-update); StockMovementWriter.WriteAsync;
+     ReceiptRepository.InsertReceiptLineAsync; PurchaseOrderRepository.IncrementReceivedQuantityAsync.
+  7. PurchaseOrderRepository.MarkStatusAsync writes the order's new status
+     (reused unchanged from P3-05 - no new status-writing code needed).
+  8. AuditLogs row (GoodsReceived).
+  9. IdempotencyStore.CompleteAsync stores the response payload.
+ 10. Commit.
+
+Unexpected exceptions are not caught (no Try around the transaction) - the
+identical arrangement PurchaseOrderService/StockService use: a genuine
+MySqlException propagates out through the enclosing `Using connection`,
+whose Dispose() severs the connection, and MariaDB rolls back whatever was
+still open (proven empirically at P1-12, relied on unchanged here).
+
+-------------------------------------------------------------------------
+SECTION 2 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "Exactly one atomic stock increase per line ... never a read-then-write"
+  ReceiveAsync_FreshProductNoPriorBalance_WritesOneMovementAndMatchingBalance
+    - a product with NO prior StockBalances row: one StockMovements row,
+      QuantityBefore=0.000, QuantityAfter=10.000, balance exactly 10.000.
+      Proves StockRepository.IncrementAsync's INSERT ... ON DUPLICATE KEY
+      UPDATE upsert, not a separate existence check.
+  ReceiveAsync_TwoLines_EachWritesItsOwnMovementAndBalance
+    - two lines, two distinct products, each gets exactly one movement and
+      the correct balance independently.
+
+Box: "Status moves through CanTransition only ... adds no status rule of
+its own"
+  ReceiveAsync_PartialQuantity_MovesOrderToPartiallyReceived
+  ReceiveAsync_MixedLinesOneFullOnePartial_StaysPartiallyReceived
+    - one line closes exactly, the other stays short: order stays
+      PartiallyReceived, proving the projection checks EVERY line, not just
+      the ones touched by a "did this call complete everything" shortcut.
+  ReceiveAsync_FreshProductNoPriorBalance_WritesOneMovementAndMatchingBalance
+    - full quantity -> FullyReceived.
+
+Box: "Receiving against a Cancelled, Draft or Submitted order is refused
+... asserted over every non-receivable state, not spot-checked"
+  ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode
+    - Draft, Submitted, Cancelled, Closed (short-closed after a partial
+      receipt) and FullyReceived, each asserted against the exact stable
+      code PurchaseOrderTransitions.RefusalCodeFor names
+      (PURCHASE_ORDER_INVALID_TRANSITION / _CANCELLED / _CLOSED /
+      _FULLY_RECEIVED) - five states, not one representative case.
+
+Box: "Idempotency key honoured per ADR-007: a repeated key returns the
+original committed receipt, never a second stock increase"
+  ReceiveAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockIncrease
+    - second call returns Replayed with the SAME receipt Id; balance stays
+      at 6.000 (not 12.000); exactly one Receipts row for the reference
+      number.
+
+Box: "All five effects commit together or not at all, proven by a
+forced-failure test in the P1-12/P2-08 shape"
+  ReceiveAsync_FaultInjectedBeforeCommit_RollsBackEveryEffect
+    - fault injected after the audit insert and idempotency completion
+      write, immediately before commit. Asserts, all in one test: balance
+      unchanged, zero StockMovements rows, zero Receipts rows (so the
+      reference number is free for a real retry), PurchaseOrderLines.
+      ReceivedQuantity unchanged, PurchaseOrders.Status unchanged, zero new
+      AuditLogs rows.
+
+Box: "The P4-01 reconciliation passes after the receipt, and is asserted
+in this card's own test, not only by the suite-wide fixture"
+  ReceiveAsync_Committed_LedgerReconciles
+    - calls LedgerReconciliation.FindDiscrepanciesAsync directly after a
+      committed receipt and asserts the touched product is not in the
+      result.
+
+Box: "Matrix suite extended for every route added - positive and negative
+cells, 403 not 401/404"
+  AuthorizationMatrixTests.ReceivingConfirm_MatrixMatchesPolicyRegistry
+    - SuperAdmin/Admin/InventoryClerk succeed (2xx, and the order genuinely
+      reaches FullyReceived - not merely "reached the handler");
+      ProcurementOfficer/Cashier refused 403 with a clean FORBIDDEN body;
+      anonymous refused 401 with a clean UNAUTHORIZED body
+      (AssertCleanErrorBodyAsync's existing leak check).
+
+Box: "Integration suite green"
+  See SECTION 3.
+
+Other refusals covered, beyond the Done-when list, because the service
+returns them as first-class outcomes:
+  ReceiveAsync_UnknownOrder_ReturnsPurchaseOrderNotFound
+  ReceiveAsync_UnknownLine_ReturnsLineNotFound
+  ReceiveAsync_LineBelongsToDifferentOrder_ReturnsLineNotFound        (line identity is scoped to the order being received against, spec section 10.1's "line identity")
+  ReceiveAsync_DuplicateReferenceNumber_Refused
+  ReceiveGoods_ValidRequestOverHttp_Returns201AndCommits              (controller/route/policy wiring, end to end)
+  ReceiveGoods_DuplicatePurchaseOrderLineIdInRequest_Returns400       (ADR-014 field-level shape validation)
+  ReceiveGoods_OverScaleQuantity_Returns400                           (ADR-004.1 - refused before a connection is opened, balance verified untouched)
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   267, Skipped:     0, Total:   267, Duration: 33 s
+
+All checks passed.
+
+(267 includes the AssemblyCleanup-driven P4-01 ledger reconciliation, which
+runs once after every integration-test assembly and would fail the whole
+run by name if this card's writes ever desynchronised StockMovements from
+StockBalances - it passed.)
+
+-------------------------------------------------------------------------
+SECTION 4 — this card's own tests in isolation, named
+-------------------------------------------------------------------------
+
+Command:
+  dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+    --configuration Debug --no-build --nologo \
+    --filter "FullyQualifiedName~ReceivingTests|FullyQualifiedName~ReceivingConfirm_MatrixMatchesPolicyRegistry" \
+    --logger "console;verbosity=normal"
+
+  Passed ReceivingConfirm_MatrixMatchesPolicyRegistry [1 s]
+  Passed ReceiveAsync_FreshProductNoPriorBalance_WritesOneMovementAndMatchingBalance [75 ms]
+  Passed ReceiveAsync_TwoLines_EachWritesItsOwnMovementAndBalance [43 ms]
+  Passed ReceiveAsync_PartialQuantity_MovesOrderToPartiallyReceived [38 ms]
+  Passed ReceiveAsync_MixedLinesOneFullOnePartial_StaysPartiallyReceived [39 ms]
+  Passed ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode [117 ms]
+  Passed ReceiveAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockIncrease [49 ms]
+  Passed ReceiveAsync_FaultInjectedBeforeCommit_RollsBackEveryEffect [78 ms]
+  Passed ReceiveAsync_Committed_LedgerReconciles [46 ms]
+  Passed ReceiveAsync_UnknownOrder_ReturnsPurchaseOrderNotFound [12 ms]
+  Passed ReceiveAsync_UnknownLine_ReturnsLineNotFound [31 ms]
+  Passed ReceiveAsync_LineBelongsToDifferentOrder_ReturnsLineNotFound [52 ms]
+  Passed ReceiveAsync_DuplicateReferenceNumber_Refused [48 ms]
+  Passed ReceiveGoods_ValidRequestOverHttp_Returns201AndCommits [215 ms]
+  Passed ReceiveGoods_DuplicatePurchaseOrderLineIdInRequest_Returns400 [173 ms]
+  Passed ReceiveGoods_OverScaleQuantity_Returns400 [167 ms]
+
+Test Run Successful.
+Total tests: 16
+     Passed: 16
+
+-------------------------------------------------------------------------
+SECTION 5 — what P4-05 deliberately does NOT own
+-------------------------------------------------------------------------
+
+  - Partial receiving ACCUMULATING ACROSS SEPARATE receipts (two distinct
+    POST calls against the same line) - P4-06. This card's own
+    ReceiveAsync_PartialQuantity/MixedLines tests prove the projection and
+    status decision are correct for a single receipt; P4-06 exercises the
+    same PurchaseOrderLines.ReceivedQuantity accumulation across multiple
+    calls.
+  - Turning the CK_PurchaseOrderLines_ReceivedQuantity backstop into a
+    controlled 409 with its own stable error code - P4-07.
+  - Purchase returns - P4-08.

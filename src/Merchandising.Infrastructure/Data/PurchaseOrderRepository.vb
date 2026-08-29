@@ -279,6 +279,96 @@ Namespace Data
         End Function
 
         ''' <summary>
+        ''' P4-05: locks every line of <paramref name="purchaseOrderId"/> with
+        ''' <c>SELECT ... FOR UPDATE</c>, inside <paramref name="transaction"/>.
+        ''' ReceivingService reads the WHOLE order's lines this way, not just
+        ''' the ones a given receipt touches - deciding ReceivePartially vs.
+        ''' ReceiveFully (ADR-020) requires knowing whether EVERY line will be
+        ''' at its ordered quantity after this receipt, and two receipts
+        ''' racing against the same order (even against different lines) must
+        ''' serialize on that decision rather than each computing it from a
+        ''' stale read. The same "lock, then decide, then write" shape
+        ''' <see cref="GetStatusForUpdateAsync"/> already uses for the status
+        ''' column.
+        ''' </summary>
+        Public Shared Async Function GetLinesForUpdateAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            purchaseOrderId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of IReadOnlyList(Of PurchaseOrderLine))
+
+            Dim lines As New List(Of PurchaseOrderLine)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "SELECT Id, PurchaseOrderId, LineNumber, ProductId, OrderedQuantity, PurchaseCost, " &
+                    "       ReceivedQuantity, RowVersion, CreatedAtUtc, UpdatedAtUtc " &
+                    "  FROM PurchaseOrderLines " &
+                    " WHERE PurchaseOrderId = @purchaseOrderId " &
+                    " ORDER BY LineNumber " &
+                    " FOR UPDATE;"
+                command.Parameters.AddWithValue("@purchaseOrderId", purchaseOrderId)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        lines.Add(New PurchaseOrderLine With {
+                            .Id = reader.GetInt32(reader.GetOrdinal("Id")),
+                            .PurchaseOrderId = reader.GetInt32(reader.GetOrdinal("PurchaseOrderId")),
+                            .LineNumber = reader.GetInt32(reader.GetOrdinal("LineNumber")),
+                            .ProductId = reader.GetInt32(reader.GetOrdinal("ProductId")),
+                            .OrderedQuantity = reader.GetDecimal(reader.GetOrdinal("OrderedQuantity")),
+                            .PurchaseCost = reader.GetDecimal(reader.GetOrdinal("PurchaseCost")),
+                            .ReceivedQuantity = reader.GetDecimal(reader.GetOrdinal("ReceivedQuantity")),
+                            .RowVersion = reader.GetInt64(reader.GetOrdinal("RowVersion")),
+                            .CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("CreatedAtUtc")),
+                            .UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("UpdatedAtUtc"))
+                        })
+                    End While
+                End Using
+            End Using
+
+            Return lines
+
+        End Function
+
+        ''' <summary>
+        ''' P4-05: accumulates <paramref name="quantityReceived"/> onto one
+        ''' line's ReceivedQuantity. The affected-row count here is a
+        ''' defensive check, not the mechanism that prevents a lost update -
+        ''' <see cref="GetLinesForUpdateAsync"/> already holds the row lock
+        ''' (same arrangement as <see cref="MarkStatusAsync"/>). 0008's
+        ''' CK_PurchaseOrderLines_ReceivedQuantity is the last-resort backstop
+        ''' against over-receiving (ADR-013); ReceivingService computes the
+        ''' remaining quantity from the locked read before ever reaching this
+        ''' call, so reaching the constraint here would mean that computation
+        ''' was wrong, not that a caller supplied a bad quantity.
+        ''' </summary>
+        Public Shared Async Function IncrementReceivedQuantityAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            purchaseOrderLineId As Integer,
+            quantityReceived As Decimal,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE PurchaseOrderLines " &
+                    "   SET ReceivedQuantity = ReceivedQuantity + @quantityReceived, " &
+                    "       RowVersion = RowVersion + 1, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @id;"
+                command.Parameters.AddWithValue("@quantityReceived", quantityReceived)
+                command.Parameters.AddWithValue("@id", purchaseOrderLineId)
+
+                Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+                Return affectedRows = 1
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Reads one order with every line, ordered by LineNumber. Nothing if
         ''' no such order exists. <paramref name="transaction"/> is optional so
         ''' the creating transaction can read back what it has just written,

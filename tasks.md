@@ -176,7 +176,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. One worker, in order — each card consumes the last.*
 
-### ⬜ P4-05 · Receive goods: receipt + lines + movements + balance + audit, in one transaction 🎯
+### ✅ P4-05 · Receive goods: receipt + lines + movements + balance + audit, in one transaction 🎯
 
 **Spec:** §10.1, §11 · **Closes:** G-12 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`, `src/Merchandising.Contracts/Receiving/`
 
@@ -184,14 +184,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Exactly **one** atomic stock increase per line, using the ADR-006 conditional update with the affected-row count verified before returning success — never a read-then-write
-- [ ] Status moves through `CanTransition` only (ADR-020); the controller adds no status rule of its own
-- [ ] Receiving against a `Cancelled`, `Draft` or `Submitted` order is refused with the stable error code P3-01 assigned — asserted over every non-receivable state, not spot-checked
-- [ ] Idempotency key honoured per ADR-007: a repeated key returns the original committed receipt, never a second stock increase
-- [ ] All five effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 shape
-- [ ] The P4-01 reconciliation passes after the receipt, and is asserted **in this card's own test**, not only by the suite-wide fixture
-- [ ] **Matrix suite extended** for every route added — positive and negative cells, 403 not 401/404
-- [ ] Integration suite green
+- [x] Exactly **one** atomic stock increase per line, using the ADR-006 conditional update with the affected-row count verified before returning success — never a read-then-write ⚠ an increase has no insufficiency case to verify a row count against; `StockRepository.IncrementAsync` is the equivalent one-statement atomic upsert (`INSERT ... ON DUPLICATE KEY UPDATE`), needed because a product can reach receiving with no prior `StockBalances` row at all
+- [x] Status moves through `CanTransition` only (ADR-020); the controller adds no status rule of its own
+- [x] Receiving against a `Cancelled`, `Draft` or `Submitted` order is refused with the stable error code P3-01 assigned — asserted over every non-receivable state, not spot-checked (`ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode`: Draft, Submitted, Cancelled, Closed, FullyReceived)
+- [x] Idempotency key honoured per ADR-007: a repeated key returns the original committed receipt, never a second stock increase
+- [x] All five effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 shape
+- [x] The P4-01 reconciliation passes after the receipt, and is asserted **in this card's own test**, not only by the suite-wide fixture
+- [x] **Matrix suite extended** for every route added — positive and negative cells, 403 not 401/404
+- [x] Integration suite green (267/267, including the AssemblyCleanup ledger reconciliation)
 
 **Evidence:** `evidence/phase-4/p4-05-receiving-atomic.txt`
 
