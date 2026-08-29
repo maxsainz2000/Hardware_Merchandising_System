@@ -39,11 +39,19 @@ Namespace Controllers
         ''' <summary>
         ''' Every registered setting, current value if one has been written
         ''' or its registry default otherwise. Any authenticated caller -
-        ''' currency code and rounding policy are system-wide operational
-        ''' facts a client legitimately needs to display (spec section 12),
-        ''' not a secret gated behind an administrative policy the way
-        ''' writing them is.
+        ''' currency code, rounding policy and the adjustment threshold are
+        ''' system-wide operational facts a client legitimately needs to
+        ''' display (spec section 12), not a secret gated behind an
+        ''' administrative policy the way writing them is.
         ''' </summary>
+        ''' <remarks>
+        ''' P4-10: the prefix filter this used to pass LoadByPrefixAsync
+        ''' ("currency.") stopped being correct the moment SystemSettingRegistry
+        ''' grew a key outside that prefix (Keys.AdjustmentApprovalThreshold,
+        ''' "inventory."). An empty prefix matches every row (LIKE '%'), so
+        ''' every registered key's STORED value - not silently its default -
+        ''' is what a caller sees here, whichever prefix it happens to use.
+        ''' </remarks>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName)>
         <HttpGet>
         Public Async Function GetSettings() As Task(Of IActionResult)
@@ -51,7 +59,7 @@ Namespace Controllers
             Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
 
                 Dim stored As Dictionary(Of String, String) =
-                    Await SystemSettingsRepository.LoadByPrefixAsync(connection, "currency.", HttpContext.RequestAborted)
+                    Await SystemSettingsRepository.LoadByPrefixAsync(connection, String.Empty, HttpContext.RequestAborted)
 
                 Dim response As New List(Of SystemSettingResponse)
 

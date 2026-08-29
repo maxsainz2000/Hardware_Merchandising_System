@@ -268,7 +268,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-09-stock-counts.txt`
 
-### ⬜ P4-10 · Adjustments with threshold-based approval
+### ✅ P4-10 · Adjustments with threshold-based approval
 
 **Spec:** §10.2, §11 · **Files:** `src/Merchandising.Api/Controllers/AdjustmentsController.vb`, `src/Merchandising.Infrastructure/Data/AdjustmentRepository.vb`, `src/Merchandising.Domain/Inventory/`
 
@@ -276,12 +276,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The threshold is read from `SystemSettings` and a changed setting changes the outcome, asserted rather than assumed
-- [ ] An adjustment at or above the threshold **cannot** be approved by its own requester — reusing ADR-017 §6's `IOwnershipResource` / `AuthorizeAsync` mechanism, **not a new check** (the P3-04 precedent is binding here)
-- [ ] Applying an adjustment writes movement + balance + audit in one transaction, proven by a forced-failure test
-- [ ] A rejected or pending adjustment changes no stock — asserted on the balance and the ledger
-- [ ] The P4-01 reconciliation passes after every applied adjustment
-- [ ] **Matrix suite extended** — `Adjustments.Request` and `Adjustments.Approve`; integration suite green
+- [x] The threshold is read from `SystemSettings` and a changed setting changes the outcome, asserted rather than assumed
+- [x] An adjustment at or above the threshold **cannot** be approved by its own requester — reusing ADR-017 §6's `IOwnershipResource` / `AuthorizeAsync` mechanism, **not a new check** (the P3-04 precedent is binding here)
+- [x] Applying an adjustment writes movement + balance + audit in one transaction, proven by a forced-failure test
+- [x] A rejected or pending adjustment changes no stock — asserted on the balance and the ledger
+- [x] The P4-01 reconciliation passes after every applied adjustment
+- [x] **Matrix suite extended** — `Adjustments.Request` and `Adjustments.Approve`; integration suite green
 
 **Evidence:** `evidence/phase-4/p4-10-adjustments.txt`
 

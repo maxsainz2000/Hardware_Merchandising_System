@@ -14,11 +14,21 @@
 ' Definitions entry, the same way PolicyRegistry.Definitions grows one
 ' operation at a time.
 '
+' P4-10 adds exactly that third entry: "inventory.adjustmentThreshold",
+' spec section 10.2's "the configured threshold" for stock-adjustment
+' approval ("The threshold lives in SystemSettings, not in a constant" -
+' the card's own "Do" text). AdjustmentService reads it directly through
+' SystemSettingsRepository (never through this controller's GET/PUT), but
+' registering it here means it is also visible and administrable through
+' the existing GET/PUT /api/v1/admin/settings surface for free - the same
+' mechanism, not a new one.
+'
 ' Pure data plus validation, no ASP.NET Core or database dependency -
 ' Domain "depends on nothing" (CLAUDE.md section 4), the same shape as
 ' Merchandising.Domain.Security.PolicyRegistry.
 
 Imports System.Collections.Generic
+Imports System.Globalization
 Imports System.Linq
 
 Namespace Configuration
@@ -54,6 +64,7 @@ Namespace Configuration
         Public NotInheritable Class Keys
             Public Const CurrencyCode As String = "currency.code"
             Public Const CurrencyRoundingPolicy As String = "currency.roundingPolicy"
+            Public Const AdjustmentApprovalThreshold As String = "inventory.adjustmentThreshold"
         End Class
 
         ''' <summary>The two rounding policy names this system recognizes - the two <see cref="MidpointRounding"/> members .NET actually offers.</summary>
@@ -85,6 +96,12 @@ Namespace Configuration
                 AddressOf ValidateRoundingPolicy,
                 $"One of '{RoundingPolicyNames.AwayFromZero}' or '{RoundingPolicyNames.ToEven}'."))
 
+            collected.Add(New SystemSettingDefinition(
+                Keys.AdjustmentApprovalThreshold,
+                "10.000",
+                AddressOf ValidateAdjustmentApprovalThreshold,
+                "A non-negative quantity, DECIMAL(19,3) scale. A stock adjustment whose |variance| is at or above this value requires a second person's approval."))
+
             Return collected.AsReadOnly()
 
         End Function
@@ -114,6 +131,27 @@ Namespace Configuration
 
         Private Shared Function IsAsciiUpperLetter(character As Char) As Boolean
             Return character >= "A"c AndAlso character <= "Z"c
+        End Function
+
+        ''' <summary>ADR-004.1: a stored setting value is text, so its own scale must be validated the same way an API-boundary quantity is - never trusted just because it parses.</summary>
+        Private Shared Function ValidateAdjustmentApprovalThreshold(value As String) As String
+
+            Dim parsed As Decimal
+
+            If Not Decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, parsed) Then
+                Return "The adjustment approval threshold must be a decimal number."
+            End If
+
+            If parsed < 0D Then
+                Return "The adjustment approval threshold cannot be negative."
+            End If
+
+            If Not DecimalScaleGuard.IsAtQuantityScale(parsed) Then
+                Return $"The adjustment approval threshold must have no more than {DecimalScaleGuard.QuantityScale} decimal places."
+            End If
+
+            Return Nothing
+
         End Function
 
     End Class

@@ -1,0 +1,178 @@
+P4-10 — Adjustments with threshold-based approval
+=========================================================================
+
+Files:
+  src/Merchandising.Domain/Inventory/AdjustmentThresholdPolicy.vb
+  src/Merchandising.Domain/Entities/StockAdjustment.vb
+  src/Merchandising.Domain/Configuration/SystemSettingRegistry.vb        (Keys.AdjustmentApprovalThreshold added)
+  src/Merchandising.Infrastructure/Data/AdjustmentRepository.vb
+  src/Merchandising.Infrastructure/Data/SystemSettingsRepository.vb     (ReadAsync added)
+  src/Merchandising.Contracts/Inventory/RequestAdjustmentRequest.vb
+  src/Merchandising.Contracts/Inventory/AdjustmentResponse.vb
+  src/Merchandising.Api/Inventory/AdjustmentService.vb
+  src/Merchandising.Api/Inventory/AdjustmentOutcome.vb
+  src/Merchandising.Api/Controllers/AdjustmentsController.vb
+  src/Merchandising.Api/Controllers/SystemSettingsController.vb        (GetSettings prefix-filter bug fixed)
+  src/Merchandising.Api/Program.vb                                      (DI registration)
+  src/tests/Merchandising.Tests.Integration/AdjustmentTests.vb
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (AdjustmentsRequest extended, AdjustmentsApprove added)
+
+-------------------------------------------------------------------------
+SECTION 0 — design decisions confirmed with the user before implementing
+-------------------------------------------------------------------------
+
+1. Approve and Reject are two separate routes, both gated by the single
+   Adjustments.Approve policy (PolicyRegistry defines only one policy for
+   reviewing a pending adjustment - there is no split Request/Approve/
+   Reject trio the way PurchaseOrders has more transitions).
+
+2. The self-approval veto (ADR-017 section 6) applies ONLY to Approve, not
+   Reject. Spec section 9 says "cannot approve their own adjustment" -
+   nothing about rejecting one's own request - so RejectAdjustment carries
+   a plain declarative <Authorize(Policy:=Adjustments.Approve)> with no
+   IAuthorizationService dance.
+
+3. The schema's "Approved" StockAdjustmentStatus name is never actually
+   persisted as a resting state. ApproveAsync writes Status = Applied
+   directly, with ApprovedByUserId set in the SAME UPDATE - the same
+   collapsing P4-08 did for purchase returns (Requested/Approved -> one
+   atomic command). Nothing outside AdjustmentService could ever observe a
+   row sitting at Approved.
+
+4. The threshold is administered through the EXISTING SystemSettingRegistry/
+   GET|PUT /api/v1/admin/settings surface (Configuration.Manage,
+   SuperAdmin-only) - P2-05's own header names this as exactly the intended
+   extension point ("a future card that needs another administered setting
+   adds its own Definitions entry").
+
+-------------------------------------------------------------------------
+SECTION 1 — a real defect found and fixed while building this
+-------------------------------------------------------------------------
+
+SystemSettingsController.GetSettings() loaded settings with
+SystemSettingsRepository.LoadByPrefixAsync(connection, "currency.", ...) -
+correct while SystemSettingRegistry only had two "currency.*" keys, but
+silently wrong the moment a THIRD key outside that prefix was registered
+(Keys.AdjustmentApprovalThreshold, "inventory.adjustmentThreshold"): a
+caller GETting settings would see the threshold's DEFAULT forever, never
+its actually-stored value, even after a successful PUT. Fixed by loading
+with an empty prefix (LIKE '%', matching every row) - the response still
+only ever surfaces keys named in SystemSettingRegistry.Definitions, so
+nothing new is exposed, only the reading of an already-registered key made
+correct. Caught by inspection while wiring the new key in, not by a test
+failure - RolePermissionMatrixDocumentationTests-style generated-doc
+proofs exist for policies, but P2-05 never had an equivalent for this
+controller because it only ever had "currency."-prefixed keys until now.
+
+-------------------------------------------------------------------------
+SECTION 2 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "The threshold is read from SystemSettings and a changed setting
+changes the outcome, asserted rather than assumed"
+  RequestAsync_ChangedThreshold_ChangesOutcome
+    - the IDENTICAL 5.000 variance magnitude, against two fresh products
+      (no balance or idempotency-key confound possible): threshold=10.000
+      -> Applied (below); threshold=1.000 -> Pending (at/above). The
+      threshold change is the only variable that moved.
+  RequestAsync_BelowThreshold_AppliesImmediately
+  RequestAsync_AtOrAboveThreshold_RecordsPendingNoStockEffect
+    - the "at or above" boundary itself: |-10.000| against a threshold of
+      exactly 10.000 counts as exceeding it (the card's own wording).
+
+Box: "An adjustment at or above the threshold cannot be approved by its
+own requester - reusing ADR-017 section 6's IOwnershipResource /
+AuthorizeAsync mechanism, not a new check"
+  ApproveAdjustment_SameUserAsRequester_Refused403AndAudited
+    - two real users over HTTP; the requester is refused 403 approving
+      their own Pending adjustment, and the refusal itself is audited.
+  ApproveAdjustment_DifferentAuthorizedUser_SucceedsAndIsAttributable
+    - a DIFFERENT Admin succeeds; RequestedByUserId/ApprovedByUserId are
+      both correctly attributed.
+  ApproveAdjustment_RoleNotAllowed_StillRefused403
+    - an InventoryClerk (not the requester) is still refused for a ROLE
+      reason - the two denial paths are distinct, same as
+      PurchaseOrderApprovalTests' equivalent proof.
+  StockAdjustment.vb implements IOwnershipResource on RequestedByUserId -
+  literally the same interface PurchaseOrder.vb implements; AdjustmentsController.
+  ApproveAdjustment calls IAuthorizationService.AuthorizeAsync(User,
+  adjustment, Adjustments.Approve) - the identical call
+  PurchaseOrdersController.ApprovePurchaseOrder makes, not a new mechanism.
+
+Box: "Applying an adjustment writes movement + balance + audit in one
+transaction, proven by a forced-failure test"
+  RequestAsync_FaultInjectedBeforeCommit_RollsBackEverything
+    - the below-threshold immediate-apply path: fault after the audit
+      insert rolls back the StockAdjustments insert itself, the balance
+      change and the StockMovements/AuditLogs rows together - zero trace
+      of any of it remains.
+  ApproveAsync_FaultInjectedBeforeCommit_RollsBackEverything
+    - the Approve path: fault after the audit insert leaves the
+      adjustment Pending, the balance untouched, and zero
+      StockMovements/AuditLogs rows for that correlation Id.
+
+Box: "A rejected or pending adjustment changes no stock - asserted on the
+balance and the ledger"
+  RejectAsync_PendingAdjustment_ChangesNoStock
+    - balance untouched; zero StockMovements rows with Reason=
+      'StockAdjustment' for the product.
+  ApproveAsync_InsufficientStock_LeavesStatusPendingAndBalanceUntouched
+    - stock consumed by something else between request and approval;
+      Approve is refused, the adjustment stays Pending, balance untouched.
+  RequestAsync_BelowThresholdInsufficientStock_RefusesAndWritesNothing
+    - the below-threshold immediate-apply path's OWN insufficient-stock
+      case: the whole transaction rolls back, so there is not even a
+      Pending row left behind - CountAdjustmentRowsAsync reads 0.
+
+Box: "The P4-01 reconciliation passes after every applied adjustment"
+  RequestAsync_AppliedBelowThreshold_LedgerReconciles
+  ApproveAsync_Applied_LedgerReconciles
+    - LedgerReconciliation.FindDiscrepanciesAsync called directly after
+      each apply path; the touched product is absent from the result.
+
+Box: "Matrix suite extended - Adjustments.Request and Adjustments.Approve;
+integration suite green"
+  AuthorizationMatrixTests.AdjustmentsRequest_MatrixMatchesPolicyRegistry
+    - extended (the same "one policy, a second live route, extend the
+      existing method" shape PurchaseOrdersTrack's list/history use) with
+      a genuine POST /api/v1/adjustments probe per role, alongside the
+      pre-existing P1-11 stock-decrement probe.
+  AuthorizationMatrixTests.AdjustmentsApprove_MatrixMatchesPolicyRegistry
+    - Adjustments.Approve's first live route. The threshold is fixed to a
+      known value first (SetAdjustmentThresholdDirectlyAsync) so this test
+      never assumes the registry default routes to Pending - the same
+      "asserted rather than assumed" spirit as box 1. SuperAdmin/Admin
+      succeed and genuinely commit (Applied); ProcurementOfficer/
+      InventoryClerk/Cashier refused 403; anonymous refused 401.
+  Full suite green - see SECTION 3.
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s) (this card's own files) / pre-existing MSTEST0037 style
+    suggestions in older test files, unrelated to this change
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   328, Skipped:     0, Total:   328, Duration: 48 s
+
+All checks passed.
+
+(328 = 307 from P4-09's commit + 20 AdjustmentTests + 1 new matrix test.
+Includes the AssemblyCleanup-driven P4-01 ledger reconciliation, which
+passed.)
+
+-------------------------------------------------------------------------

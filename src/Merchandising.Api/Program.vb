@@ -284,6 +284,14 @@ Public Module Program
         ' block a sale or a receipt on the same product.
         builder.Services.AddScoped(Of StockCountService)()
 
+        ' P4-10 / ADR-006 + ADR-007 + ADR-017 section 6: stock adjustments -
+        ' Request/Approve/Reject, each its own transaction. Below the
+        ' SystemSettings-configured threshold, Request applies the stock
+        ' effect immediately; at or above it, Approve does (self-approval
+        ' vetoed by AdjustmentsController via IAuthorizationService, the
+        ' P3-04 mechanism - never a new check here).
+        builder.Services.AddScoped(Of AdjustmentService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

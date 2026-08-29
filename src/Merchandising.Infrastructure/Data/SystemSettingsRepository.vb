@@ -106,6 +106,33 @@ Namespace Data
         End Function
 
         ''' <summary>
+        ''' P4-10: a plain, non-locking read of one setting's current value,
+        ''' inside the caller's transaction - unlike <see cref="ReadForUpdateAsync"/>,
+        ''' this takes no <c>FOR UPDATE</c> lock. AdjustmentService reads the
+        ''' approval threshold this way: deciding whether ONE adjustment
+        ''' request exceeds it does not need to serialize against a
+        ''' concurrent administrator writing a NEW threshold value the way
+        ''' UpdateSetting's own read-modify-write of that same row does.
+        ''' </summary>
+        ''' <returns>Nothing if the key has never been written.</returns>
+        Public Shared Async Function ReadAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            settingKey As String,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of String)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT SettingValue FROM SystemSettings WHERE SettingKey = @settingKey;"
+                command.Parameters.AddWithValue("@settingKey", settingKey)
+
+                Dim value As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                Return If(value Is Nothing OrElse value Is DBNull.Value, Nothing, CStr(value))
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' P2-05: writes one setting's value, inserting a new row or
         ''' updating the existing one in a single statement - never
         ''' read-then-write, the same discipline CLAUDE.md section 5

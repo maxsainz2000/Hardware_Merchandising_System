@@ -47,6 +47,7 @@ Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
 Imports Merchandising.Contracts.Receiving
 Imports Merchandising.Contracts.Settings
+Imports Merchandising.Domain.Configuration
 Imports Merchandising.Domain.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Users
@@ -74,23 +75,28 @@ Public Class AuthorizationMatrixTests
     ''' the coverage test's "authenticated, no policy" bucket fails instead
     ''' of joining this list silently.
     '''
-    ''' The fourth entry is P3-04's PurchaseOrdersController.ApprovePurchaseOrder.
-    ''' PurchaseOrders.Approve carries ADR-017 section 6's resource-based
+    ''' The fourth and fifth entries are P3-04's
+    ''' PurchaseOrdersController.ApprovePurchaseOrder and P4-10's
+    ''' AdjustmentsController.ApproveAdjustment. PurchaseOrders.Approve and
+    ''' Adjustments.Approve both carry ADR-017 section 6's resource-based
     ''' SelfApprovalRequirement. A declarative &lt;Authorize(Policy:=...)&gt;
     ''' attribute evaluates that policy with resource=Nothing, so
     ''' SelfApprovalHandler (typed to IOwnershipResource) would never see a
     ''' matching resource and could never succeed - denying EVERY caller,
-    ''' always. So this action carries only &lt;Authorize&gt; (authentication)
-    ''' and calls IAuthorizationService.AuthorizeAsync(User, order, ...)
-    ''' itself once the order is loaded. It is still fully policy-gated - see
-    ''' PurchaseOrdersApprove_MatrixMatchesPolicyRegistry below - just not
+    ''' always. So each of these two actions carries only
+    ''' &lt;Authorize&gt; (authentication) and calls
+    ''' IAuthorizationService.AuthorizeAsync(User, resource, ...) itself once
+    ''' the resource is loaded. They are still fully policy-gated - see
+    ''' PurchaseOrdersApprove_MatrixMatchesPolicyRegistry and
+    ''' AdjustmentsApprove_MatrixMatchesPolicyRegistry below - just not
     ''' through this coverage test's declarative-attribute mechanism.
     ''' </summary>
     Private Shared ReadOnly AuthenticatedNoPolicyAllowlist As String() = {
         "Merchandising.Api.Controllers.AuthController.GetCurrentUser",
         "Merchandising.Api.Controllers.AuthController.Logout",
         "Merchandising.Api.Controllers.SystemSettingsController.GetSettings",
-        "Merchandising.Api.Controllers.PurchaseOrdersController.ApprovePurchaseOrder"
+        "Merchandising.Api.Controllers.PurchaseOrdersController.ApprovePurchaseOrder",
+        "Merchandising.Api.Controllers.AdjustmentsController.ApproveAdjustment"
     }
 
     Private Shared ReadOnly AllFiveRoles As String() = {
@@ -257,7 +263,15 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
-    ''' <summary>P1-11's stock-decrement proof endpoint, now behind Adjustments.Request.</summary>
+    ''' <summary>
+    ''' P1-11's stock-decrement proof endpoint, now behind Adjustments.Request -
+    ''' plus P4-10's real POST /api/v1/adjustments, the same "one policy, a
+    ''' second live route added later, extend the existing method" shape
+    ''' PurchaseOrdersTrack_MatrixMatchesPolicyRegistry uses for
+    ''' list/history. The adjustments probe uses a POSITIVE variance so it
+    ''' always auto-applies regardless of the current balance - no
+    ''' dependency on ResetStockBalanceDirectlyAsync's own baseline.
+    ''' </summary>
     <TestMethod>
     Public Async Function AdjustmentsRequest_MatrixMatchesPolicyRegistry() As Task
 
@@ -285,7 +299,19 @@ Public Class AuthorizationMatrixTests
 
                 Using response As HttpResponseMessage =
                     Await SendAsync(client, HttpMethod.Post, "/api/v1/inventory/stock/decrement", token, body)
-                    Await AssertCellAsync("Adjustments.Request", roleName, isAllowed, response)
+                    Await AssertCellAsync("Adjustments.Request (stock decrement)", roleName, isAllowed, response)
+                End Using
+
+                Dim adjustmentBody As New RequestAdjustmentRequest With {
+                    .ProductId = productId,
+                    .QuantityVariance = 1.000D,
+                    .Reason = $"P4-10 matrix probe ({roleName})",
+                    .IdempotencyKey = Guid.NewGuid().ToString("d")
+                }
+
+                Using adjustmentResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/adjustments", token, adjustmentBody)
+                    Await AssertCellAsync("Adjustments.Request (adjustments)", roleName, isAllowed, adjustmentResponse)
                 End Using
 
             Next
@@ -295,7 +321,64 @@ Public Class AuthorizationMatrixTests
             }
             Using anonymousResponse As HttpResponseMessage =
                 Await SendAsync(client, HttpMethod.Post, "/api/v1/inventory/stock/decrement", token:=Nothing, requestBody:=anonymousBody)
-                Await AssertUnauthenticatedAsync("Adjustments.Request", anonymousResponse)
+                Await AssertUnauthenticatedAsync("Adjustments.Request (stock decrement)", anonymousResponse)
+            End Using
+
+            Dim anonymousAdjustmentBody As New RequestAdjustmentRequest With {
+                .ProductId = productId, .QuantityVariance = 1.000D, .Reason = "P4-10 anonymous probe", .IdempotencyKey = Guid.NewGuid().ToString("d")
+            }
+            Using anonymousAdjustmentResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/adjustments", token:=Nothing, requestBody:=anonymousAdjustmentBody)
+                Await AssertUnauthenticatedAsync("Adjustments.Request (adjustments)", anonymousAdjustmentResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P4-10's approve endpoint - Adjustments.Approve's first live route.
+    ''' Every probed adjustment is requested fresh by the shared
+    ''' InventoryClerk fixture (never in Adjustments.Approve's allowed-role
+    ''' set, AdminAndAbove - so an InventoryClerk probe below is refused for
+    ''' a ROLE reason regardless of who requested it) with a variance far
+    ''' above a threshold this test fixes to a known small value first -
+    ''' Done-when box 1's own "asserted rather than assumed" spirit applied
+    ''' here too: this test never assumes the registry default routes to
+    ''' Pending. Self-approval itself is AdjustmentApprovalTests' job, with
+    ''' two real users; this isolates the ROLE dimension only, the same
+    ''' PurchaseOrdersApprove_MatrixMatchesPolicyRegistry shape.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function AdjustmentsApprove_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+        Await SetAdjustmentThresholdDirectlyAsync(1.000D)
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.AdjustmentsApprove)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim requesterToken As String = Await LoginAsync(client, RoleNames.InventoryClerk)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim adjustmentId As Integer = Await RequestPendingAdjustmentAsync(client, requesterToken, productId)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using approveResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/adjustments/{adjustmentId}/approve", token, requestBody:=Nothing)
+                    Await AssertCellAsync("Adjustments.Approve", roleName, allowedRoles.Contains(roleName), approveResponse)
+                End Using
+
+            Next
+
+            Dim anonymousAdjustmentId As Integer = Await RequestPendingAdjustmentAsync(client, requesterToken, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/adjustments/{anonymousAdjustmentId}/approve", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("Adjustments.Approve", anonymousResponse)
             End Using
 
         End Using
@@ -1241,6 +1324,61 @@ Public Class AuthorizationMatrixTests
                 Await transaction.CommitAsync()
 
             End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P4-10: fixes the adjustment approval threshold to a known value via
+    ''' SystemSettingsRepository.UpsertAsync directly - so
+    ''' AdjustmentsApprove_MatrixMatchesPolicyRegistry never depends on
+    ''' SystemSettingRegistry's own default ("asserted rather than assumed",
+    ''' the card's own Done-when box 1 wording, applied here too).
+    ''' </summary>
+    Private Async Function SetAdjustmentThresholdDirectlyAsync(threshold As Decimal) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+                Dim actorUserId As Integer
+                Using actorCommand As MySqlCommand = connection.CreateCommand()
+                    actorCommand.Transaction = transaction
+                    actorCommand.CommandText = "SELECT Id FROM Users WHERE Username = @username;"
+                    actorCommand.Parameters.AddWithValue("@username", FixtureUsername(RoleNames.SuperAdmin))
+                    actorUserId = CInt(Await actorCommand.ExecuteScalarAsync())
+                End Using
+
+                Await SystemSettingsRepository.UpsertAsync(
+                    connection, transaction, SystemSettingRegistry.Keys.AdjustmentApprovalThreshold,
+                    threshold.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture), actorUserId)
+
+                Await transaction.CommitAsync()
+
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>A fresh Pending adjustment over real HTTP - a variance well above SetAdjustmentThresholdDirectlyAsync's fixed threshold.</summary>
+    Private Async Function RequestPendingAdjustmentAsync(client As HttpClient, requesterToken As String, productId As Integer) As Task(Of Integer)
+
+        Dim body As New RequestAdjustmentRequest With {
+            .ProductId = productId,
+            .QuantityVariance = 50.000D,
+            .Reason = "P4-10 matrix approve-cell fixture",
+            .IdempotencyKey = Guid.NewGuid().ToString("d")
+        }
+
+        Using response As HttpResponseMessage = Await SendAsync(client, HttpMethod.Post, "/api/v1/adjustments", requesterToken, body)
+
+            Assert.AreEqual(
+                HttpStatusCode.Created, response.StatusCode,
+                "Fixture adjustment request must succeed. Body: " & Await response.Content.ReadAsStringAsync())
+
+            Dim created As AdjustmentResponse = Await response.Content.ReadFromJsonAsync(Of AdjustmentResponse)()
+            Assert.AreEqual("Pending", created.Status, "Fixture adjustment must be Pending - the threshold fix must have taken effect.")
+            Return created.Id
+
         End Using
 
     End Function
