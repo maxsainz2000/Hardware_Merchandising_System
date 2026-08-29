@@ -23,6 +23,7 @@
 ' create two rows. See ProductRepository's own header.
 
 Imports System.Collections.Generic
+Imports System.Data
 Imports System.Linq
 Imports System.Security.Claims
 Imports System.Threading.Tasks
@@ -174,7 +175,10 @@ Namespace Controllers
 
                 Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
 
-                Dim transaction As MySqlTransaction = Await connection.BeginTransactionAsync(HttpContext.RequestAborted)
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03).
+                Dim transaction As MySqlTransaction = Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)
 
                 Dim newProduct As New Product With {
                     .Sku = sku,
@@ -272,7 +276,10 @@ Namespace Controllers
 
                 Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
 
-                Dim transaction As MySqlTransaction = Await connection.BeginTransactionAsync(HttpContext.RequestAborted)
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03).
+                Dim transaction As MySqlTransaction = Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)
 
                 Dim outcome As ProductWriteOutcomeKind = Await ProductRepository.UpdateAsync(
                     connection, transaction, id, name, NullIfBlank(request?.Description),

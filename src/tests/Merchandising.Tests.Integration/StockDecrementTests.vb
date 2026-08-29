@@ -247,6 +247,39 @@ Public Class StockDecrementTests
     End Function
 
     ''' <summary>
+    ''' P4-04/CARRY-03: the divergence measured at P3-03 - ConnectionFactory's
+    ''' session-level `SET SESSION tx_isolation = 'READ-COMMITTED'` does not
+    ''' survive `BeginTransaction`, which sends its own `SET TRANSACTION
+    ''' ISOLATION LEVEL` for the transaction it opens. The probe reads
+    ''' `@@tx_isolation` from INSIDE the open transaction, not the session,
+    ''' which is exactly the read no prior test performed for this call site.
+    ''' Chosen as the flagship red/green proof because StockService already
+    ''' carries the P1-12 fault-injection precedent this reuses.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Decrement_OpensTransactionAtReadCommittedIsolation() As Task
+
+        Dim capturedIsolation As String = Nothing
+
+        Dim outcome As StockDecrementOutcome =
+            Await _stockService.DecrementAsync(
+                _productId, 1.000D, "P4-04 isolation probe", _actorUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString(),
+                testOnlyIsolationProbe:=Sub(transaction)
+                                            Using command As MySqlCommand = transaction.Connection.CreateCommand()
+                                                command.Transaction = transaction
+                                                command.CommandText = "SELECT @@tx_isolation;"
+                                                capturedIsolation = CStr(command.ExecuteScalar())
+                                            End Using
+                                        End Sub)
+
+        Assert.AreEqual(StockDecrementOutcomeKind.Success, outcome.Kind)
+        Assert.IsNotNull(capturedIsolation, "The isolation probe must actually have fired for this proof to mean anything.")
+        Assert.AreEqual("READ-COMMITTED", capturedIsolation,
+            "tx_isolation read from INSIDE the transaction must be READ-COMMITTED, not the REPEATABLE-READ MySqlConnector's own BeginTransaction defaults to when no level is passed explicitly.")
+
+    End Function
+
+    ''' <summary>
     ''' P1-13/ADR-006: fires N concurrent DecrementAsync calls against a
     ''' product holding exactly one unit of stock, twice - once with N=2,
     ''' once with N=10, resetting the balance to 1.000 between rounds.

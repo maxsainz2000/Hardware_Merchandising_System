@@ -321,8 +321,13 @@ Namespace Procurement
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03,
+                ' fixed for CreateAsync above; this call site still opened
+                ' REPEATABLE READ until now).
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(False)
 
                 Dim locked =
                     Await PurchaseOrderRepository.GetStatusForUpdateAsync(
@@ -398,8 +403,13 @@ Namespace Procurement
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03,
+                ' fixed for CreateAsync above; this call site still opened
+                ' REPEATABLE READ until now).
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(False)
 
                 Dim locked =
                     Await PurchaseOrderRepository.GetStatusForUpdateAsync(
@@ -520,8 +530,14 @@ Namespace Procurement
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03,
+                ' fixed for CreateAsync above; this call site (serving both
+                ' CancelAsync and CloseAsync) still opened REPEATABLE READ
+                ' until now).
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(False)
 
                 Dim locked =
                     Await PurchaseOrderRepository.GetStatusForUpdateAsync(

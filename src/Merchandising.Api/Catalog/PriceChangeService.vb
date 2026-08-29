@@ -38,6 +38,7 @@
 Imports Merchandising.Contracts.Products
 Imports Merchandising.Domain
 Imports Merchandising.Infrastructure.Data
+Imports System.Data
 Imports System.Linq
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -84,8 +85,11 @@ Namespace Catalog
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03).
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(False)
 
                 Dim current =
                     Await ProductRepository.ReadPriceForUpdateAsync(connection, transaction, productId, cancellationToken).ConfigureAwait(False)

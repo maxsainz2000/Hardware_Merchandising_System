@@ -151,7 +151,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Runs before Track D. Receiving reads a line before it writes one, which is the case CARRY-03 named.*
 
-### ⬜ P4-04 · CARRY-03 — `READ COMMITTED` at every call site, asserted inside a transaction
+### ✅ P4-04 · CARRY-03 — `READ COMMITTED` at every call site, asserted inside a transaction
 
 **Spec:** ADR-006 · **Decides:** ADR-006 amendment
 **Files:** `src/Merchandising.Infrastructure/Data/`, `src/Merchandising.Api/Controllers/`, `src/tests/Merchandising.Tests.Integration/ConnectionFactoryTests.vb`
@@ -160,11 +160,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] `IsolationLevel.ReadCommitted` passed explicitly at every `BeginTransaction` call site: `StockService`, `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`, `SuppliersController`, `ProductsController`, `MaintenanceController` — enumerated from a source scan, so a call site added later is not silently missed
-- [ ] `ConnectionFactoryTests` gains the assertion it lacks: `@@tx_isolation` read **inside** a transaction, not only on the session. The old session-level assertion stays — both are true and only one was checked
-- [ ] The existing P1-11/P1-13 concurrency proofs still pass unchanged, demonstrating this is a text-vs-reality fix and not a behaviour change
-- [ ] ADR-006 amended to state the mechanism explicitly — that a session-level `SET` does **not** survive `BeginTransaction`, and why passing the level per transaction is the only form that holds
-- [ ] Both suites green
+- [x] `IsolationLevel.ReadCommitted` passed explicitly at every `BeginTransaction` call site: `StockService`, `PriceChangeService`, `ProductLifecycleService`, `SupplierLifecycleService`, `SuppliersController`, `ProductsController`, `MaintenanceController` — enumerated from a source scan, so a call site added later is not silently missed ⚠ the card's own list was stale: `MaintenanceController` opens no transaction (nothing to fix); the source scan additionally found and fixed `SystemSettingsController` and three more `PurchaseOrderService` sites the list omitted. See `evidence/phase-4/p4-04-isolation-level.txt` §0
+- [x] `ConnectionFactoryTests` gains the assertion it lacks: `@@tx_isolation` read **inside** a transaction, not only on the session. The old session-level assertion stays — both are true and only one was checked
+- [x] The existing P1-11/P1-13 concurrency proofs still pass unchanged, demonstrating this is a text-vs-reality fix and not a behaviour change
+- [x] ADR-006 amended to state the mechanism explicitly — that a session-level `SET` does **not** survive `BeginTransaction`, and why passing the level per transaction is the only form that holds
+- [x] Both suites green
 
 **Evidence:** `evidence/phase-4/p4-04-isolation-level.txt` — `@@tx_isolation` measured inside a transaction at every call site, before and after
 

@@ -64,6 +64,7 @@
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Domain
 Imports Merchandising.Infrastructure.Data
+Imports System.Data
 Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -102,6 +103,7 @@ Namespace Inventory
             correlationId As String,
             idempotencyKey As String,
             Optional testOnlyFaultAfterAuditInsert As Action = Nothing,
+            Optional testOnlyIsolationProbe As Action(Of MySqlTransaction) = Nothing,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of StockDecrementOutcome)
 
             ' ADR-004.1: never trust a caller-supplied quantity is already at
@@ -113,8 +115,20 @@ Namespace Inventory
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
+                ' P4-04 / CARR-03 / ADR-006 amendment: ConnectionFactory's own
+                ' session-level `SET SESSION tx_isolation = 'READ-COMMITTED'`
+                ' does NOT survive BeginTransaction - MySqlConnector sends its
+                ' own `SET TRANSACTION ISOLATION LEVEL` for the transaction it
+                ' opens, which overrides the session value (measured at
+                ' P3-03). The level has to be passed here, explicitly, every
+                ' time - the same fix PurchaseOrderService.CreateAsync already
+                ' proved.
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(False)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(False)
+
+#If DEBUG Then
+                testOnlyIsolationProbe?.Invoke(transaction)
+#End If
 
                 ' P1-14 / ADR-007: claim the key before doing any work. See
                 ' IdempotencyStore's class header for why a losing claim

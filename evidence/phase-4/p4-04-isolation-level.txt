@@ -1,0 +1,210 @@
+P4-04 — CARRY-03 — READ COMMITTED at every call site, asserted inside a
+transaction
+=========================================================================
+
+Files:
+  src/Merchandising.Api/Inventory/StockService.vb
+  src/Merchandising.Api/Catalog/PriceChangeService.vb
+  src/Merchandising.Api/Catalog/ProductLifecycleService.vb
+  src/Merchandising.Api/Catalog/SupplierLifecycleService.vb
+  src/Merchandising.Api/Controllers/SuppliersController.vb
+  src/Merchandising.Api/Controllers/ProductsController.vb
+  src/Merchandising.Api/Controllers/SystemSettingsController.vb
+  src/Merchandising.Api/Procurement/PurchaseOrderService.vb
+  src/tests/Merchandising.Tests.Integration/ConnectionFactoryTests.vb
+  src/tests/Merchandising.Tests.Integration/StockDecrementTests.vb
+
+-------------------------------------------------------------------------
+SECTION 0 — scope correction: the card's enumerated list was stale
+-------------------------------------------------------------------------
+
+The card names seven files (StockService, PriceChangeService,
+ProductLifecycleService, SupplierLifecycleService, SuppliersController,
+ProductsController, MaintenanceController). A source scan against the
+current tree - which is what Done-when box 1 itself calls for, "so a call
+site added later is not silently missed" - found the list did not match
+reality in three ways, confirmed with the user before implementing:
+
+  1. MaintenanceController has ZERO BeginTransaction call sites. It writes
+     through MaintenanceLockRepository (a single-statement unique-index
+     insert) and AuditLogWriter (autocommit) - nothing to fix there.
+  2. PurchaseOrderService had THREE more unfixed call sites beyond the one
+     P3-03 already corrected (CreateAsync) - SubmitAsync, ApproveAsync, and
+     TransitionWithReasonAsync (shared by CancelAsync/CloseAsync). Not
+     named in the card, in the very file the original fix came from.
+  3. SystemSettingsController has one call site (SetSetting) not named in
+     the card at all.
+
+ADR-006's own carried text says "every OTHER BeginTransaction call site
+still opens REPEATABLE READ" - not a fixed enumeration - so this card
+fixes every production call site the scan found, not only the seven
+literally named. MaintenanceController needed no change.
+
+Full post-fix source scan, `grep -rn "BeginTransactionAsync" src/Merchandising.Api`
+(binaries and one unrelated doc-comment line omitted):
+
+  Catalog/PriceChangeService.vb:92:           BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+  Catalog/ProductLifecycleService.vb:75:       BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+  Catalog/SupplierLifecycleService.vb:69:      BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+  Controllers/ProductsController.vb:181:       BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)   (CreateProduct)
+  Controllers/ProductsController.vb:282:       BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)   (UpdateProduct)
+  Controllers/SuppliersController.vb:165:      BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)   (CreateSupplier)
+  Controllers/SuppliersController.vb:252:      BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)   (UpdateSupplier)
+  Controllers/SystemSettingsController.vb:122: BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)   (SetSetting - not in the card's list)
+  Inventory/StockService.vb:127:               BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)          (DecrementAsync)
+  Procurement/PurchaseOrderService.vb:178:     BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)          (CreateAsync - P3-03's original fix)
+  Procurement/PurchaseOrderService.vb:330:     BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)          (SubmitAsync - not in the card's list)
+  Procurement/PurchaseOrderService.vb:412:     BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)          (ApproveAsync - not in the card's list)
+  Procurement/PurchaseOrderService.vb:540:     BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)          (TransitionWithReasonAsync / Cancel+Close - not in the card's list)
+
+Ten call sites, all now passing IsolationLevel.ReadCommitted explicitly. Zero
+remaining `BeginTransactionAsync(cancellationToken)` or
+`BeginTransactionAsync(HttpContext.RequestAborted)` calls (i.e. with no
+isolation-level argument) anywhere under src/Merchandising.Api.
+
+(Merchandising.Maintenance's own BeginTransaction call sites - CreateUserCommand,
+SeedCommand x2, MigrationRunner, SeedDemoCommand - are deliberately untouched.
+That project runs single-user, offline, as merch_migrator, against no concurrent
+HTTP traffic; it sits outside both the card's Files: list and the concurrent-
+request threat model ADR-006 exists for.)
+
+-------------------------------------------------------------------------
+SECTION 1 — the mechanism, proven generically (ConnectionFactoryTests)
+-------------------------------------------------------------------------
+
+New test OpenedConnection_TransactionIsolation_MatchesWhatIsPassedToBeginTransaction
+proves both halves of the divergence directly against the real, pinned
+MariaDB instance, using the SAME ConnectionFactory every call site uses:
+a transaction opened with no isolation argument reads back REPEATABLE-READ
+from INSIDE itself; a transaction opened with IsolationLevel.ReadCommitted
+reads back READ-COMMITTED from INSIDE itself. The old session-level test
+(OpenedConnection_HasStrictModeAndReadCommittedIsolation) is unchanged and
+still asserts the session value separately - both are true, and now both
+are checked.
+
+  dotnet test src/tests/Merchandising.Tests.Integration \
+    --filter "FullyQualifiedName~ConnectionFactoryTests" --logger "console;verbosity=normal"
+
+  Passed OpenedConnection_HasStrictModeAndReadCommittedIsolation [292 ms]
+  Passed OpenedConnection_TransactionIsolation_MatchesWhatIsPassedToBeginTransaction [35 ms]
+
+Because IsolationLevel is a MySqlConnector API argument to BeginTransaction,
+not something that varies by which class or method calls it, this single
+proof against the shared ConnectionFactory establishes the mechanism for
+every one of the ten call sites in Section 0 - each of which now supplies
+the identical argument. Per-call-site correctness is what the source scan
+in Section 0 verifies; this section is what proves the argument actually
+does what ADR-006's amendment says it does.
+
+-------------------------------------------------------------------------
+SECTION 2 — the mechanism, proven end-to-end through production code
+(flagship failing-test-first cycle, StockService.DecrementAsync)
+-------------------------------------------------------------------------
+
+StockService was chosen as the flagship because it already carries the
+P1-12 fault-injection precedent (testOnlyFaultAfterAuditInsert) this reuses
+as testOnlyIsolationProbe - an Optional Action(Of MySqlTransaction),
+#If DEBUG gated exactly like its predecessor, invoked immediately after
+BeginTransaction so a test can read @@tx_isolation from INSIDE the open
+transaction via the same connection/transaction pair the production code is
+using, with no separate connection to muddy the reading.
+
+RED (before the fix - BeginTransactionAsync(cancellationToken), no isolation
+argument, matching what every one of the ten sites looked like before this
+card):
+
+  dotnet test src/tests/Merchandising.Tests.Integration \
+    --filter "FullyQualifiedName~StockDecrementTests.Decrement_OpensTransactionAtReadCommittedIsolation"
+
+  Failed Decrement_OpensTransactionAtReadCommittedIsolation [321 ms]
+  Error Message:
+   Assert.AreEqual failed. Expected string length 14 but was 15.
+   Expected: "READ-COMMITTED"
+   But was:  "REPEATABLE-READ"
+
+This is the same REPEATABLE-READ P3-03 measured for PurchaseOrderService
+before its fix - reproduced here, live, for a second call site, proving the
+divergence is general and not specific to purchase orders.
+
+GREEN (after adding IsolationLevel.ReadCommitted to the BeginTransactionAsync
+call at StockService.vb:127):
+
+  dotnet test src/tests/Merchandising.Tests.Integration --filter "FullyQualifiedName~StockDecrementTests"
+
+  Passed Decrement_Success_CreatesOneMovementOneAuditRowAndCorrectBalance [349 ms]
+  Passed Decrement_Success_RecordsCorrelationIdOnMovementAndAudit [22 ms]
+  Passed Decrement_InsufficientStock_ReturnsControlledOutcomeAndCreatesNoRows [21 ms]
+  Passed Decrement_OverScaleQuantity_RejectedBeforeAnyRowWritten [13 ms]
+  Passed Decrement_FaultInjectedBeforeCommit_RollsBackBalanceMovementAndAuditRows [28 ms]
+  Passed Decrement_OpensTransactionAtReadCommittedIsolation [11 ms]
+  Passed Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound [54 ms]
+  Passed Decrement_SameIdempotencyKeyFiveTimes_CreatesOneMovementAndFiveIdenticalResponses [32 ms]
+  Passed Decrement_DifferentIdempotencyKeys_CreatesTwoIndependentMovements [18 ms]
+  Passed Decrement_ConcurrentRequestsSameIdempotencyKey_ProduceExactlyOneMovement [22 ms]
+  Passed Decrement_IdempotencyKeyFromInsufficientStock_DoesNotBlockLegitimateRetry [19 ms]
+
+  Total tests: 11 / Passed: 11
+
+-------------------------------------------------------------------------
+SECTION 3 — Done-when box 3: the P1-11/P1-13 concurrency proofs are
+unaffected (a text-vs-reality fix, not a behaviour change)
+-------------------------------------------------------------------------
+
+Decrement_TwoThenTenSimultaneousRequests_ExactlyOneSucceedsEachRound (the
+P1-13 concurrency proof) is in the Section 2 run above, unchanged, still
+green. ADR-006's own Reasoning already says isolation level is not what the
+concurrency guarantee depends on (InnoDB row-locking on the conditional
+UPDATE is) - this run confirms that in practice, not just in the text: the
+same test, same fixture, same assertions, passes identically before and
+after this card's fix. No existing concurrency test changed behaviour,
+which is what CLAUDE.md section 7 item 5 would require halting and
+reporting if it had.
+
+-------------------------------------------------------------------------
+SECTION 4 — full suite, guardrails, and clean build
+-------------------------------------------------------------------------
+
+  pwsh ./scripts/check-no-csharp.ps1
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+  pwsh ./scripts/run-tests.ps1
+  === Guardrails ===
+  All guardrails passed.
+
+  === Build ===
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed!  - Failed: 0, Passed: 44, Skipped: 0, Total: 44
+
+  === Integration tests (real MariaDB) ===
+  Passed!  - Failed: 0, Passed: 251, Skipped: 0, Total: 251
+
+  All checks passed.
+
+251 integration tests include LedgerReconciliationTests.ReconcileLedgerAfterSuiteAsync
+(P4-01's AssemblyCleanup ledger assertion, ADR-021) - it ran clean after this
+card's own tests, so nothing this card wrote left the ledger in a discrepant
+state.
+
+-------------------------------------------------------------------------
+SECTION 5 — what this evidence does NOT claim
+-------------------------------------------------------------------------
+
+@@tx_isolation was not read live, inside a transaction, at each of the ten
+individual call sites in Section 0 one by one - only at the two
+representative points (Section 1: the shared ConnectionFactory mechanism;
+Section 2: StockService end-to-end). Isolation level is purely a
+MySqlConnector API argument to BeginTransaction with no dependency on which
+class or method supplies it, so a tenfold repetition of the identical
+runtime measurement would prove the same fact ten times, not ten different
+facts. Per-call-site correctness - THAT each site passes the argument - is
+what Section 0's source scan establishes; Sections 1-2 establish WHAT that
+argument does. Marked here explicitly per CLAUDE.md's "any claim narrower
+than its wording is marked and explained, never rounded up."

@@ -9,6 +9,7 @@
 ' the pre-existing backup./maintenance. keys.
 
 Imports System.Collections.Generic
+Imports System.Data
 Imports System.Security.Claims
 Imports System.Threading.Tasks
 Imports Merchandising.Api.Middleware
@@ -111,8 +112,14 @@ Namespace Controllers
 
             Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
 
+                ' P4-04/CARRY-03/ADR-006 amendment: the session-level
+                ' READ-COMMITTED setting does not survive BeginTransaction -
+                ' it must be passed here explicitly (measured at P3-03).
+                ' Found by this card's own source scan - not in the card's
+                ' original enumerated list, which predates this controller's
+                ' addition of a transaction here.
                 Dim transaction As MySqlTransaction =
-                    Await connection.BeginTransactionAsync(HttpContext.RequestAborted)
+                    Await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, HttpContext.RequestAborted)
 
                 Dim previousValue As String =
                     Await SystemSettingsRepository.ReadForUpdateAsync(
