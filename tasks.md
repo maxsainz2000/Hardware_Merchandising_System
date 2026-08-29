@@ -305,7 +305,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track F — The Inventory client
 
-### 🟡 P4-12 · Inventory WPF client reaches usable state
+### ✅ P4-12 · Inventory WPF client reaches usable state
 
 **Spec:** §10.2, §16 · **Files:** `src/Merchandising.Inventory/`, `src/Merchandising.ClientCommon/`
 
@@ -313,7 +313,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Login, stock browse, receive, count, adjust and low-stock review all work against the running API — **owed: an authenticated manual pass.** Everything the client itself does is built and unit-proven (`evidence/phase-4/p4-12-inventory-client.txt` §0/§4): the exe launches and stays responsive against the live, running `MerchandisingApi` service, but this session could not complete a real sign-in — the seeded accounts' passwords live only in the ACL-protected `installation-credentials.txt` (P2-11/ADR-012), and reading that file was refused by this session's own permission classifier and accepted as a stop condition (CLAUDE.md §7) rather than worked around
+- [x] Login, stock browse, receive, count, adjust and low-stock review all work against the running API — **closed at the Phase 4 gate by P4-15** (`evidence/phase-4/p4-15-authenticated-client-pass.txt`), all six driven through this client's own `MainViewModel` and five tab view models over real TLS to the real service. The credentials stop condition was honoured, not worked around: nothing read `installation-credentials.txt`; two accounts were created through `Merchandising.Maintenance.exe create-user`, ADR-017 §4's own route. ⚠ **The pass found a real defect first** — the deployed Windows Service was a 2026-08-28 (Phase 3) build and returned **404 for every Phase 4 route**; `WebApplicationFactory` cannot see a stale deployment, so nothing else could have caught it. Redeployed and re-run green
 - [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
 - [x] Server-side refusals (over-receiving 409, adjustment threshold 403, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
 - [x] Client-side validation is for usability only; every rule is re-checked server-side
@@ -366,6 +366,28 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 **Evidence:** `evidence/phase-4/p4-14-clean-clone.log`, `evidence/phase-4/INDEX.md`
 
 > **This card's own boxes are all satisfied — that is not the same claim as "Phase 4 may exit."** `INDEX.md` §4.1 and §4.2 record two real gaps a `/phase-gate` review still needs to see: exit criterion 5's evidence doesn't fire the scenario it names, and P4-12 has one open box (an authenticated manual pass, blocked on a credentials file this session correctly refused to read). Neither is this card's to close.
+>
+> **Both were closed by P4-15, raised by the gate review itself.** The card below is what the gate wrote rather than waved through — which is the outcome this closure pack's honesty was for.
+
+### ✅ P4-15 · Close the two gaps the closure pack refused to round up
+
+**Spec:** §10.1, §10.2, §11 · **Raised by:** the `/phase-gate` review of Phase 4
+**Files:** `src/tests/Merchandising.Tests.Integration/ReceiveAndAdjustConcurrencyTests.vb`, `evidence/phase-4/`, `.gitignore`
+
+**Do:** `INDEX.md` §4.1 and §4.2 named two things the gate would find. Fix both rather than argue them away: write the concurrent receive-and-adjust test exit criterion 5 claims and never fired, and perform P4-12's owed authenticated pass without reading the credentials file the previous session correctly refused.
+
+**Done when:**
+
+- [x] A dedicated test fires a receive and an adjustment at the **same product at the same time**, in the P1-13/P4-08 shape — two of them: 4 receives + 4 adjustments in flight settle to the exact arithmetic total (no lost update), and a +5.000/−5.000 race over 6 rounds lands on one of only two consistent end states with **both orderings genuinely observed**, never one assumed
+- [x] **Both tests watched fail before being trusted**, against a deliberately broken `StockRepository` — read-then-write increment → `Expected:<136.000>. Actual:<106.000>`; guard removed → `the ledger records a balance of -3.000`. ⚠ the first draft of box 2 **could not be falsified** and was rewritten: a fresh product has no `StockBalances` row, so row-absence refused the adjustment and the `Quantity >= @qty` guard was never under test; and a transient negative is erased by the later receive, so the assertion had to move to `MIN(QuantityAfter)` in the append-only ledger
+- [x] The drift that falsification wrote to five real products is healed by **compensating movements only** — `p4-15-drift-correction.sql`, never an `UPDATE` or `DELETE` (CLAUDE.md §7 item 7), verified reconciling straight from the database
+- [x] `inventory.adjustmentThreshold` is restored to `SystemSettingRegistry`'s own default in `TestCleanup` — one row for the whole installation, and the class that raised it owns putting it back
+- [x] P4-12's sixth box performed for real: login, stock browse, receive, count, adjust, low-stock review, plus a live 409 refusal surfaced with the API's own code and correlation ID, driven through the client's own view models. **No credential file read** — accounts created via `create-user` (ADR-017 §4)
+- [x] ⚠ **A real defect found and fixed, not written around:** the deployed service was a Phase 3 build serving **404 for every Phase 4 route**. Redeployed from `publish-release.ps1` output via `install-service.ps1`; the pass then went green end to end
+- [x] `**/My Project/launchSettings.json` gitignored — VS 2026 wrote a per-developer launch profile whose `applicationUrl` contradicts the only listener this system has (ADR-011's 8443)
+- [x] Both suites green, guardrails pass, build 0 warnings, clean clone recaptured
+
+**Evidence:** `evidence/phase-4/p4-15-concurrent-receive-and-adjust.txt`, `evidence/phase-4/p4-15-authenticated-client-pass.txt`, `evidence/phase-4/p4-15-drift-correction.sql`
 
 ---
 

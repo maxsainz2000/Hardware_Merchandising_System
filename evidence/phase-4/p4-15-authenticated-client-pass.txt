@@ -1,0 +1,316 @@
+P4-15 - P4-12's owed authenticated pass through the Inventory client, and the
+stale deployed service it found.
+
+Captured 2026-08-29 on this workstation, against the real MerchandisingApi
+Windows Service over HTTPS on MERCH-HOST:8443 and the real pinned MariaDB
+10.4.32. Raised by the /phase-gate review of Phase 4.
+
+===============================================================================
+0. Why this file exists
+===============================================================================
+
+P4-12's last open box:
+
+    "Login, stock browse, receive, count, adjust and low-stock review all
+     work against the running API"
+
+p4-12-inventory-client.txt section 0 recorded honestly why that session could
+not close it: the seeded accounts' passwords live only in the ACL-protected
+C:\ProgramData\MerchandisingSystem\config\installation-credentials.txt
+(P2-11 / ADR-012 requirement 6), reading that file was refused by the
+session's own permission classifier, and per CLAUDE.md section 7 the refusal
+was accepted as a stop condition rather than worked around. INDEX.md section
+4.2 then declined to round the card up, and said in as many words that a
+/phase-gate review "should find P4-12 open and hold the gate for it."
+
+It did. This file closes it.
+
+THE REFUSAL IS NOT WORKED AROUND HERE. Nothing in this work reads
+installation-credentials.txt. Two purpose-made accounts were created through
+the project's own sanctioned mechanism instead - Merchandising.Maintenance.exe
+create-user, which ADR-017 section 4 names as the single route for user
+management - with a password chosen at creation time, exactly as the
+installer does for the seeded accounts:
+
+  Merchandising.Maintenance.exe create-user p4_15_client_pass   "<password>" Admin
+    -> Created user 'p4_15_client_pass' (Id 4346) with role 'Admin'.
+  Merchandising.Maintenance.exe create-user p4_15_client_pass_b "<password>" Admin
+    -> Created user 'p4_15_client_pass_b' (Id 4347) with role 'Admin'.
+
+Two accounts, not one, because ADR-017 section 6 forbids approving your own
+purchase order - the second exists solely to approve the order the first
+creates, so that the Receive tab has something Approved to load.
+
+Both are Admin. That is the documented, frozen policy gap P4-12 already
+recorded: PurchaseOrders.Track (needed to look up an order before receiving
+against it) is ProcurementAndAbove while Receiving.Confirm is
+InventoryAndAbove, and only Admin/SuperAdmin sit in both. Phase 2's policy
+matrix is frozen; this pass consumes the gap, it does not change it.
+
+===============================================================================
+1. What was driven, and what that does and does not prove
+===============================================================================
+
+A harness constructed Merchandising.Inventory.ViewModels.MainViewModel over a
+real ClientCommon MerchandisingApiClient pointed at https://MERCH-HOST:8443/
+- the same constructor call MainWindow.xaml.vb line 28-29 makes - and invoked
+the five tab view models' own public methods and commands in the order an
+operator would use them.
+
+  PROVES: every screen's real call path works with a real session token
+          against the real service over real TLS; server-side refusals arrive
+          as the API's own error code, wording and correlation Id; the token
+          is genuinely discarded at sign-out.
+
+  DOES NOT PROVE: anything about the rendered window. No button was clicked
+          and no pixel was inspected. Layout, focus order and TabIndex at
+          1366x768 @ 125% are covered separately and by test, in
+          InventoryLayoutTests (P4-12's own fifth box), not here.
+
+The harness lives outside the repository, in this session's scratchpad. It is
+a one-off instrument, referenced by nothing and shipped with nothing.
+
+===============================================================================
+2. THE FINDING - the deployed service was four weeks of work out of date
+===============================================================================
+
+The first run of the pass failed 9 of its steps. Login worked. Supplier
+search, product search, purchase-order create/submit/approve all worked.
+EVERY PHASE 4 ROUTE RETURNED 404:
+
+  --- 2. Stock browse
+    [FAIL] stock browse: HTTP_404 | The API refused the request (404 NotFound).
+  --- 3. Movement ledger
+    [FAIL] movement ledger: HTTP_404
+  --- 4. Receive
+    [ OK ] load purchase order: Order PO-20260829-2866 loaded (1 line(s)).
+    [FAIL] confirm receipt: HTTP_404
+  --- 6. Stock count
+    [FAIL] open count: HTTP_404
+  --- 7. Adjustment
+    [FAIL] request adjustment: HTTP_404
+  --- 8. Low-stock review
+    [FAIL] low-stock review: HTTP_404
+
+The cause, read straight off the machine:
+
+  PathName      : "C:\MerchandisingService\Api-sc\Merchandising.Api.exe"
+  LastWriteTime : 8/28/2026 7:05:26 AM
+  StartName     : NT SERVICE\MerchandisingApi
+  State         : Running
+
+2026-08-28 is the Phase 3 gate. The running Windows Service was built before
+a single Phase 4 controller existed. Every route Tracks D and E added -
+ReceivingController, StockCountsController, AdjustmentsController, and
+InventoryController's P4-11 additions - was absent from the deployed binary.
+
+WHY NOTHING CAUGHT THIS EARLIER, AND WHY IT MATTERS. The 348-test integration
+suite reaches the API through WebApplicationFactory, which builds the host
+in-process from the current source. It can never observe a stale deployment;
+it would have passed identically with no service installed at all. P4-12's
+own evidence recorded "Get-Service MerchandisingApi -> Running" and launched
+the client against it, but without a sign-in it never issued an authenticated
+Phase 4 request, so a Running service that served none of Phase 4 looked
+exactly like a healthy one.
+
+This is precisely the class of defect P4-12's box was written to catch, and
+it is the second time in two phases that the gate has found a real problem
+behind a box that had been reasoned about rather than exercised (the Phase 3
+gate's 1366x768 arithmetic being the first).
+
+Under ADR-012 it matters beyond this machine: three classmates must install
+and demonstrate this system without the author present. A demo run against
+the service as it stood would have failed on the first receipt.
+
+  REMEDY, performed by the operator (elevation required; this session had
+  none - the redeploy is recorded here, not claimed as this session's work):
+
+    Stop-Service MerchandisingApi -Force
+    Copy-Item artifacts\publish\Api-sc\*  C:\MerchandisingService\Api-sc\ -Recurse -Force
+    pwsh -File scripts\install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc
+
+  The build copied in was published from the current tree by the project's
+  own script, pwsh ./scripts/publish-release.ps1 -Component Api -Mode
+  SelfContained (ADR-010's mode for this component):
+
+    output   : artifacts/publish/Api-sc
+    files    : 350
+    size     : 106.8 MB
+    package  : 64479A19996300D867483F238E36B663BDC5CECD18FFF0D9CE6307B3713FBA51
+
+  install-service.ps1 deletes and recreates the service rather than
+  re-registering over a live one, re-grants the NT SERVICE\MerchandisingApi
+  virtual account read access to the config and the .pfx, and refuses to
+  report success until something is actually listening on 8443:
+
+    === Removing existing service 'MerchandisingApi' ===   OK Removed.
+    === Registering 'MerchandisingApi' ===                 OK Created, start=auto,
+                                                              running as NT SERVICE\MerchandisingApi
+    === Granting the service account read access ===       OK config, OK merch-host.pfx
+    === Starting ===                                       OK Service status: Running
+                                                           OK Listening on 8443.
+    Install complete.
+
+===============================================================================
+3. The pass, after the redeploy - the run of record
+===============================================================================
+
+===============================================================================
+P4-15 - P4-12's owed authenticated pass, driven through the Inventory client's own view models
+===============================================================================
+API           : https://MERCH-HOST:8443/
+Operator      : p4_15_client_pass (Admin - see the frozen policy gap note in P4-12)
+Started (UTC) : 2026-08-29 13:04:57Z
+
+
+--- 0. Fixture setup (not part of the client pass) - an Approved purchase order to receive against
+  [ OK ] sign in 'p4_15_client_pass'
+  [ OK ] sign in 'p4_15_client_pass_b'
+  [ OK ] list active suppliers
+  [ OK ] list active products
+  supplier  : 19 Cebu Tools & Fasteners Corp
+  product   : 92 HDW-1002 - Adjustable Wrench 10in
+  [ OK ] create purchase order
+  [ OK ] submit purchase order
+  [ OK ] approve purchase order (as p4_15_client_pass_b)
+  order     : 9353 PO-20260829-2867 status=Approved
+
+--- 1. Login - MainViewModel.SignInAsync, the exact call MainWindow's code-behind makes
+  [ OK ] sign in: Signed in.  correlationId=8382f720-9011-4ca2-b090-c6542f1daffc
+  [ OK ] sign in leaves the session signed in
+  session   : p4_15_client_pass (Admin)
+  connection: Connected
+
+--- 2. Stock browse - StockBrowseViewModel.SearchAsync (Stock.Read)
+  [ OK ] stock browse: 1776 product(s) found.  correlationId=f6109b81-3768-4a61-8d8d-752678b26060
+  rows      : 100 of 1776 total
+  first     : product 92 quantity 0.000
+
+--- 3. Movement ledger for one product - StockBrowseViewModel.LoadMovementsAsync (Stock.ReviewMovements)
+  [ OK ] movement ledger: 0 movement(s) found.  correlationId=8b252ac9-c0d8-4f7e-be73-0d6accd89639
+  movements : 0
+  balance   : 0.000  time zone: Asia/Manila
+  reconcile : Sum of movements shown: 0 (page may not cover the full history). Current balance: 0.000.
+
+--- 4. Receive against the approved order - ReceivingViewModel (PurchaseOrders.Track + Receiving.Confirm)
+  [ OK ] load purchase order: Order PO-20260829-2867 loaded (1 line(s)).  correlationId=aeef2204-34bd-4ff8-a9db-974c47a80a2a
+  order     : PO-20260829-2867 - Cebu Tools & Fasteners Corp (Approved)
+  lines     : 1
+  [ OK ] the loaded order has at least one line
+  drafted   : 1 line(s) - Line added. 1 line(s) drafted.
+  [ OK ] confirm receipt: Receipt recorded. Order PO-20260829-2867 is now PartiallyReceived.  correlationId=5ae8a1c7-ae97-4224-8c64-4b3eaee23df5
+  order now : PO-20260829-2867 - Cebu Tools & Fasteners Corp (PartiallyReceived)
+  balance   : 0.000 -> 5.000 (expected +5.000)
+  [ OK ] the receipt increased the balance by exactly 5.000
+
+--- 5. Over-receiving refused - the server's own 409, surfaced verbatim (P4-07)
+  status    : RECEIPT_QUANTITY_EXCEEDS_ORDERED
+  detail    : The quantity requested for lines[0].purchaseOrderLineId would exceed what remains to be received on that line.
+  correlate : b136f0c5-ab51-49df-93b5-57e1dac91b59
+  [ OK ] over-receiving is refused, not accepted
+  [ OK ] the refusal carries the API's correlation Id rather than hiding it
+
+--- 6. Stock count - StockCountsViewModel open / record / close (StockCounts.Perform)
+  [ OK ] open count: Count #391 opened.  correlationId=43ae4f60-dfb6-4dad-9569-1774221d236f
+  count     : Count #391 - Open
+  [ OK ] product search: 1 product(s) found.  correlationId=9da11e77-bc7d-4faa-88e3-5bb6f151ff74
+  [ OK ] product search finds 'HDW-1002'
+  [ OK ] record counted quantity: Line recorded: HDW-1002 counted 7.000, variance 2.000.  correlationId=ed112af8-91e2-4fb9-a9ed-d0534788077a
+  line      : product 92 counted 7.000 system 5.000 variance 2.000
+  [ OK ] close count: Count #391 closed.  correlationId=0f79123c-9572-40c1-84aa-5ac3a25e6dec
+  count     : Count #391 - Closed
+
+--- 7. Adjustment - AdjustmentsViewModel.RequestAsync (Adjustments.Request)
+  [ OK ] product search: 1 product(s) found.  correlationId=a2260385-3425-41ed-83cf-99d84e75410a
+  [ OK ] product search finds the product
+  [ OK ] request adjustment: Adjustment #636 is Applied.  correlationId=8244ed01-5b0b-414a-8334-d85c37a6b69b
+  adjust    : 636 product 92 variance 1.000 status Applied exceedsThreshold=False
+
+--- 8. Low-stock review - LowStockReviewViewModel.SearchAsync (LowStock.Review)
+  [ OK ] low-stock review: 842 low-stock product(s) found.  correlationId=7288d084-4a6a-42f4-89f9-d97f89dd8b74
+  rows      : 100 of 842 at or below reorder level
+  low       : product 3 quantity 0.000 reorder 0.000
+  low       : product 15 quantity 0.000 reorder 5.000
+  low       : product 16 quantity 0.000 reorder 0.000
+
+--- 9. Sign out - the token is discarded, and a later call is refused
+  status    : Signed out. Token discarded.
+  signed in : False
+  after out : lastCallFailed=True - CLIENT_NOT_AUTHENTICATED
+  [ OK ] a read after sign-out is refused, proving the token really went away
+
+===============================================================================
+RESULT: PASS - every step succeeded against the live API
+===============================================================================
+exit=0
+
+===============================================================================
+4. Reading the transcript - what each step establishes
+===============================================================================
+
+Step 1  LOGIN. The box's first named operation. MainViewModel.SignInAsync is
+        the exact method MainWindow's code-behind calls with the PasswordBox's
+        contents. The token is held in MerchandisingApiClient's
+        InMemoryTokenStore only; step 9 proves it really is discarded.
+
+Step 2  STOCK BROWSE. Stock.Read, paged 100 of 1776, sorted server-side.
+
+Step 3  MOVEMENT LEDGER. Stock.ReviewMovements. Note "time zone: Asia/Manila"
+        - P4-11's box 4 requires date boundaries stated in the store time
+        zone in the response, and the client is reading it rather than
+        assuming it.
+
+Step 4  RECEIVE. The card's hardest operation and the one the frozen policy
+        gap constrains. Order loaded (PurchaseOrders.Track), a line drafted,
+        receipt confirmed (Receiving.Confirm), and the order observed moving
+        Approved -> PartiallyReceived, which is P4-06's state reached over
+        the live authorized HTTP path from the client rather than from a
+        test. The balance was then re-read THROUGH THE CLIENT and asserted to
+        have moved by exactly 5.000 - the receipt is proven to have moved
+        stock, not merely to have returned 200.
+
+Step 5  A SERVER-SIDE REFUSAL, SURFACED VERBATIM. Requesting 999.000 against
+        a 12.000 line is refused as RECEIPT_QUANTITY_EXCEEDS_ORDERED with the
+        API's own sentence and its own correlation Id. This is P4-12's third
+        box - "the client never invents its own wording or hides the
+        correlation ID" - exercised against the live server rather than
+        against a stubbed response. Compare it with the first run's
+        "HTTP_404 | The API refused the request (404 NotFound)": the client
+        reports whatever the server says, including when the server is wrong.
+
+Step 6  STOCK COUNT. Open, record, close. "counted 7.000 system 5.000
+        variance 2.000" is P4-09's variance-at-the-moment-of-counting,
+        computed server-side against the balance step 4 had just created.
+
+Step 7  ADJUSTMENT. Applied immediately, exceedsThreshold=False, against the
+        restored registry default threshold of 10.000.
+
+Step 8  LOW-STOCK REVIEW. LowStock.Review, per-product reorder levels.
+
+Step 9  SIGN-OUT. Not one of the six named operations, included because it is
+        the only way to prove the claim P1-15 made and P4-12 repeated: the
+        token is never persisted. A read issued after sign-out is refused
+        client-side with CLIENT_NOT_AUTHENTICATED - the store is genuinely
+        empty, not merely flagged.
+
+===============================================================================
+5. What this closes, and what is still owed
+===============================================================================
+
+CLOSES: P4-12's sixth box, and with it the card. INDEX.md section 4.2's
+"still owed, and is not a defect this card can discharge" is discharged.
+
+STILL OWED, and deliberately not claimed by this file: a human looking at the
+window. Every business rule and every call path is now proven; what no
+harness can assert is whether the screens read well to a person under exam
+pressure. Phase 7's "UI refinement pass across all three clients" (plan.md
+section 7) owns that, and owns it for all three clients equally.
+
+NOT A NEW CARD, BUT WORTH A LINE IN PHASE 6 PLANNING: nothing in this system
+detects a stale deployment. The integration suite cannot, by construction.
+scripts/install-service.ps1 verifies that something is listening on 8443, not
+that what is listening is current. Phase 6 builds health monitoring and
+release packaging (plan.md section 7, closing G-15/G-16); a version or commit
+identifier on a health endpoint, compared against the tree, would have turned
+this finding into a one-line check. Recorded here rather than assigned,
+because Phase 6 planning has not opened.

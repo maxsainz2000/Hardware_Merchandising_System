@@ -75,6 +75,21 @@ tmp/
 *.tmp
 
 # ---------------------------------------------------------------------------
+# Visual Studio's per-developer launch profile.
+#
+# VS 2026 writes this the first time it opens a project, and it is machine
+# local by definition - it carries an applicationUrl of its own choosing
+# (https://localhost:50470 in the copy that appeared here) which contradicts
+# the only listener this system actually has: Kestrel on 8443, configured in
+# Merchandising.Api/Program.vb and pinned by ADR-011. Committing it would
+# hand a classmate on a clean clone a launch profile that points nowhere.
+#
+# Surfaced at the Phase 4 gate as an untracked file in the working tree.
+# ---------------------------------------------------------------------------
+**/My Project/launchSettings.json
+**/Properties/launchSettings.json
+
+# ---------------------------------------------------------------------------
 # Claude Code
 #
 # .claude/settings.json IS committed - the guardrail hooks must apply to

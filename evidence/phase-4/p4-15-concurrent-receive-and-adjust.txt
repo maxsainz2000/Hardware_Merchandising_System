@@ -1,0 +1,259 @@
+P4-15 - Phase 4 exit criterion 5, "concurrent receive-and-adjust on the same
+product is safe", closed by an executed proof rather than an argument.
+
+Captured 2026-08-29 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0). Raised by the /phase-gate review of Phase 4.
+
+===============================================================================
+0. Why this file exists
+===============================================================================
+
+evidence/phase-4/INDEX.md section 4.1, written at P4-14, recorded the gap
+exactly and did not round it up:
+
+    "tasks.md's Phase 4 exit gate cites p4-05-receiving-atomic.txt and
+     p4-10-adjustments.txt as this criterion's evidence. Both files were read
+     in full for this index. Neither contains the word 'concurrent' or
+     'simultaneous,' and neither fires a receive and an adjustment at the
+     same product at the same time."
+
+What stood in for the proof was an argument by analogy: both operations are
+conditional/upsert writes against StockBalances.Quantity keyed on ProductId,
+the shape P1-13 proved serializes under load for decrement-vs-decrement and
+P4-08 proved again for return-vs-return, so receive-vs-adjust "has no
+structural reason to fail." That reasoning is sound and it is still not a
+check. tasks.md line 20 states the rule this phase inherited from the Phase 3
+gate: a sentence in an evidence file is not a check. Every quantitative claim
+a card makes about something a machine could measure must be measured by
+something that fails when it stops being true.
+
+INDEX.md named the missing test itself - "a dedicated
+ReceiveAndAdjust_ConcurrentSameProduct_ExactlyOneOrderingWins-shaped test, in
+the P1-13/P4-08 mould." That is what this is.
+
+  File:  src/tests/Merchandising.Tests.Integration/ReceiveAndAdjustConcurrencyTests.vb
+  Tests: 2, both against the real database, no substitute provider
+
+===============================================================================
+1. Box 1 - no lost update
+===============================================================================
+
+ReceiveAndAdjust_ConcurrentSameProduct_NoLostUpdate
+
+Four receipts (+10.000 each, each against its own separately approved
+purchase order) and four adjustments (-1.000 each) against ONE product, every
+task launched before any is awaited - the same "fire without awaiting" shape
+StockDecrementTests.RunConcurrencyRoundAsync uses for P1-13.
+
+The opening balance is seeded to 100.000 (with a matching StockMovements row -
+seeding a balance without one is precisely the drift P4-01 found in the Phase
+1/2 fixtures) so no adjustment can be refused for insufficient stock. Every
+one of the eight must therefore commit, and a shortfall in the final balance
+can only mean a lost update.
+
+The purchase orders are created, submitted and approved BEFORE the race
+starts, deliberately: approving an order is not what is under test, and doing
+it inside the race would contend on PurchaseOrders instead of on
+StockBalances.
+
+  P4-15 box 1 raw distribution -> receive:Created | receive:Created |
+      receive:Created | receive:Created | adjust:Created | adjust:Created |
+      adjust:Created | adjust:Created
+  P4-15 box 1 detail -> (every attempt Created)
+  P4-15 box 1 balance -> expected 136.000, actual 136.000
+
+  100.000 + (4 x 10.000) - (4 x 1.000) = 136.000, exact at the stored
+  DECIMAL(19,3) scale, never a floating-point tolerance.
+
+Asserted afterwards: zero unexpected exceptions (only controlled outcomes are
+allowed), the P4-01 ledger reconciliation for that product, and that no
+movement row for the product ever recorded a QuantityAfter below zero.
+
+===============================================================================
+2. Box 2 - neither ordering can go negative
+===============================================================================
+
+ReceiveAndAdjust_ConcurrentSameProduct_ExactlyOneOrderingWins
+
+A receive of +5.000 and an adjustment of -5.000 fired together at a product
+that already holds 2.000. Six rounds, each on a fresh product.
+
+Both orderings are legal and this test accepts either; only two end states
+are consistent, and the test asserts the balance matches the outcome that
+was actually returned:
+
+  adjustment applied            ->  2.000 + 5.000 - 5.000 = 2.000
+  adjustment InsufficientStock  ->  2.000 + 5.000         = 7.000
+
+Observed distribution, the run of record:
+
+  P4-15 box 2 round 1 -> receive:Created adjust:Created           balance:2.000
+  P4-15 box 2 round 2 -> receive:Created adjust:InsufficientStock balance:7.000
+  P4-15 box 2 round 3 -> receive:Created adjust:Created           balance:2.000
+  P4-15 box 2 round 4 -> receive:Created adjust:InsufficientStock balance:7.000
+  P4-15 box 2 round 5 -> receive:Created adjust:Created           balance:2.000
+  P4-15 box 2 round 6 -> receive:Created adjust:Created           balance:2.000
+  P4-15 box 2 ordering distribution over 6 rounds ->
+      adjustment applied: 4, adjustment refused for insufficient stock: 2
+
+BOTH orderings are genuinely observed. This matters: a test that only ever
+sees one ordering is asserting one code path and claiming two. Across the
+four runs recorded in this file the split has been 3/3, 5/1, 3/3 and 4/2 -
+a real race, not a deterministic sequence dressed up as one.
+
+-------------------------------------------------------------------------------
+2.1 Two things about box 2's SETUP that are load-bearing, not incidental
+-------------------------------------------------------------------------------
+
+Both were found by trying to falsify this test and discovering it could not
+be falsified. They are recorded because the first version of this test would
+have passed forever while proving nothing.
+
+(a) THE OPENING BALANCE OF 2.000 IS REQUIRED. The first draft raced against a
+    freshly created product holding nothing. A product that has never been
+    touched by a stock-changing command has NO StockBalances row at all -
+    ProductRepository.InsertAsync does not seed one. The conditional
+    decrement's UPDATE therefore affects zero rows because the row does not
+    exist, not because Quantity < @qty, and the "AND Quantity >= @qty" guard
+    that this criterion exists to test is never reached. Seeding 2.000 makes
+    a real row exist and makes the guard the only thing standing between the
+    adjustment and a negative balance.
+
+(b) THE FINAL BALANCE CANNOT SEE A TRANSIENT NEGATIVE. If an adjustment took
+    the balance to -3.000 and the receive then put 5.000 back, the stored
+    balance ends at 2.000 - identical to the safe ordering, and an assertion
+    on the final balance alone reports success. StockMovements is append-only
+    (CLAUDE.md section 5), so the QuantityAfter the broken write actually
+    recorded is still there and cannot be edited away. The test therefore
+    asserts MIN(QuantityAfter) >= 0 across the product's whole ledger. That
+    is what makes this assertion falsifiable, and section 3 is where it was
+    watched fail.
+
+===============================================================================
+3. Falsification - both tests watched fail, for the right reasons
+===============================================================================
+
+A reconciliation test never proven to fail is decoration (P4-01's own
+wording). StockRepository.vb was temporarily broken in two ways, the tests
+re-run against the broken build, and the file then reverted with
+`git checkout --` and verified byte-identical to commit 31e8255.
+
+  BREAK 1 - IncrementAsync rewritten from its single-statement
+            INSERT ... ON DUPLICATE KEY UPDATE upsert into a read-then-write:
+            SELECT Quantity, then UPDATE SET Quantity = <value computed in
+            the client>. Under READ COMMITTED the SELECT takes no lock, so
+            two transactions read the same figure and the second overwrites
+            the first - the classic lost update ADR-006 exists to make
+            impossible.
+
+  BREAK 2 - TryDecrementAsync's "AND Quantity >= @qty" removed from the
+            conditional UPDATE's WHERE clause, so a negative adjustment can
+            drive a balance below zero.
+
+Result:
+
+  Failed ReceiveAndAdjust_ConcurrentSameProduct_NoLostUpdate [718 ms]
+  Error Message:
+     Assert.AreEqual failed. Expected:<136.000>. Actual:<106.000>.
+     Concurrent receives and adjustments lost an update: expected 136.000,
+     found 106.000.
+
+     -> three of the four 10.000 receipts were lost. Exactly the defect.
+
+  Failed ReceiveAndAdjust_ConcurrentSameProduct_ExactlyOneOrderingWins [71 ms]
+  Error Message:
+     Assert.IsGreaterThanOrEqualTo failed. Actual value <-3.000> is not
+     greater than or equal to expected value <0>. Product 3187: the ledger
+     records a balance of -3.000 at some point during round 1 - stock was
+     allowed below zero, even if a later movement hid it.
+
+     -> and note the round's own printed line was
+        "receive:Created adjust:Created balance:7.000", i.e. the FINAL
+        BALANCE WAS NOT NEGATIVE. Only the append-only ledger caught it.
+        That is the whole argument of section 2.1(b), demonstrated rather
+        than asserted.
+
+P4-01's suite-wide <AssemblyCleanup> reconciliation fired as well, in the
+same run, naming 5 drifting products - a third, independent confirmation
+that the broken build was genuinely broken:
+
+  Assembly Cleanup method LedgerReconciliationTests.ReconcileLedgerAfterSuiteAsync
+  failed. Ledger reconciliation found 5 product(s) where SUM(StockMovements)
+  <> StockBalances after the integration suite
+
+-------------------------------------------------------------------------------
+3.1 The drift that falsification created, and how it was closed
+-------------------------------------------------------------------------------
+
+The broken runs wrote to real, permanent rows. StockMovements is append-only,
+so the movements the broken code wrote stayed in the ledger while the
+balances it computed wrongly stayed in StockBalances. Five products diverged:
+
+  ProductId=3177  Expected=136.000  Actual=106.000  Delta=-30.000
+  ProductId=3184  Expected=136.000  Actual=106.000  Delta=-30.000
+  ProductId=3185  Expected=  2.000  Actual=  7.000  Delta= +5.000
+  ProductId=3186  Expected=136.000  Actual=106.000  Delta=-30.000
+  ProductId=3187  Expected=  2.000  Actual=  7.000  Delta= +5.000
+
+Closed by evidence/phase-4/p4-15-drift-correction.sql - one compensating
+movement per product, run once as merch_migrator. NEVER an UPDATE or DELETE
+of any existing StockMovements row (CLAUDE.md section 5, stop condition 7);
+the same shape p4-01-drift-correction.sql used for the same class of problem.
+Verified immediately afterwards, straight from the database:
+
+  ProductId  Balance   LedgerSum
+  3177       106.000   106.000
+  3184       106.000   106.000
+  3185         7.000     7.000
+  3186       106.000   106.000
+  3187         7.000     7.000
+
+===============================================================================
+4. Housekeeping this test does for itself
+===============================================================================
+
+inventory.adjustmentThreshold is ONE row for the whole installation. This
+class raises it to 100000.000 in TestInitialize so every adjustment applies
+immediately (threshold routing is P4-10's subject, not this file's), and a
+suite that raised it and walked away would leave the development database -
+the one a demo runs against - configured to auto-apply an adjustment of any
+size.
+
+TestCleanup restores SystemSettingRegistry's own declared default of 10.000.
+Confirmed through the API after the run of record:
+
+  GET /api/v1/admin/settings ->
+  [{"key":"currency.code","value":"PHP"},
+   {"key":"currency.roundingPolicy","value":"AwayFromZero"},
+   {"key":"inventory.adjustmentThreshold","value":"10.000"}]
+
+Note for the record: writing a setting is SuperAdmin-only, so this could not
+be repaired through the API from an Admin session. Restoring it in TestCleanup
+is the right place regardless - the class that raised it owns putting it back.
+
+===============================================================================
+5. Suite state
+===============================================================================
+
+  Unit          47 / 47   passed, 0 skipped
+  Integration  348 / 348  passed, 0 skipped   (346 at P4-14 + these 2)
+  Guardrails    G-A, G-B, G-C, G-D all pass
+  Build         0 warnings, 0 errors
+
+One warning was introduced and fixed inside this work: MSTEST0037 on an
+Assert.IsTrue that the analyzer wanted as Assert.IsGreaterThanOrEqualTo - the
+same analyzer class P4-14 had to clear at 4135d52. Rewritten, not suppressed.
+
+===============================================================================
+6. What this closes, and what it does not
+===============================================================================
+
+CLOSES: Phase 4 exit criterion 5, on its own stated terms. INDEX.md section
+4.1's "recorded as a follow-on, owner not yet assigned" now has an owner and
+an executed proof, and that section's status moves from the warning mark to
+proven.
+
+DOES NOT CLAIM: that receive-vs-adjust is the only contention pair in the
+system. Sale-vs-receive and sale-vs-adjust are Phase 5's transaction and
+Phase 5's to prove; G-12's sale component was never this phase's, and
+INDEX.md section 3 already says so.
