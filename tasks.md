@@ -195,7 +195,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-05-receiving-atomic.txt`
 
-### ⬜ P4-06 · Partial receiving accumulates across receipts
+### ✅ P4-06 · Partial receiving accumulates across receipts
 
 **Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`
 
@@ -203,11 +203,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Two sequential partial receipts sum to the ordered quantity → `FullyReceived`, asserted on the stored `ReceivedQuantity`, not inferred from the status
-- [ ] Three or more receipts accumulate correctly, including a final one that exactly closes the line
-- [ ] Each receipt writes its **own** movement rows; the ledger reconciles after every one
-- [ ] Mixed lines behave independently — one line fully received and another partially leaves the order `PartiallyReceived`
-- [ ] **Matrix suite extended**; integration suite green
+- [x] Two sequential partial receipts sum to the ordered quantity → `FullyReceived`, asserted on the stored `ReceivedQuantity`, not inferred from the status
+- [x] Three or more receipts accumulate correctly, including a final one that exactly closes the line
+- [x] Each receipt writes its **own** movement rows; the ledger reconciles after every one
+- [x] Mixed lines behave independently — one line fully received and another partially leaves the order `PartiallyReceived`
+- [x] **Matrix suite extended**; integration suite green ⚠ no new route exists for this card (same `POST /api/v1/receipts` P4-05's `ReceivingConfirm_MatrixMatchesPolicyRegistry` already covers); extended instead with an HTTP round-trip test proving accumulation over the live authorized path, not only the direct-service tests
 
 **Evidence:** `evidence/phase-4/p4-06-partial-receiving.txt`
 

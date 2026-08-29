@@ -5,6 +5,15 @@
 ' atomic-result row (Receipt, receipt lines, stock-in movements, balance
 ' changes, audit event commit together).
 '
+' P4-06: partial receiving accumulating across SEPARATE receipts (distinct
+' calls, distinct reference numbers/idempotency keys - never a replay).
+' ReceivingService.ReceiveAsync needed no new production code for this - it
+' already re-reads PurchaseOrderLines.ReceivedQuantity fresh, locked, on
+' every call (GetLinesForUpdateAsync) and projects the incoming receipt onto
+' that live value, so a second call naturally sees the first's accumulation.
+' Box 7 below proves that is actually true, against the real database,
+' rather than merely arguing it from the P4-05 design.
+'
 ' Role gating (Receiving.Confirm resolves to the roles PolicyRegistry says
 ' it does) is AuthorizationMatrixTests' job. This file proves the BEHAVIOUR:
 '
@@ -23,6 +32,10 @@
 '   box 6   the P4-01 ledger reconciliation passes after a committed receipt,
 '           asserted directly in this file, not only by the suite-wide
 '           fixture
+'   box 7   P4-06: two, then three, separate receipts accumulate correctly
+'           on PurchaseOrderLines.ReceivedQuantity; each writes its own
+'           movement row and the ledger reconciles after every one, not only
+'           the last; mixed lines stay independent across receipts too
 '
 ' Fixture users, supplier and products are real, permanent rows - nothing
 ' here is torn down (ADR-013: no DELETE grant on Users, Suppliers or
@@ -390,6 +403,174 @@ Public Class ReceivingTests
 
     End Function
 
+    ' ------------------------------------------------------------------ box 7 (P4-06)
+
+    ''' <summary>
+    ''' P4-06 box 1: two SEPARATE POST-equivalent calls (distinct reference
+    ''' numbers, idempotency keys and correlation ids - genuinely two
+    ''' receipts, not a replay) summing exactly to the ordered quantity move
+    ''' the order to FullyReceived, asserted on the STORED ReceivedQuantity,
+    ''' not inferred from the status. No production code exists purely for
+    ''' this - ReceivingService.ReceiveAsync already re-reads
+    ''' PurchaseOrderLines.ReceivedQuantity fresh (GetLinesForUpdateAsync,
+    ''' locked) on every call and projects onto that live value, so a second
+    ''' receipt naturally sees the first's accumulation. This test proves
+    ''' that is actually true against the real database, not merely argued.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_TwoSequentialPartials_SumToOrderedAndMovesToFullyReceived() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 10.000D, 2.0000D)})
+        Dim lineId As Integer = order.Lines(0).Id
+
+        Dim firstOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = 6.000D, .Cost = 2.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual(ReceivingOutcomeKind.Created, firstOutcome.Kind)
+        Assert.AreEqual("PartiallyReceived", firstOutcome.Response.PurchaseOrderStatus)
+        Assert.AreEqual(6.000D, Await ReadLineReceivedQuantityAsync(lineId), "After the first receipt, ReceivedQuantity must be exactly what THAT receipt sent.")
+
+        Dim secondOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = 4.000D, .Cost = 2.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual(ReceivingOutcomeKind.Created, secondOutcome.Kind)
+        Assert.AreEqual("FullyReceived", secondOutcome.Response.PurchaseOrderStatus)
+        Assert.AreEqual(10.000D, Await ReadLineReceivedQuantityAsync(lineId), "The two receipts together must sum to exactly the ordered quantity, read from the stored column, not the status.")
+        Assert.AreEqual("FullyReceived", Await ReadOrderStatusAsync(order.Id))
+
+    End Function
+
+    ''' <summary>P4-06 box 2: three receipts accumulate correctly, including a final one that exactly closes the line.</summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_ThreeReceipts_AccumulateCorrectlyIncludingAnExactClose() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 15.000D, 1.0000D)})
+        Dim lineId As Integer = order.Lines(0).Id
+
+        Dim quantities As Decimal() = {5.000D, 4.000D, 6.000D}
+        Dim runningTotal As Decimal = 0D
+
+        For index As Integer = 0 To quantities.Length - 1
+
+            Dim outcome As ReceivingOutcome =
+                Await _receivingService.ReceiveAsync(
+                    order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                        New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = quantities(index), .Cost = 1.0000D}
+                    },
+                    _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+            runningTotal += quantities(index)
+
+            Assert.AreEqual(ReceivingOutcomeKind.Created, outcome.Kind, $"Receipt {index + 1} must succeed.")
+            Assert.AreEqual(runningTotal, Await ReadLineReceivedQuantityAsync(lineId), $"After receipt {index + 1}, ReceivedQuantity must be the running total, not merely the last delta.")
+
+            Dim expectedStatus As String = If(runningTotal = 15.000D, "FullyReceived", "PartiallyReceived")
+            Assert.AreEqual(expectedStatus, outcome.Response.PurchaseOrderStatus, $"Receipt {index + 1} of 3.")
+
+        Next
+
+        Assert.AreEqual("FullyReceived", Await ReadOrderStatusAsync(order.Id), "The third receipt exactly closes the line at 5+4+6=15.")
+
+    End Function
+
+    ''' <summary>P4-06 box 3: each receipt writes its OWN StockMovements row (never one row updated in place - StockMovements is append-only, ADR-013), and the ledger reconciles after EVERY receipt, not only the last.</summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_TwoReceipts_EachWritesItsOwnMovementAndLedgerReconcilesAfterEach() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 10.000D, 1.5000D)})
+        Dim lineId As Integer = order.Lines(0).Id
+
+        Dim firstCorrelationId As String = Guid.NewGuid().ToString()
+        Await _receivingService.ReceiveAsync(
+            order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = 3.000D, .Cost = 1.5000D}
+            },
+            _inventoryUserId, firstCorrelationId, Guid.NewGuid().ToString())
+
+        Assert.AreEqual(1L, Await CountMovementsAsync(firstCorrelationId, productId), "The first receipt's own movement row.")
+        Await AssertReconcilesAsync(productId, "after the first receipt")
+
+        Dim secondCorrelationId As String = Guid.NewGuid().ToString()
+        Await _receivingService.ReceiveAsync(
+            order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = 7.000D, .Cost = 1.5000D}
+            },
+            _inventoryUserId, secondCorrelationId, Guid.NewGuid().ToString())
+
+        Assert.AreEqual(1L, Await CountMovementsAsync(secondCorrelationId, productId), "The second receipt's own movement row, distinct from the first.")
+        Assert.AreEqual(1L, Await CountMovementsAsync(firstCorrelationId, productId), "The first receipt's movement row must still be there, unedited - StockMovements is append-only.")
+        Await AssertReconcilesAsync(productId, "after the second receipt")
+
+        Assert.AreEqual(10.000D, Await ReadBalanceAsync(productId), "Balance must be the SUM of both movements.")
+
+    End Function
+
+    ''' <summary>P4-06 box 4: one line closed on the FIRST of two receipts and the other only closed on the second - the order stays PartiallyReceived until the second receipt, and the already-closed line's ReceivedQuantity is untouched by the second receipt.</summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_MixedLinesAcrossTwoReceipts_StaysPartiallyReceivedUntilBothClose() As Task
+
+        Dim productA As Integer = Await CreateFixtureProductAsync()
+        Dim productB As Integer = Await CreateFixtureProductAsync()
+
+        Dim order As PurchaseOrderResponse =
+            Await CreateApprovedOrderAsync({(productA, 5.000D, 1.0000D), (productB, 8.000D, 2.0000D)})
+        Dim lineA As Integer = order.Lines(0).Id
+        Dim lineB As Integer = order.Lines(1).Id
+
+        ' Receipt 1: line A closes completely, line B only partially.
+        Dim firstOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(),
+                New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineA, .QuantityReceived = 5.000D, .Cost = 1.0000D},
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineB, .QuantityReceived = 3.000D, .Cost = 2.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual("PartiallyReceived", firstOutcome.Response.PurchaseOrderStatus, "Line B is still short, so the order must not be FullyReceived even though line A closed exactly.")
+        Assert.AreEqual(5.000D, Await ReadLineReceivedQuantityAsync(lineA))
+        Assert.AreEqual(3.000D, Await ReadLineReceivedQuantityAsync(lineB))
+
+        ' Receipt 2: only line B, closing the remaining 5.
+        Dim secondOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(),
+                New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineB, .QuantityReceived = 5.000D, .Cost = 2.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual(ReceivingOutcomeKind.Created, secondOutcome.Kind)
+        Assert.AreEqual("FullyReceived", secondOutcome.Response.PurchaseOrderStatus)
+        Assert.AreEqual(5.000D, Await ReadLineReceivedQuantityAsync(lineA), "Line A must be untouched by a receipt that names only line B.")
+        Assert.AreEqual(8.000D, Await ReadLineReceivedQuantityAsync(lineB))
+
+    End Function
+
+    Private Async Function AssertReconcilesAsync(productId As Integer, whenLabel As String) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Dim discrepancies = Await LedgerReconciliation.FindDiscrepanciesAsync(connection)
+            Dim found = discrepancies.FirstOrDefault(Function(d) d.ProductId = productId)
+            Dim detail As String =
+                If(found Is Nothing, String.Empty,
+                   $"expected {found.ExpectedQuantity}, actual {found.ActualQuantity}, delta {found.Delta}")
+            Assert.IsNull(found, $"Product {productId} must reconcile {whenLabel}: {detail}")
+        End Using
+
+    End Function
+
     ' ------------------------------------------------------------------ other refusals
 
     <TestMethod>
@@ -510,6 +691,54 @@ Public Class ReceivingTests
         End Using
 
         Assert.AreEqual(4.000D, Await ReadBalanceAsync(productId))
+
+    End Function
+
+    ''' <summary>P4-06, over the live authorized HTTP path rather than the direct service: two separate POST /api/v1/receipts calls from the SAME Receiving.Confirm-authorized session accumulate to FullyReceived, proving accumulation is not an artifact of calling ReceiveAsync directly.</summary>
+    <TestMethod>
+    Public Async Function ReceiveGoods_TwoSequentialReceiptsOverHttp_AccumulateToFullyReceived() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 10.000D, 1.0000D)})
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryUsername)
+
+            Dim firstRequest As New ReceiveGoodsRequest With {
+                .PurchaseOrderId = order.Id,
+                .ReferenceNumber = NewReferenceNumber(),
+                .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                .Lines = New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = order.Lines(0).Id, .QuantityReceived = 6.000D, .Cost = 1.0000D}
+                }
+            }
+
+            Using firstResponse As HttpResponseMessage = Await SendAsync(client, HttpMethod.Post, "/api/v1/receipts", token, firstRequest)
+                Assert.AreEqual(HttpStatusCode.Created, firstResponse.StatusCode, "Body: " & Await firstResponse.Content.ReadAsStringAsync())
+                Dim firstBody As ReceiptResponse = Await firstResponse.Content.ReadFromJsonAsync(Of ReceiptResponse)()
+                Assert.AreEqual("PartiallyReceived", firstBody.PurchaseOrderStatus)
+            End Using
+
+            Dim secondRequest As New ReceiveGoodsRequest With {
+                .PurchaseOrderId = order.Id,
+                .ReferenceNumber = NewReferenceNumber(),
+                .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                .Lines = New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = order.Lines(0).Id, .QuantityReceived = 4.000D, .Cost = 1.0000D}
+                }
+            }
+
+            Using secondResponse As HttpResponseMessage = Await SendAsync(client, HttpMethod.Post, "/api/v1/receipts", token, secondRequest)
+                Assert.AreEqual(HttpStatusCode.Created, secondResponse.StatusCode, "Body: " & Await secondResponse.Content.ReadAsStringAsync())
+                Dim secondBody As ReceiptResponse = Await secondResponse.Content.ReadFromJsonAsync(Of ReceiptResponse)()
+                Assert.AreEqual("FullyReceived", secondBody.PurchaseOrderStatus)
+            End Using
+
+        End Using
+
+        Assert.AreEqual(10.000D, Await ReadBalanceAsync(productId))
+        Assert.AreEqual(10.000D, Await ReadLineReceivedQuantityAsync(order.Lines(0).Id))
 
     End Function
 

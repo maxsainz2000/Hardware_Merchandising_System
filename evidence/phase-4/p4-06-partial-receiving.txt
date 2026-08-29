@@ -1,0 +1,156 @@
+P4-06 — Partial receiving accumulates across receipts
+=========================================================================
+
+Files:
+  src/tests/Merchandising.Tests.Integration/ReceivingTests.vb (extended)
+
+-------------------------------------------------------------------------
+SECTION 0 — no production code changed
+-------------------------------------------------------------------------
+
+P4-05's ReceivingService.ReceiveAsync already re-reads PurchaseOrderLines.
+ReceivedQuantity fresh, under a row lock, on EVERY call
+(PurchaseOrderRepository.GetLinesForUpdateAsync), and projects the
+incoming receipt's quantities onto that live value to decide
+ReceivePartially vs. ReceiveFully. It carries no state between calls. So a
+second, separate POST /api/v1/receipts against a line that already has a
+nonzero ReceivedQuantity naturally sees the accumulated value and computes
+the correct remaining/closing decision - this was a consequence of P4-05's
+design, not a new mechanism this card needed to add.
+
+This was confirmed with the user before starting: P4-06's job here is to
+PROVE that against the real database with genuinely separate receipts
+(distinct reference numbers, idempotency keys and correlation ids - never
+a replay of the same request), not to write new accumulation logic. No
+file under src/Merchandising.Api, src/Merchandising.Infrastructure or
+src/Merchandising.Contracts changed for this card. Only
+src/tests/Merchandising.Tests.Integration/ReceivingTests.vb grew five new
+tests (four direct-service, one HTTP round-trip) proving each Done-when
+box.
+
+-------------------------------------------------------------------------
+SECTION 1 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "Two sequential partial receipts sum to the ordered quantity ->
+FullyReceived, asserted on the stored ReceivedQuantity, not inferred from
+the status"
+  ReceiveAsync_TwoSequentialPartials_SumToOrderedAndMovesToFullyReceived
+    - receipt 1 (6 of 10): PartiallyReceived, ReceivedQuantity=6.000, read
+      from PurchaseOrderLines directly.
+    - receipt 2 (4 of 10): FullyReceived, ReceivedQuantity=10.000 - the
+      SUM of both receipts, not merely "whatever the last receipt sent".
+
+Box: "Three or more receipts accumulate correctly, including a final one
+that exactly closes the line"
+  ReceiveAsync_ThreeReceipts_AccumulateCorrectlyIncludingAnExactClose
+    - three receipts of 5, 4, 6 against a 15-unit line; asserts the
+      RUNNING TOTAL after each one (5, then 9, then 15) and the correct
+      status at each step (Partial, Partial, then FullyReceived on the
+      exact close).
+
+Box: "Each receipt writes its OWN movement rows; the ledger reconciles
+after every one"
+  ReceiveAsync_TwoReceipts_EachWritesItsOwnMovementAndLedgerReconcilesAfterEach
+    - asserts exactly one StockMovements row per receipt's own correlation
+      Id (never a shared or updated-in-place row - StockMovements stays
+      append-only, ADR-013), that the FIRST receipt's row is still present
+      and unedited after the second receipt runs, and calls
+      LedgerReconciliation.FindDiscrepanciesAsync directly AFTER EACH
+      receipt (not only once at the end) - proving the ledger never goes
+      out of sync even transiently between the two commits.
+
+Box: "Mixed lines behave independently - one line fully received and
+another partially leaves the order PartiallyReceived"
+  ReceiveAsync_MixedLinesAcrossTwoReceipts_StaysPartiallyReceivedUntilBothClose
+    - receipt 1 closes line A exactly (5 of 5) and only partially receives
+      line B (3 of 8): order stays PartiallyReceived because line B is
+      still short, even though line A is done.
+    - receipt 2 touches ONLY line B, closing the remaining 5: order moves
+      to FullyReceived, and line A's ReceivedQuantity is asserted
+      unchanged by a receipt that never named it.
+
+Box: "Matrix suite extended; integration suite green"
+  No new route exists for this card - POST /api/v1/receipts is the same
+  Receiving.Confirm-gated route P4-05's AuthorizationMatrixTests.
+  ReceivingConfirm_MatrixMatchesPolicyRegistry already covers (positive,
+  negative and anonymous cells). What this card adds instead is
+  ReceiveGoods_TwoSequentialReceiptsOverHttp_AccumulateToFullyReceived -
+  two real POST calls through the same authorized InventoryClerk session,
+  proving accumulation holds over the live HTTP path and is not an
+  artifact of calling ReceiveAsync directly in the other tests. Full suite
+  green - see SECTION 2.
+
+-------------------------------------------------------------------------
+SECTION 2 — this card's own tests in isolation, named
+-------------------------------------------------------------------------
+
+Command:
+  dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+    --configuration Debug --no-build --nologo \
+    --filter "FullyQualifiedName~ReceivingTests" --logger "console;verbosity=normal"
+
+  Passed ReceiveAsync_FreshProductNoPriorBalance_WritesOneMovementAndMatchingBalance [399 ms]
+  Passed ReceiveAsync_TwoLines_EachWritesItsOwnMovementAndBalance [54 ms]
+  Passed ReceiveAsync_PartialQuantity_MovesOrderToPartiallyReceived [48 ms]
+  Passed ReceiveAsync_MixedLinesOneFullOnePartial_StaysPartiallyReceived [47 ms]
+  Passed ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode [131 ms]
+  Passed ReceiveAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockIncrease [45 ms]
+  Passed ReceiveAsync_FaultInjectedBeforeCommit_RollsBackEveryEffect [83 ms]
+  Passed ReceiveAsync_Committed_LedgerReconciles [50 ms]
+  Passed ReceiveAsync_TwoSequentialPartials_SumToOrderedAndMovesToFullyReceived [49 ms]
+  Passed ReceiveAsync_ThreeReceipts_AccumulateCorrectlyIncludingAnExactClose [57 ms]
+  Passed ReceiveAsync_TwoReceipts_EachWritesItsOwnMovementAndLedgerReconcilesAfterEach [65 ms]
+  Passed ReceiveAsync_MixedLinesAcrossTwoReceipts_StaysPartiallyReceivedUntilBothClose [73 ms]
+  Passed ReceiveAsync_UnknownOrder_ReturnsPurchaseOrderNotFound [12 ms]
+  Passed ReceiveAsync_UnknownLine_ReturnsLineNotFound [36 ms]
+  Passed ReceiveAsync_LineBelongsToDifferentOrder_ReturnsLineNotFound [66 ms]
+  Passed ReceiveAsync_DuplicateReferenceNumber_Refused [62 ms]
+  Passed ReceiveGoods_ValidRequestOverHttp_Returns201AndCommits [877 ms]
+  Passed ReceiveGoods_TwoSequentialReceiptsOverHttp_AccumulateToFullyReceived [317 ms]
+  Passed ReceiveGoods_DuplicatePurchaseOrderLineIdInRequest_Returns400 [202 ms]
+  Passed ReceiveGoods_OverScaleQuantity_Returns400 [196 ms]
+
+Test Run Successful.
+Total tests: 20
+     Passed: 20
+
+(The first 15 are P4-05's own tests, still green unchanged - this card
+added the five from ReceiveAsync_TwoSequentialPartials_... onward, plus
+ReceiveGoods_TwoSequentialReceiptsOverHttp_....)
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   272, Skipped:     0, Total:   272, Duration: 32 s
+
+All checks passed.
+
+(272 = 267 from P4-05's commit + 5 new P4-06 tests. Includes the
+AssemblyCleanup-driven P4-01 ledger reconciliation, which passed.)
+
+-------------------------------------------------------------------------
+SECTION 4 — what P4-06 deliberately does NOT own
+-------------------------------------------------------------------------
+
+  - Turning the CK_PurchaseOrderLines_ReceivedQuantity backstop into a
+    controlled 409 with its own stable error code, and proving the
+    DATABASE (not just the API) is what refuses over-receiving - P4-07.
+  - Purchase returns - P4-08.
