@@ -1,0 +1,162 @@
+===============================================================================
+P4-14 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
+Captured 2026-08-29 on LAPTOP-3HH6OHHE
+Card: tasks.md P4-14  |  Gate: Phase 4 exit criterion "Clean-clone build and
+both test suites green"  |  plan.md section 7 (Phase 4 Exit), section 9
+(Phase definition of done)
+
+RE-CAPTURED once. The first attempt at commit 98f0908 built with 9 warnings
+(MSTEST0037: three integration test files used Assert.AreEqual against a
+collection's .Count instead of Assert.HasCount/Assert.IsEmpty) - a real
+failure of this card's own "0 warnings" bar, not a rounding question. Fixed
+at commit 4135d52 (assertion behaviour unchanged, confirmed by rerunning
+both suites before this capture) and the clone redone from that commit. The
+first attempt's log is not kept - it is superseded, not a separate finding.
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds all
+eleven projects at zero warnings, and passes the guardrails and BOTH test
+suites - including the integration suite, which runs against the real pinned
+MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. A clone that had to create
+those from nothing is what scripts/bootstrap.ps1 exists for, and proving it
+on a machine the author has never configured is a Phase 6 exit criterion
+(plan.md section 7, promoted by ADR-012) - not this one. Same wording as
+P1-20, P2-13 and P3-09, deliberately: the claim has not grown.
+
+Source commit    : 4135d52df1091f130337b3f0b53eb460d2c79761
+                   (4135d52) "P4-14: fix MSTEST0037 analyzer warnings
+                   blocking the 0-warning build"
+Clone target     : <scratchpad>\cc-p4-14  (outside the repository, deleted
+                   after capture)
+bin/obj at clone : 0 directories - verified by enumeration before building
+dotnet SDK       : 10.0.301
+MariaDB          : 10.4.32-MariaDB (XAMPP 8.2.12-0)
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+                   -RepoRoot <clone>
+Exit code        : 0
+Elapsed          : 00:01:19 (build + guardrails + both suites, wall clock)
+
+
+===============================================================================
+1. GUARDRAILS - run twice, once by the script and once by the build
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+(Repeated identically inside the dotnet build step below - both runs pass.)
+
+
+===============================================================================
+2. BUILD - eleven projects, restored from nothing
+===============================================================================
+
+All eleven .vbproj restored ("Restored", not "up-to-date for restore", which
+is what distinguishes this from an in-place build), then built:
+
+  Merchandising.Domain
+  Merchandising.Contracts
+  Merchandising.ClientCommon
+  Merchandising.Infrastructure
+  Merchandising.Maintenance
+  Merchandising.Inventory
+  Merchandising.Procurement
+  Merchandising.Api
+  Merchandising.POS
+  Merchandising.Tests.Unit
+  Merchandising.Tests.Integration
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:10.65
+
+
+===============================================================================
+3. BOTH TEST SUITES - green
+===============================================================================
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    47, Skipped:     0, Total:    47,
+           Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   346, Skipped:     0, Total:   346,
+           Duration: 56 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+Skipped: 0 in both suites. Nothing was excluded, conditioned out, or marked
+inconclusive to reach this result. 346/346 integration includes the P4-01
+`<AssemblyCleanup>` ledger-reconciliation assertion (ADR-021) - it runs after
+every other integration test in the assembly and would fail the whole suite
+on any SUM(StockMovements) <> StockBalances drift. It did not fail: the
+ledger reconciles for every product on this run, against the real database,
+not a fixture.
+
+
+===============================================================================
+4. GROWTH SINCE THE PHASE 3 GATE
+===============================================================================
+
+  Point                                    Unit   Integration   Total
+  Phase 3 gate (edc4054, 2026-08-28)         44           211     255
+  Phase 4 gate (4135d52, 2026-08-29)         47           346     393
+
+Unit grew by 3 - InventoryLayoutTests (P4-12), the same three-assertion shape
+ProcurementLayoutTests set at the Phase 3 gate, extended to the Inventory
+client's window. Integration grew by 135 across Tracks A-E: the ledger
+reconciliation assertion itself (P4-01), receiving/returns (P4-02, P4-05
+through P4-08), counts/adjustments/low-stock (P4-03, P4-09 through P4-11),
+and the isolation-level proof (P4-04) - all against the real pinned MariaDB
+10.4.32 throughout, never a substitute.
+
+
+===============================================================================
+5. THE ONE DEFECT THIS CAPTURE FOUND, AND HOW IT WAS CLOSED
+===============================================================================
+
+Recorded because a clean-clone log that only reports success is not a check.
+
+The first clean-clone attempt at 98f0908 (the tree as every prior Phase 4
+card left it) built and passed both suites, but at 9 warnings, all
+MSTEST0037 ("Use Assert.HasCount/Assert.IsEmpty instead of
+Assert.AreEqual(n, x.Count)"), across ReceivingTests.vb, PurchaseReturnTests
+.vb and StockCountTests.vb. This card's own wording is "builds at 0
+warnings" - not "builds with only pre-existing warning types" or "0 new
+warnings" - so 9 is a genuine miss against the box as written, not a
+rounding question.
+
+Fixed at commit 4135d52: nine call sites rewritten from
+Assert.AreEqual(count, collection.Count) to Assert.HasCount(count,
+collection), and Assert.AreEqual(0, collection.Count) to
+Assert.IsEmpty(collection). Assertion behaviour is unchanged - both suites
+were rerun locally before committing and stayed green at the same counts
+(47/47, 346/346) - this is a mechanical rewrite the analyzer itself names,
+not a design change. The clone was then discarded and redone from the fix
+commit; this file reports that second, corrected run.
+
+No other defect surfaced. In particular: no MSB3030 recurrence (CARRY-04,
+watched since the Phase 3 gate) on this run - one clean-clone run is not
+evidence either way and CARRY-04 stays a watch item, not proof it is gone.
+
+
+===============================================================================
+6. CLEANUP
+===============================================================================
+
+<scratchpad>\cc-p4-14 deleted after this capture. Nothing under it is
+referenced by anything committed to the repository.

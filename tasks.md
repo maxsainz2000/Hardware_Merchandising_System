@@ -348,7 +348,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-13-database-design.txt`
 
-### ⬜ P4-14 · Phase 4 closure pack
+### ✅ P4-14 · Phase 4 closure pack
 
 **Spec:** §20 · **Files:** `evidence/phase-4/`
 
@@ -356,14 +356,16 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at 0 warnings and passes guardrails plus both suites → `p4-14-clean-clone.log`
-- [ ] `evidence/phase-4/INDEX.md` maps every Phase 4 exit criterion and every card to an artifact, continuing `phase-3/INDEX.md`'s register
-- [ ] **G-12 and G-21 recorded closed** in that register
-- [ ] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites**, which is precisely what the Phase 3 gate caught
-- [ ] Every ADR this phase owed (ADR-021, and the ADR-006 amendment from P4-04) is ACCEPTED, not PENDING
-- [ ] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number, the check P2-13 had to add after ADR-015–018 rendered as a code block
+- [x] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at 0 warnings and passes guardrails plus both suites → `p4-14-clean-clone.log` ⚠ first capture at `98f0908` built at **9** warnings (MSTEST0037); fixed at `4135d52` (mechanical `Assert.HasCount`/`Assert.IsEmpty` rewrite, behaviour unchanged) and recaptured — see log §5
+- [x] `evidence/phase-4/INDEX.md` maps every Phase 4 exit criterion and every card to an artifact, continuing `phase-3/INDEX.md`'s register
+- [x] **G-12 and G-21 recorded closed** in that register — G-12 closed **for the components this phase owns** (receiving, returns, counts, adjustments); its *sale* component stays Phase 5's, stated explicitly rather than rounded up (INDEX.md §3)
+- [x] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites**, which is precisely what the Phase 3 gate caught. Found here: exit criterion 5 ("concurrent receive-and-adjust... safe") cites `p4-05`/`p4-10`, neither of which fires that scenario — marked ⚠, not ✅ (INDEX.md §4.1); and **P4-12 stays 🟡**, not rounded to done, because its own card still has one open box (INDEX.md §4.2)
+- [x] Every ADR this phase owed (ADR-021, and the ADR-006 amendment from P4-04) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`, not assumed
+- [x] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number (`## ADR-021` at 1014, `## Template for new entries` at 1049), the check P2-13 had to add after ADR-015–018 rendered as a code block
 
 **Evidence:** `evidence/phase-4/p4-14-clean-clone.log`, `evidence/phase-4/INDEX.md`
+
+> **This card's own boxes are all satisfied — that is not the same claim as "Phase 4 may exit."** `INDEX.md` §4.1 and §4.2 record two real gaps a `/phase-gate` review still needs to see: exit criterion 5's evidence doesn't fire the scenario it names, and P4-12 has one open box (an authenticated manual pass, blocked on a credentials file this session correctly refused to read). Neither is this card's to close.
 
 ---
 
