@@ -34,6 +34,7 @@ Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
+Imports Merchandising.Contracts.Receiving
 Imports Merchandising.Contracts.Suppliers
 
 Namespace Api
@@ -384,6 +385,244 @@ Namespace Api
                 Await SendCoreAsync(HttpMethod.Post, "api/v1/inventory/stock/decrement", request, requiresAuthentication:=True)
 
             Return Materialize(Of StockDecrementResponse)(raw)
+
+        End Function
+
+        ''' <summary>Paginated, sorted stock balances - GET /api/v1/inventory/stock (Stock.Read, P4-11/P4-12).</summary>
+        Public Async Function SearchStockAsync(includeInactive As Boolean,
+                                               sort As String,
+                                               page As Integer,
+                                               pageSize As Integer) As Task(Of ApiResult(Of StockSearchResponse))
+
+            Dim query As New Dictionary(Of String, String) From {
+                {"page", page.ToString(CultureInfo.InvariantCulture)},
+                {"pageSize", pageSize.ToString(CultureInfo.InvariantCulture)},
+                {"includeInactive", includeInactive.ToString(CultureInfo.InvariantCulture)}
+            }
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                query("sort") = sort
+            End If
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Get, BuildPath("api/v1/inventory/stock", query), Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of StockSearchResponse)(raw)
+
+        End Function
+
+        ''' <summary>Paginated, sorted low-stock items - GET /api/v1/inventory/low-stock (LowStock.Review, P4-11/P4-12).</summary>
+        Public Async Function SearchLowStockAsync(sort As String,
+                                                   page As Integer,
+                                                   pageSize As Integer) As Task(Of ApiResult(Of LowStockSearchResponse))
+
+            Dim query As New Dictionary(Of String, String) From {
+                {"page", page.ToString(CultureInfo.InvariantCulture)},
+                {"pageSize", pageSize.ToString(CultureInfo.InvariantCulture)}
+            }
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                query("sort") = sort
+            End If
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Get, BuildPath("api/v1/inventory/low-stock", query), Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of LowStockSearchResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Date-bounded movement ledger for one product, with its current balance
+        ''' echoed alongside - GET /api/v1/inventory/stock/movements
+        ''' (Stock.ReviewMovements, P4-11/P4-12). fromDate/toDate are store-local
+        ''' yyyy-MM-dd text, or Nothing for an unbounded side - the server
+        ''' interprets the boundary, this client never computes it.
+        ''' </summary>
+        Public Async Function GetStockMovementsAsync(productId As Integer,
+                                                      fromDate As String,
+                                                      toDate As String,
+                                                      sort As String,
+                                                      page As Integer,
+                                                      pageSize As Integer) As Task(Of ApiResult(Of StockMovementSearchResponse))
+
+            Dim query As New Dictionary(Of String, String) From {
+                {"productId", productId.ToString(CultureInfo.InvariantCulture)},
+                {"page", page.ToString(CultureInfo.InvariantCulture)},
+                {"pageSize", pageSize.ToString(CultureInfo.InvariantCulture)}
+            }
+
+            If Not String.IsNullOrWhiteSpace(fromDate) Then
+                query("fromDate") = fromDate
+            End If
+
+            If Not String.IsNullOrWhiteSpace(toDate) Then
+                query("toDate") = toDate
+            End If
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                query("sort") = sort
+            End If
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Get, BuildPath("api/v1/inventory/stock/movements", query), Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of StockMovementSearchResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Confirms receipt of goods against a purchase order - POST /api/v1/receipts
+        ''' (Receiving.Confirm). Over-receiving and status refusals come back as
+        ''' ordinary Rejected outcomes; this client never pre-empts them client-side.
+        ''' </summary>
+        ''' <param name="idempotencyKey">Client-generated per ADR-007. A fresh key per distinct receiving attempt.</param>
+        Public Async Function ReceiveGoodsAsync(purchaseOrderId As Integer,
+                                                referenceNumber As String,
+                                                lines As IReadOnlyList(Of ReceiveGoodsLineRequest),
+                                                idempotencyKey As String) As Task(Of ApiResult(Of ReceiptResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New ReceiveGoodsRequest With {
+                .PurchaseOrderId = purchaseOrderId,
+                .ReferenceNumber = If(referenceNumber, String.Empty),
+                .Lines = lines,
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, "api/v1/receipts", request, requiresAuthentication:=True)
+
+            Return Materialize(Of ReceiptResponse)(raw)
+
+        End Function
+
+        ''' <summary>Opens a new, empty stock-count session - POST /api/v1/stock-counts (StockCounts.Perform).</summary>
+        Public Async Function OpenStockCountAsync(idempotencyKey As String) As Task(Of ApiResult(Of StockCountResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New OpenStockCountRequest With {
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, "api/v1/stock-counts", request, requiresAuthentication:=True)
+
+            Return Materialize(Of StockCountResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Records one product's counted quantity against an Open session -
+        ''' POST /api/v1/stock-counts/{id}/lines. The system quantity and variance
+        ''' are computed server-side, never sent by this client.
+        ''' </summary>
+        Public Async Function RecordStockCountLineAsync(stockCountId As Integer,
+                                                         productId As Integer,
+                                                         countedQuantity As Decimal,
+                                                         idempotencyKey As String) As Task(Of ApiResult(Of StockCountLineResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New RecordStockCountLineRequest With {
+                .ProductId = productId,
+                .CountedQuantity = countedQuantity,
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/stock-counts/{stockCountId}/lines", request, requiresAuthentication:=True)
+
+            Return Materialize(Of StockCountLineResponse)(raw)
+
+        End Function
+
+        ''' <summary>Closes an Open stock-count session - POST /api/v1/stock-counts/{id}/close. Immutable from this point on.</summary>
+        Public Async Function CloseStockCountAsync(stockCountId As Integer, idempotencyKey As String) As Task(Of ApiResult(Of StockCountResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New CloseStockCountRequest With {
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/stock-counts/{stockCountId}/close", request, requiresAuthentication:=True)
+
+            Return Materialize(Of StockCountResponse)(raw)
+
+        End Function
+
+        ''' <summary>Reads one stock-count session back, with its lines - GET /api/v1/stock-counts/{id}. Open, closed, or otherwise.</summary>
+        Public Async Function GetStockCountAsync(stockCountId As Integer) As Task(Of ApiResult(Of StockCountResponse))
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Get, $"api/v1/stock-counts/{stockCountId}", Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of StockCountResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Requests a stock adjustment - POST /api/v1/adjustments (Adjustments.Request).
+        ''' Below the configured threshold this applies immediately; at or above it,
+        ''' the response comes back Pending, awaiting a second person's approval.
+        ''' </summary>
+        Public Async Function RequestAdjustmentAsync(productId As Integer,
+                                                      quantityVariance As Decimal,
+                                                      reason As String,
+                                                      idempotencyKey As String) As Task(Of ApiResult(Of AdjustmentResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New RequestAdjustmentRequest With {
+                .ProductId = productId,
+                .QuantityVariance = quantityVariance,
+                .Reason = If(reason, String.Empty),
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, "api/v1/adjustments", request, requiresAuthentication:=True)
+
+            Return Materialize(Of AdjustmentResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Approves a Pending adjustment - POST /api/v1/adjustments/{id}/approve
+        ''' (Adjustments.Approve). A self-approval refusal comes back as an
+        ''' ordinary 403 Rejected outcome, the same shape ApprovePurchaseOrderAsync
+        ''' documents for orders (ADR-017 section 6).
+        ''' </summary>
+        Public Async Function ApproveAdjustmentAsync(id As Integer) As Task(Of ApiResult(Of AdjustmentResponse))
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/adjustments/{id}/approve", Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of AdjustmentResponse)(raw)
+
+        End Function
+
+        ''' <summary>Rejects a Pending adjustment, applying no stock change - POST /api/v1/adjustments/{id}/reject.</summary>
+        Public Async Function RejectAdjustmentAsync(id As Integer) As Task(Of ApiResult(Of AdjustmentResponse))
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/adjustments/{id}/reject", Nothing, requiresAuthentication:=True)
+
+            Return Materialize(Of AdjustmentResponse)(raw)
 
         End Function
 

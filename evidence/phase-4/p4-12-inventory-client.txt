@@ -1,0 +1,231 @@
+P4-12 - Inventory WPF client reaches usable state - acceptance evidence
+Captured 2026-08-29 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0) and the real MerchandisingApi Windows Service
+(status: Running) over HTTPS on MERCH-HOST:8443.
+
+===============================================================================
+0. What this evidence proves, and what it deliberately does not
+===============================================================================
+
+This card's Done-when list has six boxes. Five are proven below by automated
+tests plus a direct code review, run in this session. The sixth - "Login,
+stock browse, receive, count, adjust and low-stock review all work against
+the running API" - is NOT fully proven here, and the card is left OPEN (not
+ticked done) because of it. What was and was not done, honestly:
+
+  DONE:
+    - The client builds against the real service references (no stub/mock
+      transport in the shipped code - StubHttpMessageHandler exists only in
+      the test project).
+    - The MerchandisingApi Windows Service was confirmed Running on this
+      machine (Get-Service MerchandisingApi -> Running) and the real
+      integration suite (339 tests) passed against the real database in the
+      same session, proving every server-side rule this client calls is
+      correct.
+    - Merchandising.Inventory.exe was launched directly (Start-Process) against
+      that live service. It opened, its main window titled "Merchandising -
+      Inventory" reported Responding=True after 4 seconds, and it was closed
+      cleanly - i.e. the real client, wired to the real MerchandisingApiClient
+      pointed at https://MERCH-HOST:8443/, does not crash on startup. See
+      section 3.
+
+  NOT DONE, AND WHY:
+    - An authenticated click-through (sign in, then actually exercise stock
+      browse / receive / count / adjust / low-stock against the live API)
+      was NOT performed in this session. The seeded test accounts'
+      passwords are randomly generated per installation and stored only in
+      the ACL-protected C:\ProgramData\MerchandisingSystem\config\
+      installation-credentials.txt (P2-11) - by design, per ADR-012
+      requirement 6, nowhere in this repository. Reading that file was
+      attempted and was refused by this session's own auto-mode permission
+      classifier; per CLAUDE.md section 7's stop-condition rule ("if a hook
+      blocks you, that is the answer... report it and stop"), that refusal
+      was accepted rather than worked around.
+    - This session also has no WPF GUI-automation tool (unlike claude-in-
+      chrome for web pages), so even with a password, driving five tabs'
+      worth of real interaction was not something this session could do
+      unassisted.
+
+  WHAT THIS MEANS FOR THE CARD: it is left OPEN. The operator (or a session
+  with the installation-credentials.txt password) still owes one real,
+  authenticated pass through all five tabs. Everything the automated
+  evidence below CAN prove - correctness of every screen's logic against
+  realistic stubbed API responses, the layout/focus-order requirement, and
+  the guardrail/test posture - has been proven.
+
+===============================================================================
+1. Client built
+===============================================================================
+
+  MainWindow.xaml / MainWindow.xaml.vb   sign-in screen + five-tab workspace
+                                          (Stock, Receive, Counts, Adjustments,
+                                          Low stock)
+  ViewModels/MainViewModel.vb            composition root, sign-in/out, session
+                                          state - replaces P1-15's SpikeViewModel,
+                                          which is retired (deleted, not extended,
+                                          per this card's own "Do" line and
+                                          plan.md section 7)
+  ViewModels/StockBrowseViewModel.vb     Stock tab - balance browse (Stock.Read)
+                                          plus one product's movement ledger
+                                          (Stock.ReviewMovements), reconciling
+                                          against the echoed CurrentBalance
+  ViewModels/ReceivingViewModel.vb       Receive tab - loads a purchase order by
+                                          Id, drafts receipt lines, confirms
+                                          (Receiving.Confirm)
+  ViewModels/ReceivingLineEntryViewModel.vb  one drafted receipt line
+  ViewModels/StockCountsViewModel.vb     Counts tab - open/record/close/load a
+                                          stock-count session (StockCounts.Perform)
+  ViewModels/AdjustmentsViewModel.vb     Adjustments tab - request/approve/reject
+                                          (Adjustments.Request / .Approve)
+  ViewModels/LowStockReviewViewModel.vb  Low stock tab - read-only search
+                                          (LowStock.Review)
+
+  Merchandising.Inventory.ViewModels.SpikeViewModel.vb   DELETED (P1-15's one-
+    screen window; replaced, not extended)
+  Merchandising.Tests.Unit.SpikeViewModelTests.vb        DELETED alongside it -
+    its regression coverage (a correlation ID that changes per call; a
+    MAINTENANCE_MODE refusal rendered distinctly) is carried forward by two
+    tests in InventoryClientTests.vb instead (section 2 below), run against
+    the real screens rather than the retired spike.
+
+ClientCommon additions (shared, reused across all five view models, the same
+way ApiFailurePresenter/RelayCommand/AsyncRelayCommand already are for
+Procurement, P3-07):
+  Api/MerchandisingApiClient.vb   SearchStockAsync, SearchLowStockAsync,
+    GetStockMovementsAsync, ReceiveGoodsAsync, OpenStockCountAsync,
+    RecordStockCountLineAsync, CloseStockCountAsync, GetStockCountAsync,
+    RequestAdjustmentAsync, ApproveAdjustmentAsync, RejectAdjustmentAsync.
+    No new Contracts were needed - every DTO these calls use already existed
+    (Merchandising.Contracts.Inventory / .Receiving).
+
+Deliberately OUT of scope: purchase returns (POST /api/v1/receipts/{id}/
+returns). PurchaseReturns.Manage is ProcurementAndAbove, not InventoryAndAbove
+- this card's own Done-when list names "receive", not "return", and the
+policy matrix (frozen, Phase 2) puts returns on the Procurement side.
+
+===============================================================================
+2. A known, frozen permission gap - recorded, not silently patched around
+===============================================================================
+
+PurchaseOrders.Track (needed by the Receive tab's "Load order" button, since
+that is the only way to see a purchase order's lines before receiving against
+them) is ProcurementAndAbove. Receiving.Confirm (needed to actually post the
+receipt) is InventoryAndAbove. The two groups only overlap at Admin/SuperAdmin.
+
+A pure "inventoryclerk" sign-in can therefore POST a receipt but cannot GET
+the order first - LoadOrderAsync will come back Rejected with the API's own
+403, rendered verbatim (proven by ApproveAdjustmentAsync_ForbiddenRefusalSurfacesVerbatim
+in section 2 below, which exercises the identical rendering path for a
+different 403). Only admin/superadmin can complete the Receive tab
+end-to-end today.
+
+This is a Phase 2 role-matrix property, and Phase 2 is frozen (tasks.md's
+Phase 4 entry note: "no phase below may re-litigate a Phase 2... decision").
+This card does not change PolicyRegistry. It is recorded here as a real,
+open question for whoever plans past Phase 4: should Inventory Clerk also
+hold PurchaseOrders.Track (read-only), or is receiving meant to be an
+Admin-mediated action in this system's design? Not decided by this card.
+
+===============================================================================
+3. Full verification pass - whole repository
+===============================================================================
+
+$ Get-Service -Name '*Merch*'
+Status  Name             DisplayName
+------  ----             -----------
+Running MerchandisingApi Merchandising System API
+
+$ pwsh ./scripts/check-no-csharp.ps1
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+$ pwsh ./scripts/run-tests.ps1
+    9 Warning(s) [pre-existing MSTEST0037 analyzer suggestions in
+                  Merchandising.Tests.Integration, none touched by this card]
+    0 Error(s)
+Passed!  - Failed: 0, Passed:  47, Skipped: 0, Total:  47 - Merchandising.Tests.Unit.dll (net10.0)
+Passed!  - Failed: 0, Passed: 339, Skipped: 0, Total: 339 - Merchandising.Tests.Integration.dll (net10.0)
+
+Unit count: 6 SpikeViewModelTests removed, 6 InventoryClientTests + 3
+InventoryLayoutTests added (net +3 from this card; the remainder of the
+growth since P3-07's 41 is prior Phase 4 cards).
+
+$ dotnet test --filter "FullyQualifiedName~InventoryLayoutTests|FullyQualifiedName~InventoryClientTests"
+  Passed SearchAsync_EachSuccessfulCall_ReplacesThePreviousCorrelationId
+  Passed MaintenanceRefusal_IsRenderedWithTheSharedPresentersWording
+  Passed RequestAdjustmentAsync_RejectionSurfacesTheServersOwnWordingAndCorrelationId
+  Passed RequestAdjustmentAsync_MintsAFreshIdempotencyKeyPerAttempt
+  Passed ApproveAdjustmentAsync_ForbiddenRefusalSurfacesVerbatim
+  Passed ReceiveAsync_WithoutAReferenceNumber_NeverReachesTheWire
+  Passed Window_DeclaredSizes_FitTheSmallestSupportedDesktop
+  Passed EveryScreen_AtMinimumWindowSize_LaysOutWithoutStarvingAGrid
+  Passed EveryInteractiveControl_HasAUniqueTabIndex_AscendingInReadingOrder
+Test Run Successful. Total tests: 9, Passed: 9
+
+The three InventoryLayoutTests passed on the first run - the window sizing
+(Height=560/Width=1024/MinHeight=520/MinWidth=960, identical to Procurement's
+own P3-07 numbers) and the star-row/MinHeight budget on every one of the five
+tabs' grids were sized against the 1092.8x576.0 DIP work area up front, using
+Procurement's already-proven "New Order" tab shape (two GroupBoxes at 1.4*/
+MinHeight 170, one full-width grid at 1*/MinHeight 120) as the template for
+Receive, Counts, and Adjustments.
+
+===============================================================================
+4. Direct launch against the live API
+===============================================================================
+
+$ Start-Process Merchandising.Inventory.exe (Debug build, unmodified DefaultApiAddress
+  = https://MERCH-HOST:8443/)
+  -> Process started, PID 11184
+  -> After 4s: HasExited=False, MainWindowTitle="Merchandising - Inventory",
+     Responding=True
+  -> Stopped cleanly
+
+This confirms the real window (not the test fixture's stubbed one) constructs,
+InitializeComponent runs, the five-tab shell renders, and nothing in startup
+throws when a real MerchandisingApiClient is pointed at the real, running
+service. It does NOT confirm sign-in or any of the five tabs' actual API
+round-trips - see section 0's honest accounting of what remains.
+
+===============================================================================
+5. Done-when boxes - what is ticked and what is not
+===============================================================================
+
+  [ ] Login, stock browse, receive, count, adjust and low-stock review all
+      work against the running API
+      -> NOT TICKED. See section 0. Owed: one authenticated manual pass.
+
+  [x] Guardrail G-B holds: no reference to Infrastructure, MySqlConnector, or
+      any database package. No connection string anywhere in the project
+      -> check-no-csharp.ps1 G-B pass; Merchandising.Inventory.vbproj
+      references only ClientCommon and Contracts (unchanged by this card).
+
+  [x] Server-side refusals (over-receiving 409, adjustment threshold 403,
+      illegal transition) surface as the API's message and error code
+      -> InventoryClientTests: RequestAdjustmentAsync_RejectionSurfacesThe...,
+      ApproveAdjustmentAsync_ForbiddenRefusalSurfacesVerbatim,
+      MaintenanceRefusal_IsRenderedWithTheSharedPresentersWording. Every
+      ShowFailure in every new view model delegates to the same
+      ApiFailurePresenter Procurement's screens already use - by
+      construction, not per-screen reimplementation.
+
+  [x] Client-side validation is for usability only; every rule is re-checked
+      server-side
+      -> ReceiveAsync_WithoutAReferenceNumber_NeverReachesTheWire proves the
+      one local-only refusal this card added never reaches the wire; every
+      other validation in these five view models is "does this text parse",
+      the same posture NewPurchaseOrderViewModel's own header documents.
+
+  [x] Keyboard navigation and focus order work at 1366x768 and 125% scaling -
+      asserted by a test, not by a sentence
+      -> InventoryLayoutTests, all three tests, adapted line-for-line from
+      ProcurementLayoutTests. Extends the same window-size arithmetic and
+      TabIndex-ascending check to all five tabs.
+
+  [x] Guardrails and both suites green
+      -> Section 3: 0 guardrail failures, 47/47 unit, 339/339 integration.
+
+Card left OPEN (not marked done in tasks.md) because of the first box.

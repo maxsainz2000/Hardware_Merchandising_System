@@ -305,7 +305,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track F — The Inventory client
 
-### ⬜ P4-12 · Inventory WPF client reaches usable state
+### 🟡 P4-12 · Inventory WPF client reaches usable state
 
 **Spec:** §10.2, §16 · **Files:** `src/Merchandising.Inventory/`, `src/Merchandising.ClientCommon/`
 
@@ -313,12 +313,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Login, stock browse, receive, count, adjust and low-stock review all work against the running API
-- [ ] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
-- [ ] Server-side refusals (over-receiving 409, adjustment threshold 403, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
-- [ ] Client-side validation is for usability only; every rule is re-checked server-side
-- [ ] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test, not by a sentence.** Extend `ProcurementLayoutTests`' three assertions to this window: declared sizes against the 1092.8 × 576.0 DIP work area, every screen laid out at the window's own minimum with no grid starved, and unique TabIndex ascending in reading order per screen. **This is the box Phase 3 got wrong** — see the closure note at the top of this file; the mistake was writing the arithmetic down and never comparing it
-- [ ] Guardrails and both suites green
+- [ ] Login, stock browse, receive, count, adjust and low-stock review all work against the running API — **owed: an authenticated manual pass.** Everything the client itself does is built and unit-proven (`evidence/phase-4/p4-12-inventory-client.txt` §0/§4): the exe launches and stays responsive against the live, running `MerchandisingApi` service, but this session could not complete a real sign-in — the seeded accounts' passwords live only in the ACL-protected `installation-credentials.txt` (P2-11/ADR-012), and reading that file was refused by this session's own permission classifier and accepted as a stop condition (CLAUDE.md §7) rather than worked around
+- [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
+- [x] Server-side refusals (over-receiving 409, adjustment threshold 403, illegal transition) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
+- [x] Client-side validation is for usability only; every rule is re-checked server-side
+- [x] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test, not by a sentence.** Extended `ProcurementLayoutTests`' three assertions to this window (`InventoryLayoutTests.vb`): declared sizes against the 1092.8 × 576.0 DIP work area, every screen laid out at the window's own minimum with no grid starved, and unique TabIndex ascending in reading order per screen. All three passed on the first run
+- [x] Guardrails and both suites green — 47/47 unit, 339/339 integration, 0 guardrail failures
+
+**A known, frozen permission gap, recorded rather than silently patched around:** `PurchaseOrders.Track` (needed to look up an order before receiving against it) is `ProcurementAndAbove`; `Receiving.Confirm` is `InventoryAndAbove`. Only `admin`/`superadmin` sit in both groups, so a pure `inventoryclerk` sign-in can confirm a receipt but not look one up first. Phase 2's policy matrix is frozen — this card does not change it. Detail in the evidence file §2.
 
 **Evidence:** `evidence/phase-4/p4-12-inventory-client.txt`
 

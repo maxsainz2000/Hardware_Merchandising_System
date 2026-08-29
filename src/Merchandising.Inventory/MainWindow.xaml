@@ -1,294 +1,469 @@
-﻿<Window x:Class="MainWindow"
+<Window x:Class="MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Merchandising.Inventory"
-        xmlns:api="clr-namespace:Merchandising.ClientCommon.Api;assembly=Merchandising.ClientCommon"
+        xmlns:vm="clr-namespace:Merchandising.Inventory.ViewModels"
+        xmlns:conv="clr-namespace:Merchandising.ClientCommon.Converters;assembly=Merchandising.ClientCommon"
         mc:Ignorable="d"
-        Title="Merchandising - Inventory (Phase 1 spike)"
-        Height="640" Width="900"
-        MinHeight="560" MinWidth="720"
-        Background="#F7F8FA"
-        FontFamily="Segoe UI" FontSize="13"
-        UseLayoutRounding="True">
+        Title="Merchandising - Inventory" Height="560" Width="1024" MinHeight="520" MinWidth="960">
 
     <!--
-        P1-15 client spike. One window: sign in, call one protected endpoint,
-        run one decrement, and show the connection state truthfully.
+        Sizing is derived from the smallest supported desktop, not chosen by eye -
+        the same arithmetic Merchandising.Procurement's MainWindow (P3-07) already
+        uses. Spec section 5 / section 16: 1366x768 at 125% scaling. WPF lays out
+        in DIPs (1 DIP = 1/96"), so that display is 1366/1.25 x 768/1.25 = 1092.8 x
+        614.4 DIP, and a default taskbar (48 physical px = 38.4 DIP) leaves a work
+        area of 1092.8 x 576.0 DIP. Window.Height/Width include the caption and
+        border, so every one of the four values below must fit inside that work
+        area:
 
-        Deliberately not a feature screen. No product grid, no search, no
-        navigation - Phase 2 owns those.
+            Width  1024 <= 1092.8      MinWidth  960 <= 1092.8
+            Height  560 <=   576.0     MinHeight 520 <=   576.0
 
-        Spec section 16 obligations that ARE met here, because they are the
-        ones the card is about: a visible connection-unavailable state, a
-        loading indicator, clear validation messages, keyboard navigation with
-        a visible focus ring, and predictable tab order.
+        MinHeight is the value that matters. A minimum taller than the work area
+        cannot be shrunk to fit, so the bottom row leaves the screen and no amount
+        of dragging brings it back - Phase 3's own P3-07 regression, carried
+        forward as the box this card (P4-12) is explicitly warned not to repeat
+        (tasks.md's Phase 3 closure note). InventoryLayoutTests asserts these four
+        numbers against the work area it computes from the same arithmetic - change
+        one and the test fails.
     -->
 
     <Window.Resources>
-
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
-
-        <!-- Visible focus, as spec section 16 requires. The default WPF focus
-             rectangle is nearly invisible on a light surface. -->
-        <Style x:Key="FocusRing" TargetType="{x:Type Control}">
-            <Setter Property="FocusVisualStyle">
-                <Setter.Value>
-                    <Style>
-                        <Setter Property="Control.Template">
-                            <Setter.Value>
-                                <ControlTemplate>
-                                    <Rectangle Margin="-3" StrokeThickness="2" Stroke="#2563EB"
-                                               RadiusX="6" RadiusY="6" SnapsToDevicePixels="True" />
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
-                    </Style>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style TargetType="TextBox" BasedOn="{StaticResource FocusRing}">
-            <Setter Property="Padding" Value="8,6" />
-            <Setter Property="BorderBrush" Value="#D3D8E0" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Background" Value="White" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
-
-        <Style TargetType="PasswordBox" BasedOn="{StaticResource FocusRing}">
-            <Setter Property="Padding" Value="8,6" />
-            <Setter Property="BorderBrush" Value="#D3D8E0" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Background" Value="White" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
-
-        <Style TargetType="Button" BasedOn="{StaticResource FocusRing}">
-            <Setter Property="Padding" Value="16,8" />
-            <Setter Property="MinWidth" Value="132" />
-            <Setter Property="Margin" Value="0,0,10,0" />
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#C7CEDA" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-
-        <Style x:Key="SectionCard" TargetType="Border">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#E4E8EF" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="10" />
-            <Setter Property="Padding" Value="18" />
-            <Setter Property="Margin" Value="0,0,0,14" />
-        </Style>
-
-        <Style x:Key="FieldLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#5B6472" />
-            <Setter Property="Margin" Value="0,0,0,4" />
-        </Style>
-
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis"/>
     </Window.Resources>
 
-    <Grid Margin="22">
-
+    <Grid Margin="12">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!--
-            P1-18 maintenance warning. Spec section 15 step 2 requires
-            connected clients be warned while the lock is held.
+        <!-- Top bar: title, connection state, session, sign out -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
+            <TextBlock Text="Merchandising - Inventory" FontSize="18" FontWeight="Bold"
+                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+            <Button x:Name="SignOutButton" Content="Sign out" Command="{Binding SignOutCommand}"
+                    DockPanel.Dock="Right" TabIndex="99"
+                    Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}"/>
+            <TextBlock Text="{Binding CurrentUserDisplay}" DockPanel.Dock="Right" Margin="0,0,16,0"
+                       VerticalAlignment="Center"
+                       Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}"/>
+            <TextBlock Text="{Binding ConnectionText}" DockPanel.Dock="Right" Margin="0,0,16,0"
+                       VerticalAlignment="Center"/>
+        </DockPanel>
 
-            Collapsed until the API actually refuses a write with
-            MAINTENANCE_MODE - the client does not poll for this. The moment
-            it needs to know is the moment it is refused, and a poll would be
-            either too slow to matter or chatty enough to notice.
-
-            Amber, not red: this is a planned state the operator was told
-            about, not a fault. The red treatment belongs to "API unreachable",
-            which is a genuinely different situation and already has it.
-        -->
-        <Border Grid.Row="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,14"
-                Background="#FFF6E5" BorderBrush="#E8C37A" BorderThickness="1"
-                Visibility="{Binding IsInMaintenance, Converter={StaticResource BoolToVisibility}}">
+        <!-- Sign-in panel, shown only while signed out -->
+        <Border x:Name="SignInPanel" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+                MaxWidth="360" BorderBrush="Gray" BorderThickness="1" Padding="16"
+                Visibility="{Binding IsSignedIn, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel>
-                <TextBlock Text="System under maintenance" FontWeight="SemiBold" Foreground="#8A5B00" />
-                <TextBlock Text="{Binding MaintenanceMessage}" TextWrapping="Wrap"
-                           Foreground="#7A5410" Margin="0,3,0,0" />
-                <TextBlock Text="Changes are refused until maintenance finishes. Nothing you submitted was saved."
-                           TextWrapping="Wrap" Foreground="#7A5410" Margin="0,3,0,0" />
+                <TextBlock Text="Sign in" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock Text="Username"/>
+                <TextBox x:Name="UsernameBox" TabIndex="0" Margin="0,0,0,8"
+                         Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Text="Password"/>
+                <PasswordBox x:Name="PasswordBox" TabIndex="1" Margin="0,0,0,8"/>
+                <Button x:Name="SignInButton" Content="Sign in" Click="SignInButton_Click"
+                        IsDefault="True" TabIndex="2" HorizontalAlignment="Left"
+                        IsEnabled="{Binding CanSignIn}"/>
             </StackPanel>
         </Border>
 
-        <!-- Header: what this is, and where it is pointed. -->
-        <Grid Grid.Row="0" Margin="0,0,0,16">
+        <!-- Workspace, shown only once signed in -->
+        <TabControl Grid.Row="1" Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}">
 
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+            <TabItem Header="Stock">
+                <Grid DataContext="{Binding Stock}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1.2*" MinHeight="110"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1*" MinHeight="90"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-            <StackPanel Grid.Column="0">
-                <TextBlock Text="Inventory" FontSize="24" FontWeight="SemiBold" Foreground="#1B2430" />
-                <TextBlock Text="{Binding ApiAddress, StringFormat='Phase 1 client spike against {0}'}"
-                           Foreground="#6B7480" Margin="0,2,0,0" />
-            </StackPanel>
-
-            <!-- Connection status. Grey until the API has actually been
-                 contacted - "Not contacted yet" is not "online", and showing
-                 green before any call would be a lie the operator would act on. -->
-            <Border Grid.Column="1" CornerRadius="14" Padding="14,7" VerticalAlignment="Center"
-                    x:Name="ConnectionPill">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Background" Value="#EDEFF3" />
-                        <Setter Property="BorderBrush" Value="#D7DBE2" />
-                        <Setter Property="BorderThickness" Value="1" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Online}">
-                                <Setter Property="Background" Value="#E7F6EC" />
-                                <Setter Property="BorderBrush" Value="#9BD3AE" />
-                            </DataTrigger>
-                            <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Unavailable}">
-                                <Setter Property="Background" Value="#FDEAEA" />
-                                <Setter Property="BorderBrush" Value="#F0A9A9" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-
-                <TextBlock Text="{Binding ConnectionText}" FontWeight="SemiBold">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="#5B6472" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Online}">
-                                    <Setter Property="Foreground" Value="#1D6F3B" />
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding Connection}" Value="{x:Static api:ConnectionState.Unavailable}">
-                                    <Setter Property="Foreground" Value="#A32020" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-            </Border>
-
-        </Grid>
-
-        <!-- Sign in -->
-        <Border Grid.Row="2" Style="{StaticResource SectionCard}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                    <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
-                    <TextBox x:Name="UsernameBox" TabIndex="0"
-                             Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" />
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                    <TextBlock Text="Password" Style="{StaticResource FieldLabel}" />
-                    <!-- PasswordBox deliberately not bound: WPF does not expose
-                         Password as a dependency property, and the usual
-                         work-arounds put the plaintext into a bindable place.
-                         It is read straight into the API call instead. -->
-                    <PasswordBox x:Name="PasswordBox" TabIndex="1" />
-                </StackPanel>
-
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
-                    <Button x:Name="SignInButton" Content="Sign in" TabIndex="2" Click="SignInButton_Click"
-                            IsDefault="True" IsEnabled="{Binding CanSignIn}" />
-                    <Button x:Name="SignOutButton" Content="Sign out" TabIndex="3" Click="SignOutButton_Click"
-                            Margin="0" IsEnabled="{Binding CanCallProtected}" />
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <!-- Actions -->
-        <Border Grid.Row="3" Style="{StaticResource SectionCard}">
-            <StackPanel>
-
-                <TextBlock Text="Round trip" FontWeight="SemiBold" Foreground="#1B2430" Margin="0,0,0,12" />
-
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Grid.Column="0" Margin="0,0,12,0" Width="110">
-                        <TextBlock Text="Product ID" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="ProductIdBox" TabIndex="4"
-                                 Text="{Binding ProductId, UpdateSourceTrigger=PropertyChanged}" />
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                        <CheckBox Content="Include inactive" TabIndex="10" VerticalAlignment="Center" Margin="0,0,8,0"
+                                  IsChecked="{Binding IncludeInactive}"/>
+                        <TextBlock Text="Sort:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="150" TabIndex="11" Margin="0,0,8,0"
+                                 ToolTip="e.g. quantity:desc"
+                                 Text="{Binding SortText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Search" Command="{Binding SearchCommand}" TabIndex="12" IsDefault="True"/>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Margin="0,0,18,0" Width="110">
-                        <TextBlock Text="Quantity" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="QuantityBox" TabIndex="5"
-                                 Text="{Binding Quantity, UpdateSourceTrigger=PropertyChanged}" />
-                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Balances}" SelectedItem="{Binding SelectedBalance}"
+                              AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="13">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                            <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="60"/>
+                            <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90"/>
+                            <DataGridTextColumn Header="Reorder Level" Binding="{Binding ReorderLevel}" Width="100"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
 
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
-                        <Button x:Name="CallProtectedButton" Content="Call /auth/me" TabIndex="6" Click="CallProtectedButton_Click"
-                                IsEnabled="{Binding CanCallProtected}" />
-                        <Button x:Name="DecrementButton" Content="Decrement stock" TabIndex="7" Click="DecrementButton_Click"
-                                IsEnabled="{Binding CanCallProtected}" />
+                    <WrapPanel Grid.Row="2" Margin="0,8,0,8">
+                        <TextBlock Text="Movements for Product Id:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="70" TabIndex="20" Margin="0,0,8,0"
+                                 Text="{Binding MovementProductIdText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="From (yyyy-MM-dd):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="100" TabIndex="21" Margin="0,0,8,0"
+                                 Text="{Binding MovementFromDate, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="To (yyyy-MM-dd):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="100" TabIndex="22" Margin="0,0,8,0"
+                                 Text="{Binding MovementToDate, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="Sort:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="100" TabIndex="23" Margin="0,0,8,0"
+                                 ToolTip="e.g. createdAt:desc"
+                                 Text="{Binding MovementSortText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Load movements" Command="{Binding LoadMovementsCommand}" TabIndex="24"/>
+                    </WrapPanel>
+
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding Movements}" AutoGenerateColumns="False"
+                              IsReadOnly="True" TabIndex="25">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Delta" Binding="{Binding Delta}" Width="70"/>
+                            <DataGridTextColumn Header="Before" Binding="{Binding QuantityBefore}" Width="70"/>
+                            <DataGridTextColumn Header="After" Binding="{Binding QuantityAfter}" Width="70"/>
+                            <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="*"/>
+                            <DataGridTextColumn Header="Created (UTC)" Binding="{Binding CreatedAtUtc}" Width="150"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding MovementReconciliation}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
                     </StackPanel>
                 </Grid>
+            </TabItem>
 
-                <!-- Loading indicator (spec section 16). -->
-                <ProgressBar Height="3" Margin="0,14,0,0" IsIndeterminate="True" Foreground="#2563EB"
-                             Background="Transparent" BorderThickness="0"
-                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+            <TabItem Header="Receive">
+                <Grid DataContext="{Binding Receive}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1.4*" MinHeight="170"/>
+                        <RowDefinition Height="1*" MinHeight="120"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-            </StackPanel>
-        </Border>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
 
-        <!-- Result -->
-        <Border Grid.Row="4" Style="{StaticResource SectionCard}" Margin="0">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+                        <TextBlock Text="Purchase order Id:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="70" TabIndex="30" Margin="0,0,8,0"
+                                 Text="{Binding OrderIdText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Load order" Command="{Binding LoadOrderCommand}" TabIndex="31" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding LoadedOrderDisplay}" VerticalAlignment="Center"/>
+                    </StackPanel>
 
-                <TextBlock Grid.Row="0" Text="{Binding StatusMessage}" FontWeight="SemiBold" TextWrapping="Wrap">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="#1D6F3B" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding LastCallFailed}" Value="True">
-                                    <Setter Property="Foreground" Value="#A32020" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
+                    <GroupBox Header="Order lines" Grid.Column="0" Grid.Row="1" Margin="0,0,8,0">
+                        <DataGrid ItemsSource="{Binding OrderLines}" SelectedItem="{Binding SelectedOrderLine}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="32">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Line#" Binding="{Binding LineNumber}" Width="45"/>
+                                <DataGridTextColumn Header="SKU" Binding="{Binding ProductSku}" Width="70"/>
+                                <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="*"/>
+                                <DataGridTextColumn Header="Ordered" Binding="{Binding OrderedQuantity}" Width="70"/>
+                                <DataGridTextColumn Header="Received" Binding="{Binding ReceivedQuantity}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Header="Receive line" Grid.Column="1" Grid.Row="1">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Qty received:" Margin="0,0,0,2"/>
+                                <TextBox Width="100" TabIndex="33" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                         Text="{Binding ReceiveQuantityText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <TextBlock Text="Cost:" Margin="0,0,0,2"/>
+                                <TextBox Width="100" TabIndex="34" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                         Text="{Binding ReceiveCostText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Content="Add line" Command="{Binding AddLineCommand}" TabIndex="35"
+                                        HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Lines to receive" Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="2" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DataGrid Grid.Row="0" ItemsSource="{Binding DraftLines}" SelectedItem="{Binding SelectedDraftLine}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="36">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductDisplay}" Width="*"/>
+                                    <DataGridTextColumn Header="Qty" Binding="{Binding QuantityReceived}" Width="80"/>
+                                    <DataGridTextColumn Header="Cost" Binding="{Binding Cost}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,8,0,0">
+                                <Button Content="Remove selected line" Command="{Binding RemoveSelectedLineCommand}"
+                                        TabIndex="37" Margin="0,0,8,0"/>
+                                <TextBlock Text="Reference #:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <TextBox Width="160" TabIndex="38" Margin="0,0,8,0"
+                                         Text="{Binding ReferenceNumberText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Content="Receive goods" Command="{Binding ReceiveCommand}" TabIndex="39" FontWeight="Bold"/>
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Counts">
+                <Grid DataContext="{Binding Counts}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1.4*" MinHeight="170"/>
+                        <RowDefinition Height="1*" MinHeight="120"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+                        <Button Content="Open new count" Command="{Binding OpenCommand}" TabIndex="40" Margin="0,0,8,0"/>
+                        <TextBlock Text="Load count Id:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="70" TabIndex="41" Margin="0,0,8,0"
+                                 Text="{Binding LoadCountIdText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Load" Command="{Binding LoadCommand}" TabIndex="42" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding CurrentCountDisplay}" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <GroupBox Header="Product" Grid.Column="0" Grid.Row="1" Margin="0,0,8,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                                <TextBox Width="150" TabIndex="43" Margin="0,0,8,0"
+                                         Text="{Binding ProductSearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Content="Search" Command="{Binding SearchProductsCommand}" TabIndex="44"/>
+                            </StackPanel>
+
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding ProductResults}" SelectedItem="{Binding SelectedProduct}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="45">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Record line" Grid.Column="1" Grid.Row="1">
+                        <StackPanel>
+                            <TextBlock Text="Counted quantity:" Margin="0,0,0,2"/>
+                            <TextBox Width="100" TabIndex="46" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                     Text="{Binding CountedQuantityText, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Content="Record line" Command="{Binding RecordLineCommand}" TabIndex="47"
+                                    HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Count lines" Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="2" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DataGrid Grid.Row="0" ItemsSource="{Binding CountLines}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" TabIndex="48">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SKU" Binding="{Binding ProductSku}" Width="90"/>
+                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="*"/>
+                                    <DataGridTextColumn Header="Counted" Binding="{Binding CountedQuantity}" Width="80"/>
+                                    <DataGridTextColumn Header="System" Binding="{Binding SystemQuantity}" Width="80"/>
+                                    <DataGridTextColumn Header="Variance" Binding="{Binding Variance}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <Button Grid.Row="1" Content="Close count" Command="{Binding CloseCommand}" TabIndex="49"
+                                    Margin="0,8,0,0" HorizontalAlignment="Left" FontWeight="Bold"/>
+                        </Grid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Adjustments">
+                <Grid DataContext="{Binding Adjustments}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="1.4*" MinHeight="170"/>
+                        <RowDefinition Height="1*" MinHeight="120"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <GroupBox Header="Product" Grid.Column="0" Grid.Row="0" Margin="0,0,8,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                                <TextBox Width="150" TabIndex="50" Margin="0,0,8,0"
+                                         Text="{Binding ProductSearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Content="Search" Command="{Binding SearchProductsCommand}" TabIndex="51"/>
+                            </StackPanel>
+
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding ProductResults}" SelectedItem="{Binding SelectedProduct}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="52">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Request adjustment" Grid.Column="1" Grid.Row="0">
+                        <StackPanel>
+                            <TextBlock Text="Variance (+found more / -found less):" Margin="0,0,0,2" TextWrapping="Wrap"/>
+                            <TextBox Width="120" TabIndex="53" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                     Text="{Binding VarianceText, UpdateSourceTrigger=PropertyChanged}"/>
+                            <TextBlock Text="Reason:" Margin="0,0,0,2"/>
+                            <TextBox Width="220" TabIndex="54" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                     Text="{Binding ReasonText, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Content="Request adjustment" Command="{Binding RequestCommand}" TabIndex="55"
+                                    HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Adjustments (this session)" Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="1" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DataGrid Grid.Row="0" ItemsSource="{Binding Adjustments}" SelectedItem="{Binding SelectedAdjustment}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="56">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="40"/>
+                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="*"/>
+                                    <DataGridTextColumn Header="Variance" Binding="{Binding QuantityVariance}" Width="80"/>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90"/>
+                                    <DataGridCheckBoxColumn Header="Threshold" Binding="{Binding ExceedsThreshold}" Width="70"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,8,0,0">
+                                <Button Content="Approve" Command="{Binding ApproveCommand}" TabIndex="57" Margin="0,0,8,0"/>
+                                <Button Content="Reject" Command="{Binding RejectCommand}" TabIndex="58"/>
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Low stock">
+                <Grid DataContext="{Binding LowStock}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock Text="Sort:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="150" TabIndex="60" Margin="0,0,8,0"
+                                 ToolTip="e.g. quantity:asc"
+                                 Text="{Binding SortText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Search" Command="{Binding SearchCommand}" TabIndex="61" IsDefault="True"/>
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Items}" AutoGenerateColumns="False"
+                              IsReadOnly="True" TabIndex="62">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                            <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90"/>
+                            <DataGridTextColumn Header="Reorder Level" Binding="{Binding ReorderLevel}" Width="100"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+
+        <!-- Status bar: last call's outcome, honestly - never invented wording (CLAUDE.md section 5) -->
+        <Border Grid.Row="2" BorderBrush="LightGray" BorderThickness="0,1,0,0" Padding="0,8,0,0" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                    <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
                 </TextBlock>
-
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
-                    <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap" Foreground="#3C4553"
-                               FontFamily="Consolas, Segoe UI" />
-                </ScrollViewer>
-
-                <TextBlock Grid.Row="2" Margin="0,10,0,0" Foreground="#8A929E"
-                           Text="{Binding CorrelationId, StringFormat='Correlation ID: {0}'}"
-                           Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVisibility}}" />
-
-            </Grid>
+                <Border Background="#FFF3CD" Padding="8" Margin="0,4,0,0"
+                        Visibility="{Binding IsInMaintenance, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding MaintenanceMessage}" TextWrapping="Wrap"/>
+                </Border>
+            </StackPanel>
         </Border>
 
     </Grid>
-
 </Window>
