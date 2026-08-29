@@ -24,6 +24,13 @@
 ' PurchaseOrderNotFound and LineNotFound with everything this controller
 ' needs to build a response, the same simpler shape Submit/Cancel/Close
 ' already use.
+'
+' P4-08: `POST /api/v1/receipts/{receiptId}/returns` lives in THIS
+' controller (the card's own file list), a nested sub-resource of the
+' receipt it returns against - 0009's own migration comment: "ONE RETURN,
+' ONE RECEIPT". Gated by PurchaseReturns.Manage (ProcurementAndAbove); see
+' PurchaseReturnService's header for why this is one atomic command rather
+' than a two-actor request/approve workflow.
 
 Imports System.Collections.Generic
 Imports System.Linq
@@ -47,13 +54,18 @@ Namespace Controllers
     Public Class ReceivingController
         Inherits ControllerBase
 
-        ''' <summary>Matches Receipts.ReferenceNumber VARCHAR(50) (0009) - refused here rather than surfacing as ERROR 1406.</summary>
+        ''' <summary>Matches Receipts.ReferenceNumber and PurchaseReturns.ReferenceNumber VARCHAR(50) (0009) - refused here rather than surfacing as ERROR 1406.</summary>
         Private Const MaxReferenceNumberLength As Integer = 50
 
-        Private ReadOnly _receivingService As ReceivingService
+        ''' <summary>Matches PurchaseReturnLines.Reason VARCHAR(255) (0009).</summary>
+        Private Const MaxReasonLength As Integer = 255
 
-        Public Sub New(receivingService As ReceivingService)
+        Private ReadOnly _receivingService As ReceivingService
+        Private ReadOnly _purchaseReturnService As PurchaseReturnService
+
+        Public Sub New(receivingService As ReceivingService, purchaseReturnService As PurchaseReturnService)
             _receivingService = receivingService
+            _purchaseReturnService = purchaseReturnService
         End Sub
 
         ''' <summary>
@@ -132,6 +144,85 @@ Namespace Controllers
                     Return Conflict(New ApiErrorResponse With {
                         .ErrorCode = outcome.ErrorCode,
                         .Message = TransitionRefusalMessage(outcome.ErrorCode),
+                        .CorrelationId = correlationId
+                    })
+
+            End Select
+
+        End Function
+
+        ''' <summary>
+        ''' Records a purchase return against one receipt - already Approved,
+        ''' in one atomic transaction (spec section 10.1; PurchaseReturnService's
+        ''' header explains why there is no separate approval step in this
+        ''' phase).
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.PurchaseReturnsManage)>
+        <AuditRequired>
+        <HttpPost("{receiptId}/returns")>
+        Public Async Function RecordPurchaseReturn(
+            receiptId As Integer, <FromBody> request As RecordPurchaseReturnRequest) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            ValidatePurchaseReturnRequestShape(request, fieldErrors)
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim actorUserId As Integer = Integer.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier))
+
+            Dim outcome As PurchaseReturnOutcome =
+                Await _purchaseReturnService.RecordAsync(
+                    receiptId, request.ReferenceNumber, request.Lines, actorUserId, correlationId,
+                    request.IdempotencyKey, cancellationToken:=HttpContext.RequestAborted)
+
+            Select Case outcome.Kind
+
+                Case PurchaseReturnOutcomeKind.Created
+                    Return Created($"/api/v1/receipts/{receiptId}/returns/{outcome.Response.Id}", outcome.Response)
+
+                Case PurchaseReturnOutcomeKind.Replayed
+                    ' ADR-007: the ORIGINAL committed result, byte for byte.
+                    ' 200, not 201 - this request returned nothing new.
+                    Return Content(outcome.ReplayPayload, "application/json")
+
+                Case PurchaseReturnOutcomeKind.ReceiptNotFound
+                    Return NotFound(New ApiErrorResponse With {
+                        .ErrorCode = "RECEIPT_NOT_FOUND",
+                        .Message = $"No receipt with Id {receiptId} exists.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case PurchaseReturnOutcomeKind.LineNotFound
+                    Return ValidationFailed(
+                        New Dictionary(Of String, String()) From {
+                            {ReturnLineFieldFor(request, outcome.OffendingReceiptLineId),
+                             New String() {"No such receipt line exists on this receipt."}}},
+                        correlationId)
+
+                Case PurchaseReturnOutcomeKind.DuplicateReferenceNumber
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = "PURCHASE_RETURN_REFERENCE_NUMBER_ALREADY_USED",
+                        .Message = "A purchase return with this reference number has already been recorded.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case PurchaseReturnOutcomeKind.OverReturned
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = PurchaseReturnOutcome.OverReturnedErrorCode,
+                        .Message = $"The quantity requested for {ReturnLineFieldFor(request, outcome.OffendingReceiptLineId)} " &
+                                   "would exceed what remains available to return (received less prior returns) on that line.",
+                        .CorrelationId = correlationId
+                    })
+
+                Case Else ' InsufficientStock
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = PurchaseReturnOutcome.InsufficientStockErrorCode,
+                        .Message = $"There is not enough stock on hand to remove for {ReturnLineFieldFor(request, outcome.OffendingReceiptLineId)} - " &
+                                   "it may have already been sold or adjusted since receiving.",
                         .CorrelationId = correlationId
                     })
 
@@ -231,6 +322,68 @@ Namespace Controllers
 
         End Sub
 
+        ''' <summary>
+        ''' Everything about a purchase-return request that can be judged
+        ''' without touching the database - the same "runs first, before any
+        ''' connection or idempotency claim" rule ValidateRequestShape
+        ''' follows for receiving.
+        ''' </summary>
+        Private Shared Sub ValidatePurchaseReturnRequestShape(
+            request As RecordPurchaseReturnRequest, fieldErrors As Dictionary(Of String, String()))
+
+            If request Is Nothing Then
+                fieldErrors("request") = {"A request body is required."}
+                Return
+            End If
+
+            If String.IsNullOrWhiteSpace(request.ReferenceNumber) Then
+                fieldErrors("referenceNumber") = {"A reference number is required."}
+            ElseIf request.ReferenceNumber.Length > MaxReferenceNumberLength Then
+                fieldErrors("referenceNumber") = {$"Reference number must be {MaxReferenceNumberLength} characters or fewer."}
+            End If
+
+            If String.IsNullOrWhiteSpace(request.IdempotencyKey) Then
+                fieldErrors("idempotencyKey") = {"Idempotency key is required."}
+            ElseIf Not IsWellFormedIdempotencyKey(request.IdempotencyKey) Then
+                fieldErrors("idempotencyKey") = {
+                    "Idempotency key must be a UUID in the canonical 36-character form, for example " &
+                    "3f2504e0-4f89-41d3-9a0c-0305e82c3301."}
+            End If
+
+            If request.Lines Is Nothing OrElse request.Lines.Count = 0 Then
+                fieldErrors("lines") = {"A purchase return must have at least one line."}
+                Return
+            End If
+
+            Dim seenLineIds As New HashSet(Of Integer)
+
+            For index As Integer = 0 To request.Lines.Count - 1
+
+                Dim line As RecordPurchaseReturnLineRequest = request.Lines(index)
+
+                If line Is Nothing Then
+                    fieldErrors($"lines[{index}]") = {"A line is required."}
+                    Continue For
+                End If
+
+                If line.ReceiptLineId <= 0 Then
+                    fieldErrors($"lines[{index}].receiptLineId") = {"A receipt line is required."}
+                ElseIf Not seenLineIds.Add(line.ReceiptLineId) Then
+                    fieldErrors($"lines[{index}].receiptLineId") = {"This receipt line is already named by another line in this return."}
+                End If
+
+                ValidateQuantity(line.QuantityReturned, $"lines[{index}].quantityReturned", fieldErrors)
+
+                If String.IsNullOrWhiteSpace(line.Reason) Then
+                    fieldErrors($"lines[{index}].reason") = {"A reason is required."}
+                ElseIf line.Reason.Length > MaxReasonLength Then
+                    fieldErrors($"lines[{index}].reason") = {$"Reason must be {MaxReasonLength} characters or fewer."}
+                End If
+
+            Next
+
+        End Sub
+
         Private Shared Function IsWellFormedIdempotencyKey(value As String) As Boolean
 
             Dim parsed As Guid = Guid.Empty
@@ -244,6 +397,19 @@ Namespace Controllers
             For index As Integer = 0 To request.Lines.Count - 1
                 If request.Lines(index).PurchaseOrderLineId = purchaseOrderLineId Then
                     Return $"lines[{index}].purchaseOrderLineId"
+                End If
+            Next
+
+            Return "lines"
+
+        End Function
+
+        ''' <summary>The field name for a line the SERVICE rejected. The service reports a ReceiptLineId, not a position; this maps it back to the line the caller wrote.</summary>
+        Private Shared Function ReturnLineFieldFor(request As RecordPurchaseReturnRequest, receiptLineId As Integer) As String
+
+            For index As Integer = 0 To request.Lines.Count - 1
+                If request.Lines(index).ReceiptLineId = receiptLineId Then
+                    Return $"lines[{index}].receiptLineId"
                 End If
             Next
 

@@ -1,0 +1,216 @@
+P4-08 — Purchase returns bounded by received-minus-prior-returns
+=========================================================================
+
+Files:
+  src/Merchandising.Contracts/Receiving/RecordPurchaseReturnRequest.vb
+  src/Merchandising.Contracts/Receiving/RecordPurchaseReturnLineRequest.vb
+  src/Merchandising.Contracts/Receiving/PurchaseReturnResponse.vb
+  src/Merchandising.Contracts/Receiving/PurchaseReturnLineResponse.vb
+  src/Merchandising.Infrastructure/Data/PurchaseReturnRepository.vb
+  src/Merchandising.Infrastructure/Data/ReceiptRepository.vb    (ExistsAsync added)
+  src/Merchandising.Api/Receiving/PurchaseReturnService.vb
+  src/Merchandising.Api/Receiving/PurchaseReturnOutcome.vb
+  src/Merchandising.Api/Controllers/ReceivingController.vb      (RecordPurchaseReturn action added)
+  src/Merchandising.Api/Program.vb                               (DI registration)
+  src/tests/Merchandising.Tests.Integration/PurchaseReturnTests.vb
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (PurchaseReturnsManage_MatrixMatchesPolicyRegistry added)
+
+-------------------------------------------------------------------------
+SECTION 0 — the design decision confirmed with the user before
+implementing
+-------------------------------------------------------------------------
+
+The P4-02 schema models PurchaseReturns.Status as Requested -> Approved/
+Rejected, and its own migration comment says that shape was built "even
+before a self-approval rule is decided for returns." That decision is made
+by this card: PolicyRegistry has exactly ONE policy, PurchaseReturns.Manage
+(ProcurementAndAbove) - not a split Request/Approve pair the way
+PurchaseOrders/Adjustments have - and ADR-017 section 6 names only
+PurchaseOrders.Approve and Adjustments.Approve as carrying a self-approval
+veto; purchase returns carry none. Combined with the card's own "Do" text
+("writes a stock-out movement in the same transactional shape as
+receiving" - one command, one transaction), the return is recorded ALREADY
+Approved: RequestedByUserId = ApprovedByUserId = the calling actor, in the
+same transaction as its lines and stock effects. Requested/Rejected stay
+reachable in the schema's CHECK constraint for a future phase, unused
+here - the same shape Receiving.Prepare's policy sits unused in Phase 4.
+
+Route: POST /api/v1/receipts/{receiptId}/returns, in ReceivingController.vb
+per the card's own file list - a nested sub-resource of the receipt it
+returns against (0009's own comment: "ONE RETURN, ONE RECEIPT").
+
+-------------------------------------------------------------------------
+SECTION 1 — the concurrency mechanism (no CHECK constraint can express
+this bound)
+-------------------------------------------------------------------------
+
+Unlike over-receiving (P4-07, CK_PurchaseOrderLines_ReceivedQuantity - a
+single-row bound), "received quantity less prior returns" is an AGGREGATE
+over every prior sibling PurchaseReturnLines row for the same
+ReceiptLineId - a value no single-row CHECK constraint can see (0009's own
+comment on PurchaseReturnLines says this explicitly). So the bound is
+computed at the API, inside the transaction, made safe under concurrency
+by PurchaseReturnRepository.GetReceiptLineForUpdateAsync: a
+SELECT ... FOR UPDATE on the target ReceiptLines row - a row this class
+never writes to. merch_api has no UPDATE grant on receiptlines
+(db/grants/0011 - INSERT only), but SELECT ... FOR UPDATE needs only
+SELECT privilege, which merch_api already holds at the database level
+(ADR-013). Two return attempts against the SAME ReceiptLineId cannot both
+proceed past this lock - the second blocks until the first's transaction
+resolves, then (READ COMMITTED, ADR-006) sees whatever the first actually
+committed before computing its own prior-returned sum.
+
+-------------------------------------------------------------------------
+SECTION 2 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "The bound is computed server-side from committed rows, never from a
+client-supplied figure"
+  RecordAsync_ValidReturn_CostAndProductComeFromTheReceiptLine
+    - RecordPurchaseReturnLineRequest has no ProductId or Cost field at
+      all; the committed response's Cost (3.7500, matching the receipt
+      line exactly) and ProductId are asserted to come from the LOCKED
+      ReceiptLines row.
+
+Box: "Returning more than received-minus-prior-returns is refused with a
+stable error code, including when two prior partial returns together
+exhaust the balance"
+  RecordAsync_QuantityExceedsReceived_RefusedWithStableCode
+    - a single-shot over-return (10.001 against a received 10.000).
+  RecordAsync_TwoPriorPartialReturnsExhaustBound_ThirdRefused
+    - 6 + 4 = 10 across two PRIOR returns (the second exactly closes the
+      bound), then a THIRD attempt of 0.001 is refused with
+      PurchaseReturnOutcome.OverReturnedErrorCode - computed from the SUM
+      of committed PurchaseReturnLines rows, not a running counter.
+  RecordAsync_RemovesStockFalse_NoStockEffectButBoundStillAccountsForIt
+    - the bound accounts for a return even when RemovesStock=False (no
+      stock moved), proving the bound tracks QUANTITY RETURNED, not stock
+      movement.
+
+Box: "Each return writes its own StockMovements row; corrections are
+compensating movements, never edits"
+  RecordAsync_TwoReturns_EachWritesItsOwnMovementRow
+    - two returns against the same line each produce exactly one
+      StockMovements row under their OWN correlation Id.
+  StockMovements_FromAPurchaseReturn_HasNoUpdateOrDeleteGrant
+    - fresh proof (not relying on old Phase-1 evidence): attempts UPDATE
+      and DELETE against the StockMovements row a real purchase return
+      just wrote, as merch_api - both fail ERROR 1142 (privilege denied).
+      A correction can only ever be a new row.
+
+Box: "Concurrent returns against the same receipt cannot oversell the
+bound — proven under real concurrent load in the P1-13 shape, not by two
+sequential calls"
+  RecordAsync_ConcurrentReturnsAgainstSameLine_CannotOversellTheBound
+    - 8 concurrent RecordAsync calls, each requesting the FULL received
+      quantity against the SAME line, launched together (Task.WhenAll,
+      none individually awaited first - the identical shape
+      StockDecrementTests.RunConcurrencyRoundAsync uses for P1-13).
+      Result: exactly 1 Created, 7 OverReturned, 0 exceptions. Final
+      balance exactly 0.000 (never negative), exactly one 5.000 return
+      recorded across all 8 attempts. Console output:
+        "P4-08 x8 summary -> Created:1 OverReturned:7 Exception:0"
+
+Box: "The P4-01 reconciliation passes after every return"
+  RecordAsync_Committed_LedgerReconciles
+    - calls LedgerReconciliation.FindDiscrepanciesAsync directly after a
+      committed return and asserts the touched product is not in the
+      result.
+
+Box: "Matrix suite extended; integration suite green"
+  AuthorizationMatrixTests.PurchaseReturnsManage_MatrixMatchesPolicyRegistry
+    - THIS card adds a genuinely new route, unlike P4-06/P4-07. Each
+      probed receipt is a fresh order (SuperAdmin creates, Admin approves)
+      fully received by InventoryClerk over real HTTP, then a return is
+      attempted as each of the five roles: SuperAdmin/Admin/
+      ProcurementOfficer succeed (2xx, and the return genuinely commits -
+      the full received quantity is returned, not merely "reached the
+      handler"); InventoryClerk/Cashier refused 403 with a clean FORBIDDEN
+      body; anonymous refused 401 with a clean UNAUTHORIZED body.
+  Full suite green - see SECTION 3.
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   294, Skipped:     0, Total:   294, Duration: 35 s
+
+All checks passed.
+
+(294 = 275 from P4-07's commit + 18 PurchaseReturnTests + 1 new matrix
+test. Includes the AssemblyCleanup-driven P4-01 ledger reconciliation,
+which passed.)
+
+-------------------------------------------------------------------------
+SECTION 4 — this card's own tests in isolation, named
+-------------------------------------------------------------------------
+
+Command:
+  dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+    --configuration Debug --no-build --nologo \
+    --filter "FullyQualifiedName~PurchaseReturnTests" --logger "console;verbosity=normal"
+
+  Passed RecordAsync_ValidReturn_CostAndProductComeFromTheReceiptLine [853 ms]
+  Passed RecordAsync_RemovesStockFalse_NoStockEffectButBoundStillAccountsForIt [74 ms]
+  Passed RecordAsync_QuantityExceedsReceived_RefusedWithStableCode [51 ms]
+  Passed RecordAsync_TwoPriorPartialReturnsExhaustBound_ThirdRefused [82 ms]
+  Passed RecordAsync_TwoReturns_EachWritesItsOwnMovementRow [71 ms]
+  Passed StockMovements_FromAPurchaseReturn_HasNoUpdateOrDeleteGrant [70 ms]
+  Passed RecordAsync_ConcurrentReturnsAgainstSameLine_CannotOversellTheBound [67 ms]
+  Passed RecordAsync_Committed_LedgerReconciles [90 ms]
+  Passed RecordAsync_UnknownReceipt_ReturnsReceiptNotFound [19 ms]
+  Passed RecordAsync_UnknownLine_ReturnsLineNotFound [39 ms]
+  Passed RecordAsync_LineBelongsToDifferentReceipt_ReturnsLineNotFound [84 ms]
+  Passed RecordAsync_DuplicateReferenceNumber_Refused [53 ms]
+  Passed RecordAsync_StockAlreadyConsumedElsewhere_ReturnsInsufficientStock [54 ms]
+  Passed RecordAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockEffect [55 ms]
+  Passed RecordAsync_FaultInjectedBeforeCommit_RollsBackEveryEffect [99 ms]
+  Passed RecordPurchaseReturn_ValidRequestOverHttp_Returns201AndCommits [655 ms]
+  Passed RecordPurchaseReturn_DuplicateReceiptLineIdInRequest_Returns400 [200 ms]
+  Passed RecordPurchaseReturn_MissingReason_Returns400 [168 ms]
+
+Test Run Successful.
+Total tests: 18
+     Passed: 18
+
+Plus, in AuthorizationMatrixTests.vb:
+  Passed PurchaseReturnsManage_MatrixMatchesPolicyRegistry [1 s]
+
+-------------------------------------------------------------------------
+SECTION 5 — other outcomes covered beyond the Done-when list, because the
+service returns them as first-class outcomes
+-------------------------------------------------------------------------
+
+  RecordAsync_UnknownReceipt_ReturnsReceiptNotFound
+  RecordAsync_UnknownLine_ReturnsLineNotFound
+  RecordAsync_LineBelongsToDifferentReceipt_ReturnsLineNotFound  (line identity is scoped to the receipt named in the route, spec section 10.1's "line identity")
+  RecordAsync_DuplicateReferenceNumber_Refused
+  RecordAsync_StockAlreadyConsumedElsewhere_ReturnsInsufficientStock  (a distinct failure mode from the received-minus-prior-returns bound: stock already consumed by a sale/adjustment since receiving; reuses the existing INSUFFICIENT_STOCK code from P1-11)
+  RecordAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockEffect (ADR-007)
+  RecordPurchaseReturn_ValidRequestOverHttp_Returns201AndCommits (controller/route/policy wiring, end to end)
+  RecordPurchaseReturn_DuplicateReceiptLineIdInRequest_Returns400
+  RecordPurchaseReturn_MissingReason_Returns400 (PurchaseReturnLines.Reason NOT NULL, 0009)
+
+-------------------------------------------------------------------------
+SECTION 6 — what P4-08 deliberately does NOT own
+-------------------------------------------------------------------------
+
+  - A separate approve/reject endpoint or a Requested->Rejected transition -
+    not built in this phase (SECTION 0's decision).
+  - Stock counts, adjustments, low-stock logic - Track E (P4-09 onward).

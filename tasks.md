@@ -227,7 +227,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-07-over-receiving.txt`
 
-### ⬜ P4-08 · Purchase returns bounded by received-minus-prior-returns
+### ✅ P4-08 · Purchase returns bounded by received-minus-prior-returns
 
 **Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/PurchaseReturnRepository.vb`
 
@@ -235,12 +235,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The bound is computed **server-side** from committed rows, never from a client-supplied figure
-- [ ] Returning more than received-minus-prior-returns is refused with a stable error code, including when two prior partial returns together exhaust the balance
-- [ ] Each return writes its own `StockMovements` row; corrections are **compensating movements, never edits** (CLAUDE.md §5) — asserted by confirming no `UPDATE`/`DELETE` reaches the ledger
-- [ ] Concurrent returns against the same receipt cannot oversell the bound — proven under real concurrent load in the P1-13 shape, not by two sequential calls
-- [ ] The P4-01 reconciliation passes after every return
-- [ ] **Matrix suite extended**; integration suite green
+- [x] The bound is computed **server-side** from committed rows, never from a client-supplied figure — `RecordPurchaseReturnLineRequest` carries no `ProductId`/`Cost` field at all; both come from the locked `ReceiptLines` row
+- [x] Returning more than received-minus-prior-returns is refused with a stable error code, including when two prior partial returns together exhaust the balance
+- [x] Each return writes its own `StockMovements` row; corrections are **compensating movements, never edits** (CLAUDE.md §5) — asserted by confirming no `UPDATE`/`DELETE` reaches the ledger (fresh `ERROR 1142` proof, not only relying on the Phase-1 evidence)
+- [x] Concurrent returns against the same receipt cannot oversell the bound — proven under real concurrent load in the P1-13 shape (8 simultaneous requests, exactly 1 succeeds), not by two sequential calls
+- [x] The P4-01 reconciliation passes after every return
+- [x] **Matrix suite extended**; integration suite green — a genuinely new route this time (`PurchaseReturnsManage_MatrixMatchesPolicyRegistry`), unlike P4-06/P4-07
+
+**Design decision made and recorded:** a purchase return is a single atomic command (`RequestedByUserId = ApprovedByUserId`, `Status` always committed as `Approved`), not a two-actor request/approve workflow — `PurchaseReturns.Manage` is one policy, not a split pair, and ADR-017 §6 names no self-approval veto for returns. `Requested`/`Rejected` stay reachable in the schema, unused by this phase. Full reasoning in the evidence file.
 
 **Evidence:** `evidence/phase-4/p4-08-purchase-returns.txt`
 

@@ -122,6 +122,30 @@ Namespace Data
 
         End Function
 
+        ''' <summary>
+        ''' P4-08: does a Receipt with this Id exist? Receipts is immutable
+        ''' once written (this file's own header) - nothing to lock, only to
+        ''' confirm exists, so PurchaseReturnService can report a controlled
+        ''' ReceiptNotFound rather than every return line failing separately
+        ''' as LineNotFound.
+        ''' </summary>
+        Public Shared Async Function ExistsAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            receiptId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT 1 FROM Receipts WHERE Id = @id;"
+                command.Parameters.AddWithValue("@id", receiptId)
+
+                Dim result As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                Return result IsNot Nothing
+            End Using
+
+        End Function
+
     End Class
 
 End Namespace

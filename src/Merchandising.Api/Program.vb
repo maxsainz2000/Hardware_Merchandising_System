@@ -273,6 +273,11 @@ Public Module Program
         ' the order's status transition and the audit row, or none of them.
         builder.Services.AddScoped(Of ReceivingService)()
 
+        ' P4-08 / ADR-006 + ADR-007: purchase returns - the claim-first
+        ' transaction that writes the return (already Approved), its lines,
+        ' the stock-out effects and the audit row, or none of them.
+        builder.Services.AddScoped(Of PurchaseReturnService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

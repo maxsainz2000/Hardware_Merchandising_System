@@ -701,6 +701,56 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P4-08's purchase-return endpoint - PurchaseReturns.Manage's first live
+    ''' route. Each probed receipt is a fresh order (SuperAdmin creates,
+    ''' Admin approves) fully received by InventoryClerk, so a return attempt
+    ''' has a real receipt line to act against. Every probe returns the FULL
+    ''' received quantity, so an ALLOWED role's call genuinely commits, not
+    ''' merely reaches the handler - the same shape ReceivingConfirm's own
+    ''' matrix test above uses.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function PurchaseReturnsManage_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim supplierId As Integer = Await EnsureFixtureSupplierAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.PurchaseReturnsManage)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim creatorToken As String = Await LoginAsync(client, RoleNames.SuperAdmin)
+            Dim approverToken As String = Await LoginAsync(client, RoleNames.Admin)
+            Dim inventoryToken As String = Await LoginAsync(client, RoleNames.InventoryClerk)
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim receipt As ReceiptResponse =
+                    Await CreateReceivedReceiptAsync(client, creatorToken, approverToken, inventoryToken, supplierId, productId)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using returnResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/receipts/{receipt.Id}/returns", token, NewPurchaseReturnBody(receipt))
+                    Await AssertCellAsync("PurchaseReturns.Manage", roleName, allowedRoles.Contains(roleName), returnResponse)
+                End Using
+
+            Next
+
+            Dim anonymousReceipt As ReceiptResponse =
+                Await CreateReceivedReceiptAsync(client, creatorToken, approverToken, inventoryToken, supplierId, productId)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/receipts/{anonymousReceipt.Id}/returns",
+                                 token:=Nothing, requestBody:=NewPurchaseReturnBody(anonymousReceipt))
+                Await AssertUnauthenticatedAsync("PurchaseReturns.Manage", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -999,6 +1049,51 @@ Public Class AuthorizationMatrixTests
                     .PurchaseOrderLineId = order.Lines(0).Id,
                     .QuantityReceived = order.Lines(0).OrderedQuantity,
                     .Cost = order.Lines(0).PurchaseCost}
+            }
+        }
+
+    End Function
+
+    ''' <summary>
+    ''' P4-08: a fresh order, approved and then FULLY received by
+    ''' <paramref name="inventoryToken"/> - the receipt a purchase-return
+    ''' matrix probe acts against. Composes CreateApprovedOrderAsync with a
+    ''' real POST /api/v1/receipts call rather than reaching into
+    ''' ReceivingService directly, so this file stays entirely HTTP-driven
+    ''' (matching every other matrix fixture here).
+    ''' </summary>
+    Private Async Function CreateReceivedReceiptAsync(
+        client As HttpClient, creatorToken As String, approverToken As String, inventoryToken As String,
+        supplierId As Integer, productId As Integer) As Task(Of ReceiptResponse)
+
+        Dim order As PurchaseOrderResponse =
+            Await CreateApprovedOrderAsync(client, creatorToken, approverToken, supplierId, productId)
+
+        Using receiveResponse As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, "/api/v1/receipts", inventoryToken, NewReceiveGoodsBody(order))
+
+            Assert.AreEqual(
+                HttpStatusCode.Created, receiveResponse.StatusCode,
+                "Fixture receiving must succeed. Body: " & Await receiveResponse.Content.ReadAsStringAsync())
+
+            Return Await receiveResponse.Content.ReadFromJsonAsync(Of ReceiptResponse)()
+
+        End Using
+
+    End Function
+
+    ''' <summary>A fresh reference number and idempotency key per call, returning the FULL received quantity so an allowed role's probe genuinely commits.</summary>
+    Private Shared Function NewPurchaseReturnBody(receipt As ReceiptResponse) As RecordPurchaseReturnRequest
+
+        Return New RecordPurchaseReturnRequest With {
+            .ReferenceNumber = "P2-03-RET-" & Guid.NewGuid().ToString("N").Substring(0, 20),
+            .IdempotencyKey = Guid.NewGuid().ToString("d"),
+            .Lines = New List(Of RecordPurchaseReturnLineRequest) From {
+                New RecordPurchaseReturnLineRequest With {
+                    .ReceiptLineId = receipt.Lines(0).Id,
+                    .QuantityReturned = receipt.Lines(0).QuantityReceived,
+                    .Reason = "P4-08 matrix probe",
+                    .RemovesStock = True}
             }
         }
 
