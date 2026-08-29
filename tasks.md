@@ -211,7 +211,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-06-partial-receiving.txt`
 
-### ⬜ P4-07 · Over-receiving rejected by default
+### ✅ P4-07 · Over-receiving rejected by default
 
 **Spec:** §10.1, §11 · **Files:** `src/Merchandising.Api/Controllers/ReceivingController.vb`, `src/Merchandising.Infrastructure/Data/ReceiptRepository.vb`
 
@@ -219,11 +219,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] A receipt exceeding the ordered quantity is refused with a stable error code and a 409, never a 500 and never a leaked SQL message (ADR-014)
-- [ ] A third receipt on a fully-received line is refused with the same code
-- [ ] **The database is proven to be the thing refusing it**: the same over-receipt attempted with the API's own check bypassed still fails, as `ERROR 4025`/`3819` from the `CHECK`. An API-only guard would pass this card's other boxes and be one deployment away from useless
-- [ ] The refusal leaves **no** partial trace — no receipt row, no movement, no balance change; asserted by re-reading all three
-- [ ] **Matrix suite extended**; integration suite green
+- [x] A receipt exceeding the ordered quantity is refused with a stable error code and a 409, never a 500 and never a leaked SQL message (ADR-014)
+- [x] A third receipt on a fully-received line is refused with the same code — proven on a still-`PartiallyReceived` order (a second line deliberately left open), the case a `CanTransition` status refusal cannot catch on its own
+- [x] **The database is proven to be the thing refusing it**: `PurchaseOrderRepository.IncrementReceivedQuantityAsync` — the production write method — called directly, bypassing the new API guard entirely, still fails as `ERROR 4025` from the `CHECK`
+- [x] The refusal leaves **no** partial trace — no receipt row, no movement, no balance change; asserted by re-reading all three
+- [x] **Matrix suite extended**; integration suite green ⚠ no new route exists for this card (same `POST /api/v1/receipts` route P4-05's matrix test already covers)
 
 **Evidence:** `evidence/phase-4/p4-07-over-receiving.txt`
 

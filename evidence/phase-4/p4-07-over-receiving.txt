@@ -1,0 +1,179 @@
+P4-07 — Over-receiving rejected by default
+=========================================================================
+
+Files:
+  src/Merchandising.Api/Receiving/ReceivingOutcome.vb     (OverReceived kind + stable code added)
+  src/Merchandising.Api/Receiving/ReceivingService.vb     (the pre-check, step 4)
+  src/Merchandising.Api/Controllers/ReceivingController.vb (409 mapping)
+  src/tests/Merchandising.Tests.Integration/ReceivingTests.vb (extended)
+
+-------------------------------------------------------------------------
+SECTION 0 — the design decision confirmed with the user, and one ordering
+bug caught by the existing P4-05 test suite
+-------------------------------------------------------------------------
+
+ReceivingService.ReceiveAsync's step 4 now computes, in one pass over every
+LOCKED line, both (a) whether any line's projection would exceed its
+OrderedQuantity and (b) whether every line would land exactly at its
+OrderedQuantity (the existing Partial-vs-Full decision). CanTransition is
+still asked first, with whichever action the projection computed - if the
+order's own STATUS already forbids receiving (Cancelled, Closed, or already
+FullyReceived), that refusal wins, unchanged from P4-05/ADR-020. Only once
+CanTransition has ALLOWED the action does an over-received line get its own
+refusal (OverReceived, RECEIPT_QUANTITY_EXCEEDS_ORDERED, 409) - checked
+before InsertReceiptAsync is ever called, so it commits nothing.
+
+THIS ORDERING WAS NOT THE FIRST ATTEMPT. The first version checked
+over-receiving BEFORE CanTransition and returned early, which broke an
+EXISTING, already-green P4-05 test:
+ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode's FullyReceived
+sub-case, which sends 1 more unit against a single-line order already at
+its ordered quantity and expects PurchaseOrderTransitionErrors.FullyReceived
+(ADR-020) - not the new OverReceived code. The full-suite run caught this
+immediately (23 tests run, 1 failure, exact assertion diff shown) rather
+than being missed. The fix: run CanTransition first (a coarser "is this
+order receivable at all right now" check) and only check the finer
+per-line bound afterward, for lines that are still eligible to receive.
+This also matches the card's own scenario precisely - the "third receipt
+on a fully-received LINE" case is only interesting when the ORDER overall
+is still receivable (another line isn't done yet), which is exactly what
+the reordered check produces.
+
+-------------------------------------------------------------------------
+SECTION 1 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "A receipt exceeding the ordered quantity is refused with a stable
+error code and a 409, never a 500 and never a leaked SQL message"
+  ReceiveAsync_QuantityExceedsOrdered_Refused409WithNoPartialTrace
+    - a single-line, single-receipt over-shoot (10.001 against an
+      ordered 10.000): ReceivingOutcomeKind.OverReceived,
+      ReceivingOutcome.OverReceivedErrorCode ("RECEIPT_QUANTITY_EXCEEDS_ORDERED").
+      ReceivingController maps this to Conflict (409) with that code - see
+      the controller's OverReceived case. No SQL, exception type, or stack
+      frame ever reaches the outcome (the check is pure VB arithmetic
+      against already-loaded rows).
+
+Box: "A third receipt on a fully-received line is refused with the same
+code"
+  ReceiveAsync_ThirdReceiptOnFullyReceivedLine_RefusedWithSameCode
+    - a two-line order: the "closing" line is deliberately closed across
+      TWO receipts (3, then 2, summing to its ordered 5) while the "open"
+      line stays far short of its ordered 100, so the ORDER remains
+      PartiallyReceived throughout - CanTransition would ALLOW a third
+      receipt. The third receipt names only the now-closed line; asserted
+      OverReceived with the SAME OverReceivedErrorCode as the box above,
+      and that ReceivedQuantity/Receipts/StockMovements are all untouched
+      by the refused third attempt.
+
+Box: "The database is proven to be the thing refusing it: the same
+over-receipt attempted with the API's own check bypassed still fails, as
+ERROR 4025/3819 from the CHECK. An API-only guard would pass this card's
+other boxes and be one deployment away from useless"
+  IncrementReceivedQuantityAsync_OverLimit_RefusedByTheDatabase
+    - calls PurchaseOrderRepository.IncrementReceivedQuantityAsync
+      DIRECTLY - the exact method ReceivingService's step 6 calls in
+      production - with an over-limit quantity (10.001 against an ordered
+      10.000), entirely bypassing ReceivingService.ReceiveAsync's new
+      guard. Asserts MySqlException.Number = 4025
+      (CheckConstraintFailedErrorNumber, the same constant
+      PurchaseOrderSchemaTests already defines for the P3-02 schema-level
+      proof - re-proven here against the production write path a real
+      receipt takes, not a raw admin-bypass UPDATE). Console output from
+      the run: "P4-07 over-receive via the production repository method ->
+      ERROR 4025".
+
+Box: "The refusal leaves no partial trace - no receipt row, no movement,
+no balance change; asserted by re-reading all three"
+  ReceiveAsync_QuantityExceedsOrdered_Refused409WithNoPartialTrace asserts,
+  by re-reading each table directly:
+    - CountReceiptsAsync(referenceNumber) = 0
+    - CountMovementsAsync(correlationId, productId) = 0
+    - ReadBalanceOrZeroAsync(productId) = 0
+    - ReadLineReceivedQuantityAsync(lineId) = 0.000 (unchanged)
+    - ReadOrderStatusAsync(order.Id) = "Approved" (unchanged)
+  ReceiveAsync_ThirdReceiptOnFullyReceivedLine_RefusedWithSameCode re-reads
+  the same set for its own (third) refused attempt.
+
+Box: "Matrix suite extended; integration suite green"
+  No new route exists for this card - POST /api/v1/receipts is the same
+  Receiving.Confirm-gated route P4-05's ReceivingConfirm_MatrixMatchesPolicyRegistry
+  already covers; role gating is unaffected by which business-rule outcome
+  a request produces once past authorization. Same position P4-06 took.
+  Full suite green - see SECTION 3.
+
+-------------------------------------------------------------------------
+SECTION 2 — this card's own tests in isolation, named
+-------------------------------------------------------------------------
+
+Command:
+  dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+    --configuration Debug --no-build --nologo \
+    --filter "FullyQualifiedName~ReceivingTests" --logger "console;verbosity=normal"
+
+  Passed ReceiveAsync_FreshProductNoPriorBalance_WritesOneMovementAndMatchingBalance [400 ms]
+  Passed ReceiveAsync_TwoLines_EachWritesItsOwnMovementAndBalance [46 ms]
+  Passed ReceiveAsync_PartialQuantity_MovesOrderToPartiallyReceived [35 ms]
+  Passed ReceiveAsync_MixedLinesOneFullOnePartial_StaysPartiallyReceived [38 ms]
+  Passed ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode [121 ms]
+  Passed ReceiveAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockIncrease [53 ms]
+  Passed ReceiveAsync_FaultInjectedBeforeCommit_RollsBackEveryEffect [85 ms]
+  Passed ReceiveAsync_Committed_LedgerReconciles [46 ms]
+  Passed ReceiveAsync_TwoSequentialPartials_SumToOrderedAndMovesToFullyReceived [47 ms]
+  Passed ReceiveAsync_ThreeReceipts_AccumulateCorrectlyIncludingAnExactClose [43 ms]
+  Passed ReceiveAsync_TwoReceipts_EachWritesItsOwnMovementAndLedgerReconcilesAfterEach [55 ms]
+  Passed ReceiveAsync_MixedLinesAcrossTwoReceipts_StaysPartiallyReceivedUntilBothClose [44 ms]
+  Passed ReceiveAsync_QuantityExceedsOrdered_Refused409WithNoPartialTrace [25 ms]
+  Passed ReceiveAsync_ThirdReceiptOnFullyReceivedLine_RefusedWithSameCode [75 ms]
+  Passed IncrementReceivedQuantityAsync_OverLimit_RefusedByTheDatabase [35 ms]
+  Passed ReceiveAsync_UnknownOrder_ReturnsPurchaseOrderNotFound [14 ms]
+  Passed ReceiveAsync_UnknownLine_ReturnsLineNotFound [38 ms]
+  Passed ReceiveAsync_LineBelongsToDifferentOrder_ReturnsLineNotFound [51 ms]
+  Passed ReceiveAsync_DuplicateReferenceNumber_Refused [83 ms]
+  Passed ReceiveGoods_ValidRequestOverHttp_Returns201AndCommits [595 ms]
+  Passed ReceiveGoods_TwoSequentialReceiptsOverHttp_AccumulateToFullyReceived [229 ms]
+  Passed ReceiveGoods_DuplicatePurchaseOrderLineIdInRequest_Returns400 [169 ms]
+  Passed ReceiveGoods_OverScaleQuantity_Returns400 [168 ms]
+
+Test Run Successful.
+Total tests: 23
+     Passed: 23
+
+(The first 4 are P4-05's; ReceiveAsync_EveryNonReceivableStatus_RefusedWithStableCode
+through ReceiveGoods_OverScaleQuantity_Returns400 include P4-05/P4-06's
+carried-forward tests, still green - this card added
+ReceiveAsync_QuantityExceedsOrdered_..., ReceiveAsync_ThirdReceiptOnFullyReceivedLine_...
+and IncrementReceivedQuantityAsync_OverLimit_....)
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   275, Skipped:     0, Total:   275, Duration: 33 s
+
+All checks passed.
+
+(275 = 272 from P4-06's commit + 3 new P4-07 tests. Includes the
+AssemblyCleanup-driven P4-01 ledger reconciliation, which passed.)
+
+-------------------------------------------------------------------------
+SECTION 4 — what P4-07 deliberately does NOT own
+-------------------------------------------------------------------------
+
+  - Purchase returns bounded by received-minus-prior-returns - P4-08.

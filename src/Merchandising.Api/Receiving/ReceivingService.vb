@@ -19,7 +19,16 @@
 '      which of the two receiving actions this is (PurchaseOrderTransitions.
 '      CanTransition still makes the actual transition decision - this method
 '      only computes WHICH action to ask it for, per ADR-020's own reasoning:
-'      a single "Receive" action could not stay a function of (state, action)).
+'      a single "Receive" action could not stay a function of (state,
+'      action)). If CanTransition refuses (the order's STATUS forbids
+'      receiving at all - Cancelled/Closed/already-FullyReceived), that
+'      refusal wins even over a line that would also have been over-received
+'      - a coarser "is this order receivable right now" check takes
+'      precedence over the finer per-line one. Only once CanTransition has
+'      ALLOWED the action does a line whose projection would EXCEED its
+'      OrderedQuantity refuse the whole request as OverReceived (P4-07) -
+'      still before any write, so an over-receipt leaves no trace at all,
+'      not even a rolled-back row.
 '   5. Insert the receipt header, retrying on a duplicate reference number
 '      never - a duplicate reference number is the CALLER's problem
 '      (ReceiptRepository's header), reported back rather than retried.
@@ -31,18 +40,17 @@
 '   9. Store the response payload on the claimed idempotency key.
 '  10. Commit.
 '
-' OVER-RECEIVING IS DELIBERATELY NOT SPECIAL-CASED HERE. Step 4's projection
-' only ever asks "is every line exactly at its ordered quantity", so a
-' request that would push a line PAST its ordered quantity is simply never
-' counted as "fully received" for that line - and step 6's
-' IncrementReceivedQuantityAsync then hits 0008's
-' CK_PurchaseOrderLines_ReceivedQuantity and throws, which propagates and
-' rolls back the whole transaction (this class's own "unexpected exceptions"
-' paragraph below). That surfaces as a safe, non-leaking 500 via
-' ExceptionHandlingMiddleware today. Turning it into a controlled 409 with
-' its own stable error code is P4-07's job, per tasks.md - this card's own
-' Done-when list does not ask for it, and CK_PurchaseOrderLines_ReceivedQuantity
-' is already the enforced bound (P3-02).
+' P4-07: THE API'S OWN GUARD IS A CONTROLLED RESPONSE, NOT THE GUARANTEE.
+' Step 4's over-receiving check is this card's "turn the constraint
+' violation into a controlled response" - it exists so a caller gets a 409
+' RECEIPT_QUANTITY_EXCEEDS_ORDERED instead of a 500. It is NOT what actually
+' prevents an over-receipt from being stored: 0008's
+' CK_PurchaseOrderLines_ReceivedQuantity is, and step 6's
+' IncrementReceivedQuantityAsync would still hit it and throw (rolling back
+' the whole transaction, same as any other unexpected exception here) if
+' this guard were ever removed, wrong, or raced past. ReceivingTests proves
+' this directly by calling IncrementReceivedQuantityAsync with an
+' over-limit quantity, bypassing this method's guard entirely.
 '
 ' UNEXPECTED EXCEPTIONS ARE DELIBERATELY NOT CAUGHT, AND THERE IS NO Try
 ' AROUND THE TRANSACTION - the identical arrangement PurchaseOrderService and
@@ -211,13 +219,37 @@ Namespace Receiving
                 Dim requestedByLineId As Dictionary(Of Integer, Decimal) =
                     lines.ToDictionary(Function(l) l.PurchaseOrderLineId, Function(l) l.QuantityReceived)
 
-                Dim everyLineWillBeFull As Boolean =
-                    orderLines.All(
-                        Function(l)
-                            Dim requested As Decimal = 0D
-                            requestedByLineId.TryGetValue(l.Id, requested)
-                            Return l.ReceivedQuantity + requested = l.OrderedQuantity
-                        End Function)
+                ' One pass over every locked line computes, for each, its
+                ' PROJECTED total and whether that projection would exceed
+                ' OrderedQuantity - but does NOT return early on an
+                ' over-receipt. That is deliberate ordering (P4-07): an
+                ' order already Cancelled/Closed/FullyReceived must still be
+                ' refused with ITS OWN status code below, via CanTransition,
+                ' even though projecting onto its lines would also compute
+                ' an over-receive - a coarser "is this order receivable at
+                ' all right now" check takes precedence over the finer
+                ' "does this specific request exceed a line's remaining
+                ' capacity" check. An over-shot line is simply never counted
+                ' as "exactly full" for the Partial-vs-Full decision.
+                Dim overReceivedLineId As Integer? = Nothing
+                Dim everyLineWillBeFull As Boolean = True
+
+                For Each orderLine As PurchaseOrderLine In orderLines
+
+                    Dim requested As Decimal = 0D
+                    requestedByLineId.TryGetValue(orderLine.Id, requested)
+                    Dim projected As Decimal = orderLine.ReceivedQuantity + requested
+
+                    If projected > orderLine.OrderedQuantity Then
+                        If Not overReceivedLineId.HasValue Then
+                            overReceivedLineId = orderLine.Id
+                        End If
+                        everyLineWillBeFull = False
+                    ElseIf projected <> orderLine.OrderedQuantity Then
+                        everyLineWillBeFull = False
+                    End If
+
+                Next
 
                 Dim action As DomainProcurement.PurchaseOrderAction =
                     If(everyLineWillBeFull, DomainProcurement.PurchaseOrderAction.ReceiveFully,
@@ -230,6 +262,16 @@ Namespace Receiving
                     Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
                     Await transaction.DisposeAsync().ConfigureAwait(False)
                     Return ReceivingOutcome.Refused(decision.ErrorCode)
+                End If
+
+                ' P4-07: the order IS receivable right now (CanTransition
+                ' just allowed it) - only now does an over-receipt on any
+                ' individual line get its own controlled refusal, checked
+                ' before any row is written.
+                If overReceivedLineId.HasValue Then
+                    Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
+                    Await transaction.DisposeAsync().ConfigureAwait(False)
+                    Return ReceivingOutcome.OverReceived(overReceivedLineId.Value)
                 End If
 
                 ' ----------------------------------------------------- step 5

@@ -36,6 +36,12 @@
 '           on PurchaseOrderLines.ReceivedQuantity; each writes its own
 '           movement row and the ledger reconciles after every one, not only
 '           the last; mixed lines stay independent across receipts too
+'   box 8   P4-07: over-receiving is refused 409 with a stable code and no
+'           partial trace, whether attempted in one shot or as a further
+'           receipt against an already-closed line while the ORDER overall
+'           is still receivable; and CK_PurchaseOrderLines_ReceivedQuantity
+'           (not the API's own guard) is proven to be what actually stops
+'           it, by calling the production repository method directly
 '
 ' Fixture users, supplier and products are real, permanent rows - nothing
 ' here is torn down (ADR-013: no DELETE grant on Users, Suppliers or
@@ -72,6 +78,9 @@ Public Class ReceivingTests
     Private Const AdminBUsername As String = "p4_05_fixture_admin_b"
     Private Const InventoryUsername As String = "p4_05_fixture_inventory"
     Private Const FixtureProductSkuPrefix As String = "p4_05_fixture_sku_"
+
+    ''' <summary>ERROR 4025: CONSTRAINT ... failed - MariaDB 10.4's CHECK violation. Same constant PurchaseOrderSchemaTests defines for the schema-level proof at P3-02; this file re-proves it against the production repository method (P4-07).</summary>
+    Private Const CheckConstraintFailedErrorNumber As Integer = 4025
 
     Private _factory As MerchandisingApiFactory
     Private _connectionFactory As ConnectionFactory
@@ -568,6 +577,139 @@ Public Class ReceivingTests
                    $"expected {found.ExpectedQuantity}, actual {found.ActualQuantity}, delta {found.Delta}")
             Assert.IsNull(found, $"Product {productId} must reconcile {whenLabel}: {detail}")
         End Using
+
+    End Function
+
+    ' ------------------------------------------------------------------ box 8 (P4-07)
+
+    ''' <summary>P4-07 box 1: a single receipt exceeding the ordered quantity is refused 409 with the stable RECEIPT_QUANTITY_EXCEEDS_ORDERED code, and leaves no trace at all - checked before the receipt header is ever inserted.</summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_QuantityExceedsOrdered_Refused409WithNoPartialTrace() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 10.000D, 1.0000D)})
+        Dim lineId As Integer = order.Lines(0).Id
+        Dim correlationId As String = Guid.NewGuid().ToString()
+        Dim referenceNumber As String = NewReferenceNumber()
+
+        Dim outcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, referenceNumber, New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = lineId, .QuantityReceived = 10.001D, .Cost = 1.0000D}
+                },
+                _inventoryUserId, correlationId, Guid.NewGuid().ToString())
+
+        Assert.AreEqual(ReceivingOutcomeKind.OverReceived, outcome.Kind)
+        Assert.AreEqual(lineId, outcome.OffendingPurchaseOrderLineId)
+        Assert.AreEqual(ReceivingOutcome.OverReceivedErrorCode, outcome.ErrorCode)
+
+        Assert.AreEqual(0L, Await CountReceiptsAsync(referenceNumber), "No Receipts row.")
+        Assert.AreEqual(0L, Await CountMovementsAsync(correlationId, productId), "No StockMovements row.")
+        Assert.AreEqual(0D, Await ReadBalanceOrZeroAsync(productId), "No balance change.")
+        Assert.AreEqual(0.000D, Await ReadLineReceivedQuantityAsync(lineId), "ReceivedQuantity untouched.")
+        Assert.AreEqual("Approved", Await ReadOrderStatusAsync(order.Id), "Order status untouched.")
+
+    End Function
+
+    ''' <summary>
+    ''' P4-07 box 2: a THIRD receipt against a line that is already fully
+    ''' received is refused with the SAME OverReceivedErrorCode - even
+    ''' though the ORDER as a whole is still PartiallyReceived (a second
+    ''' line is deliberately left far from done), so PurchaseOrderTransitions.
+    ''' CanTransition would happily allow a ReceivePartially action here.
+    ''' This is exactly the case a status-level refusal cannot catch, and
+    ''' the reason OverReceived is a distinct kind from Refused.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function ReceiveAsync_ThirdReceiptOnFullyReceivedLine_RefusedWithSameCode() As Task
+
+        Dim closingProductId As Integer = Await CreateFixtureProductAsync()
+        Dim openProductId As Integer = Await CreateFixtureProductAsync()
+
+        Dim order As PurchaseOrderResponse =
+            Await CreateApprovedOrderAsync({(closingProductId, 5.000D, 1.0000D), (openProductId, 100.000D, 1.0000D)})
+        Dim closingLineId As Integer = order.Lines(0).Id
+        Dim openLineId As Integer = order.Lines(1).Id
+
+        ' Receipt 1: partial on both lines.
+        Dim firstOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(),
+                New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = closingLineId, .QuantityReceived = 3.000D, .Cost = 1.0000D},
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = openLineId, .QuantityReceived = 1.000D, .Cost = 1.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Assert.AreEqual("PartiallyReceived", firstOutcome.Response.PurchaseOrderStatus)
+
+        ' Receipt 2: closes the closing line exactly (3 + 2 = 5); the open
+        ' line is nowhere near its ordered 100, so the order stays Partial.
+        Dim secondOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, NewReferenceNumber(), New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = closingLineId, .QuantityReceived = 2.000D, .Cost = 1.0000D}
+                },
+                _inventoryUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Assert.AreEqual("PartiallyReceived", secondOutcome.Response.PurchaseOrderStatus, "The order overall must still be PartiallyReceived - the OPEN line is nowhere near done.")
+        Assert.AreEqual(5.000D, Await ReadLineReceivedQuantityAsync(closingLineId))
+
+        ' Receipt 3: any further quantity on the now-fully-received closing
+        ' line must be refused - the order is receivable (CanTransition
+        ' would allow it), so only the line-level check can catch this.
+        Dim thirdCorrelationId As String = Guid.NewGuid().ToString()
+        Dim thirdReferenceNumber As String = NewReferenceNumber()
+
+        Dim thirdOutcome As ReceivingOutcome =
+            Await _receivingService.ReceiveAsync(
+                order.Id, thirdReferenceNumber, New List(Of ReceiveGoodsLineRequest) From {
+                    New ReceiveGoodsLineRequest With {.PurchaseOrderLineId = closingLineId, .QuantityReceived = 1.000D, .Cost = 1.0000D}
+                },
+                _inventoryUserId, thirdCorrelationId, Guid.NewGuid().ToString())
+
+        Assert.AreEqual(ReceivingOutcomeKind.OverReceived, thirdOutcome.Kind)
+        Assert.AreEqual(ReceivingOutcome.OverReceivedErrorCode, thirdOutcome.ErrorCode, "Same stable code as a single-receipt over-receive.")
+        Assert.AreEqual(closingLineId, thirdOutcome.OffendingPurchaseOrderLineId)
+        Assert.AreEqual(5.000D, Await ReadLineReceivedQuantityAsync(closingLineId), "The third, refused receipt must not have moved ReceivedQuantity at all.")
+        Assert.AreEqual(0L, Await CountReceiptsAsync(thirdReferenceNumber))
+        Assert.AreEqual(0L, Await CountMovementsAsync(thirdCorrelationId, closingProductId))
+
+    End Function
+
+    ''' <summary>
+    ''' P4-07 box 3: THE DATABASE, NOT THE API GUARD, IS WHAT ACTUALLY STOPS
+    ''' AN OVER-RECEIPT. Calls PurchaseOrderRepository.IncrementReceivedQuantityAsync
+    ''' DIRECTLY - the exact method ReceivingService's step 6 calls - with an
+    ''' over-limit quantity, bypassing ReceivingService.ReceiveAsync's step 4
+    ''' guard entirely. If this test failed to throw, the API-only guard
+    ''' would be "one deployment away from useless" (the card's own words):
+    ''' proof that CK_PurchaseOrderLines_ReceivedQuantity (P3-02) is a real,
+    ''' independent backstop, not merely documented as one.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function IncrementReceivedQuantityAsync_OverLimit_RefusedByTheDatabase() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+        Dim order As PurchaseOrderResponse = Await CreateApprovedOrderAsync({(productId, 10.000D, 1.0000D)})
+        Dim lineId As Integer = order.Lines(0).Id
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+                Dim ex As MySqlException =
+                    Await Assert.ThrowsExactlyAsync(Of MySqlException)(
+                        Function() PurchaseOrderRepository.IncrementReceivedQuantityAsync(
+                            connection, transaction, lineId, 10.001D))
+
+                Console.WriteLine($"P4-07 over-receive via the production repository method -> ERROR {ex.Number}")
+                Assert.AreEqual(CheckConstraintFailedErrorNumber, ex.Number,
+                    "CK_PurchaseOrderLines_ReceivedQuantity, not the API guard, must be what refuses this.")
+
+                Await transaction.RollbackAsync()
+
+            End Using
+        End Using
+
+        Assert.AreEqual(0.000D, Await ReadLineReceivedQuantityAsync(lineId), "The rolled-back over-limit attempt must leave ReceivedQuantity untouched.")
 
     End Function
 

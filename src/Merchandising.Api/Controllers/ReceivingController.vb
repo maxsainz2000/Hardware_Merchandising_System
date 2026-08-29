@@ -115,6 +115,19 @@ Namespace Controllers
                         .CorrelationId = correlationId
                     })
 
+                Case ReceivingOutcomeKind.OverReceived
+                    ' P4-07: CK_PurchaseOrderLines_ReceivedQuantity (P3-02) is
+                    ' the enforced bound; this is the controlled response for
+                    ' it, checked before any row is written - see
+                    ' ReceivingOutcome's header for why this is a distinct
+                    ' code from a CanTransition (status) refusal.
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = ReceivingOutcome.OverReceivedErrorCode,
+                        .Message = $"The quantity requested for {LineFieldFor(request, outcome.OffendingPurchaseOrderLineId)} " &
+                                   "would exceed what remains to be received on that line.",
+                        .CorrelationId = correlationId
+                    })
+
                 Case Else ' Refused - PurchaseOrderTransitions.CanTransition's stable error code
                     Return Conflict(New ApiErrorResponse With {
                         .ErrorCode = outcome.ErrorCode,
