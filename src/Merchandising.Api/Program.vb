@@ -278,6 +278,12 @@ Public Module Program
         ' the stock-out effects and the audit row, or none of them.
         builder.Services.AddScoped(Of PurchaseReturnService)()
 
+        ' P4-09 / ADR-006 + ADR-007: stock counts - Open/RecordLine/Close,
+        ' each its own claim-first transaction. Changes no stock; captures
+        ' StockBalances with a non-locking read so an open count cannot
+        ' block a sale or a receipt on the same product.
+        builder.Services.AddScoped(Of StockCountService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

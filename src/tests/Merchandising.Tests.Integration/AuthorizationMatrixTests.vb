@@ -751,6 +751,67 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P4-09's stock-count endpoints - StockCounts.Perform's first live
+    ''' routes. ONE test covers all three (Open/RecordLine/Close), the same
+    ''' "one policy, several related actions, one method" shape
+    ''' MaintenancePerform_MatrixMatchesPolicyRegistry uses above: a
+    ''' disallowed role is refused 403 at Open (there is nothing to record a
+    ''' line against or close if Open itself is refused); an allowed role's
+    ''' probe walks the whole lifecycle for real - Open, RecordLine, Close -
+    ''' so each route's own gate is genuinely exercised, not merely the
+    ''' first one.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function StockCountsPerform_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.StockCountsPerform)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+                Dim isAllowed As Boolean = allowedRoles.Contains(roleName)
+
+                Using openResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/stock-counts", token, NewOpenStockCountBody())
+                    Await AssertCellAsync("StockCounts.Perform (open)", roleName, isAllowed, openResponse)
+
+                    If Not isAllowed Then
+                        Continue For
+                    End If
+
+                    Dim opened As StockCountResponse = Await openResponse.Content.ReadFromJsonAsync(Of StockCountResponse)()
+
+                    Using lineResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Post, $"/api/v1/stock-counts/{opened.Id}/lines", token,
+                                         NewRecordStockCountLineBody(productId))
+                        Await AssertCellAsync("StockCounts.Perform (record line)", roleName, isAllowed:=True, lineResponse)
+                    End Using
+
+                    Using closeResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Post, $"/api/v1/stock-counts/{opened.Id}/close", token,
+                                         NewCloseStockCountBody())
+                        Await AssertCellAsync("StockCounts.Perform (close)", roleName, isAllowed:=True, closeResponse)
+                    End Using
+
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/stock-counts", token:=Nothing, requestBody:=NewOpenStockCountBody())
+                Await AssertUnauthenticatedAsync("StockCounts.Perform (open)", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -965,6 +1026,20 @@ Public Class AuthorizationMatrixTests
     ''' <summary>P3-05: the required-Reason body every cancel/close probe sends.</summary>
     Private Shared Function NewReasonBody() As CancelPurchaseOrderRequest
         Return New CancelPurchaseOrderRequest With {.Reason = "P3-05 matrix probe"}
+    End Function
+
+    ''' <summary>P4-09: a fresh idempotency key per call - a matrix probe must never replay an earlier cell's committed session.</summary>
+    Private Shared Function NewOpenStockCountBody() As OpenStockCountRequest
+        Return New OpenStockCountRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")}
+    End Function
+
+    Private Shared Function NewRecordStockCountLineBody(productId As Integer) As RecordStockCountLineRequest
+        Return New RecordStockCountLineRequest With {
+            .ProductId = productId, .CountedQuantity = 1.000D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+    End Function
+
+    Private Shared Function NewCloseStockCountBody() As CloseStockCountRequest
+        Return New CloseStockCountRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")}
     End Function
 
     ''' <summary>

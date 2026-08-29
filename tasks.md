@@ -252,7 +252,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. Files overlap with each other but not with Track D.*
 
-### ⬜ P4-09 · Stock counts with variance
+### ✅ P4-09 · Stock counts with variance
 
 **Spec:** §10.2, §11 · **Files:** `src/Merchandising.Api/Controllers/StockCountsController.vb`, `src/Merchandising.Infrastructure/Data/StockCountRepository.vb`, `src/Merchandising.Contracts/Inventory/`
 
@@ -260,11 +260,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Variance is computed and stored server-side at count time; a later balance change does not retroactively alter a recorded variance
-- [ ] A count in progress does not block sales or receiving on the same product
-- [ ] Counted quantity scale validated at the API boundary **before** binding (ADR-004.1) — a stored value that looks right proves nothing
-- [ ] A closed count is immutable and remains fully readable
-- [ ] **Matrix suite extended** — `StockCounts.Perform` positive and negative cells; integration suite green
+- [x] Variance is computed and stored server-side at count time; a later balance change does not retroactively alter a recorded variance
+- [x] A count in progress does not block sales or receiving on the same product
+- [x] Counted quantity scale validated at the API boundary **before** binding (ADR-004.1) — a stored value that looks right proves nothing
+- [x] A closed count is immutable and remains fully readable
+- [x] **Matrix suite extended** — `StockCounts.Perform` positive and negative cells; integration suite green
 
 **Evidence:** `evidence/phase-4/p4-09-stock-counts.txt`
 

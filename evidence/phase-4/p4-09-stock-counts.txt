@@ -1,0 +1,146 @@
+P4-09 — Stock counts with variance
+=========================================================================
+
+Files:
+  src/Merchandising.Contracts/Inventory/OpenStockCountRequest.vb
+  src/Merchandising.Contracts/Inventory/RecordStockCountLineRequest.vb
+  src/Merchandising.Contracts/Inventory/CloseStockCountRequest.vb
+  src/Merchandising.Contracts/Inventory/StockCountResponse.vb
+  src/Merchandising.Contracts/Inventory/StockCountLineResponse.vb
+  src/Merchandising.Infrastructure/Data/StockCountRepository.vb
+  src/Merchandising.Infrastructure/Data/StockRepository.vb          (GetQuantityAsync added)
+  src/Merchandising.Api/Inventory/StockCountService.vb
+  src/Merchandising.Api/Inventory/StockCountOutcome.vb
+  src/Merchandising.Api/Controllers/StockCountsController.vb
+  src/Merchandising.Api/Program.vb                                   (DI registration)
+  src/tests/Merchandising.Tests.Integration/StockCountTests.vb
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (StockCountsPerform_MatrixMatchesPolicyRegistry added)
+
+-------------------------------------------------------------------------
+SECTION 0 — scope: what this card builds on, what it deliberately does not
+touch
+-------------------------------------------------------------------------
+
+The schema (StockCounts, StockCountLines) and grants (INSERT/UPDATE on
+stockcounts, INSERT only on stockcountlines) already exist from P4-03
+(db/migrations/0010, db/grants/0012) - proven separately by
+StockCountSchemaTests. StockCounts.Perform is already registered in
+PolicyRegistry (InventoryAndAbove) with no live route until this card.
+This card is the API layer only: three atomic commands (Open/RecordLine/
+Close) plus a plain read.
+
+THE COUNT ITSELF CHANGES NO STOCK (the card's own "Do" text). There is no
+StockMovements row anywhere in StockCountService, and no call into
+StockRepository's write methods - only the new GetQuantityAsync, a
+non-locking read. P4-01's ledger reconciliation is therefore untouched by
+this card.
+
+-------------------------------------------------------------------------
+SECTION 1 — the concurrency mechanism (Done-when box 2)
+-------------------------------------------------------------------------
+
+RecordLineAsync locks the StockCounts header row with
+StockCountRepository.GetForUpdateAsync (SELECT ... FOR UPDATE) to safely
+check and hold "this session is still Open" against a concurrent close or
+second record - the same "lock the row this class owns before deciding"
+shape PurchaseOrderRepository/PurchaseReturnRepository already use for
+their own headers. It deliberately NEVER locks StockBalances:
+StockRepository.GetQuantityAsync is an ordinary, non-locking SELECT. That
+is the whole mechanism behind "a count in progress does not block sales or
+receiving on the same product" - the count takes no lock a sale or receipt
+would also need.
+
+Proven in StockCountTests.RecordLineAsync_LaterBalanceChangeDoesNotAlter
+StoredVariance_AndDoesNotBlockADecrement: with the count session still
+Open (not yet closed), a real StockService.DecrementAsync against the SAME
+product is issued and succeeds immediately.
+
+-------------------------------------------------------------------------
+SECTION 2 — Done-when boxes, mapped to the tests that prove them
+-------------------------------------------------------------------------
+
+Box: "Variance is computed and stored server-side at count time; a later
+balance change does not retroactively alter a recorded variance"
+  RecordLineAsync_ComputesVarianceFromCurrentBalance_AndStoresIt
+    - SystemQuantity/Variance are read from StockBalances at record time
+      and returned exactly (25.500 system, 20.000 counted, -5.500 variance).
+  RecordLineAsync_LaterBalanceChangeDoesNotAlterStoredVariance_AndDoesNotBlockADecrement
+    - a line is recorded (system=50.000, counted=48.000, variance=-2.000);
+      the balance is then moved to 40.000 by an unrelated decrement; after
+      Close, the line still reads SystemQuantity=50.000, Variance=-2.000 -
+      unaffected by the later change.
+
+Box: "A count in progress does not block sales or receiving on the same
+product"
+  RecordLineAsync_LaterBalanceChangeDoesNotAlterStoredVariance_AndDoesNotBlockADecrement
+    (same test - see SECTION 1)
+
+Box: "Counted quantity scale validated at the API boundary before binding
+(ADR-004.1)"
+  RecordStockCountLine_OverScaleQuantity_Returns400AndWritesNothing
+    - HTTP-level: 1.9999 (DECIMAL(19,3) is only 3 places) is refused 400
+      VALIDATION_FAILED with field "countedQuantity", and the session is
+      confirmed to still have zero lines afterward - the same
+      ReceiveGoods_OverScaleQuantity_Returns400 shape P4-05 uses.
+
+Box: "A closed count is immutable and remains fully readable"
+  RecordLineAsync_ClosedSession_RefusedNotOpen
+    - no further line may be recorded once Closed.
+  CloseAsync_AlreadyClosed_RefusedNotOpen
+    - cannot be closed twice.
+  CloseAsync_ReturnsAllLinesForReading_AndGetAsyncMatchesAfterward
+    - the Close response itself carries all recorded lines; a separate
+      GET afterward returns the identical Status and line data.
+
+Box: "Matrix suite extended — StockCounts.Perform positive and negative
+cells; integration suite green"
+  AuthorizationMatrixTests.StockCountsPerform_MatrixMatchesPolicyRegistry
+    - all three new routes (Open/RecordLine/Close) probed per role: an
+      allowed role (SuperAdmin/Admin/InventoryClerk) walks the whole
+      lifecycle for real - genuinely opens, records a line, and closes;
+      a disallowed role (ProcurementOfficer/Cashier) is refused 403 at
+      Open; anonymous refused 401. Clean FORBIDDEN/UNAUTHORIZED bodies
+      asserted by the shared AssertCellAsync/AssertUnauthenticatedAsync
+      helpers (ADR-014: correlation Id present, no internal leakage).
+  Full suite green - see SECTION 3.
+
+Also covered (idempotency, ADR-007, not a named Done-when box but a
+CLAUDE.md section 5 requirement for every write command):
+  OpenAsync_SameIdempotencyKeyTwice_ReturnsSameSession
+    - a repeated key replays the ORIGINAL session, never opens a second one.
+  RecordLineAsync_UnknownStockCount_ReturnsNotFound
+  RecordLineAsync_UnknownProduct_ReturnsProductNotFoundAndWritesNothing
+  CloseAsync_UnknownSession_ReturnsNotFound
+  GetAsync_UnknownId_ReturnsNothing
+
+-------------------------------------------------------------------------
+SECTION 3 — full suite run, real pinned MariaDB (scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    9 Warning(s) (pre-existing MSTEST0037 style suggestions across several
+    test files, including this card's own; not a build or guardrail failure)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   307, Skipped:     0, Total:   307, Duration: 36 s
+
+All checks passed.
+
+(307 = 294 from P4-08's commit + 12 StockCountTests + 1 new matrix test.
+Includes the AssemblyCleanup-driven P4-01 ledger reconciliation, which
+passed - untouched by this card since a stock count writes no
+StockMovements row.)
+
+-------------------------------------------------------------------------

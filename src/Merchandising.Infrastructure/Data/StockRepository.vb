@@ -18,6 +18,34 @@ Namespace Data
     Public NotInheritable Class StockRepository
 
         ''' <summary>
+        ''' A plain, non-locking read of <paramref name="productId"/>'s
+        ''' current balance - 0 when no StockBalances row exists yet (a
+        ''' product that has never been touched by a stock-changing
+        ''' command). P4-09 uses this, deliberately never
+        ''' <c>SELECT ... FOR UPDATE</c>, so capturing a stock count's
+        ''' "system quantity at the moment of counting" places no lock on
+        ''' the row at all - the card's own Done-when box 2: "a count in
+        ''' progress does not block sales or receiving on the same
+        ''' product."
+        ''' </summary>
+        Public Shared Async Function GetQuantityAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            productId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Decimal)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT Quantity FROM StockBalances WHERE ProductId = @productId;"
+                command.Parameters.AddWithValue("@productId", productId)
+
+                Dim result As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                Return If(result Is Nothing OrElse result Is DBNull.Value, 0D, CDec(result))
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Increases <paramref name="productId"/>'s balance by
         ''' <paramref name="quantity"/> inside <paramref name="transaction"/>
         ''' - P4-05's goods-received effect. Unlike
