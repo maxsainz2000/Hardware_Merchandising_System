@@ -1,0 +1,208 @@
+P4-11 — Low-stock logic and reconciliation views
+=========================================================================
+
+Files:
+  src/Merchandising.Domain/Entities/StockBalanceItem.vb        (new)
+  src/Merchandising.Domain/Entities/StockMovementItem.vb       (new)
+  src/Merchandising.Infrastructure/Data/StockRepository.vb     (SearchStockAsync, SearchLowStockAsync, SearchMovementsAsync added)
+  src/Merchandising.Contracts/Inventory/StockBalanceResponse.vb        (new)
+  src/Merchandising.Contracts/Inventory/StockSearchResponse.vb         (new)
+  src/Merchandising.Contracts/Inventory/LowStockItemResponse.vb        (new)
+  src/Merchandising.Contracts/Inventory/LowStockSearchResponse.vb      (new)
+  src/Merchandising.Contracts/Inventory/StockMovementItemResponse.vb   (new)
+  src/Merchandising.Contracts/Inventory/StockMovementSearchResponse.vb (new)
+  src/Merchandising.Api/Inventory/StockService.vb              (SearchStockAsync, SearchLowStockAsync, SearchMovementsAsync added)
+  src/Merchandising.Api/Controllers/InventoryController.vb     (GetStock, GetLowStock, GetStockMovements added; <Authorize> moved from class to each action)
+  src/tests/Merchandising.Tests.Integration/LowStockAndStockReviewTests.vb  (new)
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb     (StockRead_/LowStockReview_/StockReviewMovements_MatrixMatchesPolicyRegistry added)
+
+-------------------------------------------------------------------------
+SECTION 0 — design decisions
+-------------------------------------------------------------------------
+
+1. Three routes added under the existing InventoryController (spec section
+   13's endpoint table is explicitly "representative", not literal):
+     GET /api/v1/inventory/stock            - Stock.Read
+     GET /api/v1/inventory/stock/movements  - Stock.ReviewMovements
+     GET /api/v1/inventory/low-stock        - LowStock.Review
+   All three policies were already registered in PolicyRegistry (P2-02) but
+   wired to no live endpoint before this card - no policy work was needed,
+   only the endpoints.
+
+2. <Authorize> moved from the controller class down to each action.
+   DecrementStock keeps Adjustments.Request; the three new GET actions each
+   carry their own policy (Stock.Read is EveryOperationalRole, the other two
+   are InventoryAndAbove) - a single class-level policy could no longer
+   describe every action, the same reason PurchaseOrdersController and
+   AdjustmentsController already put <Authorize(Policy:=...)> per action.
+
+3. Pagination/sort/filter follow P3-03's contract exactly: page defaults to
+   1 (clamped up), pageSize defaults to 25 (clamped down to MaxPageSize=100),
+   sort is "field[:asc|desc]" against a closed enum whitelist (never a
+   caller-supplied column name reaching ORDER BY), every applied value
+   echoed back in the response body.
+
+4. GET stock/movements requires productId (400 VALIDATION_FAILED if absent)
+   and echoes CurrentBalance (StockBalances.Quantity at read time) alongside
+   the paginated ledger rows - "shape them so those reports reconcile
+   rather than re-query" (the card's own instruction). Summing every
+   returned Delta over a product's full history equals CurrentBalance -
+   the same invariant P4-01 asserts internally, now provable by a caller of
+   this endpoint too (LowStockAndStockReviewTests.GetStockMovements_
+   SumsToCurrentBalance).
+
+5. GET low-stock lists ACTIVE products whose current balance is at or below
+   their OWN ReorderLevel (Products.ReorderLevel, migration 0006) - never a
+   global constant. A product with no StockBalances row at all is treated
+   as zero (COALESCE(b.Quantity, 0)), so it is never excluded merely for
+   having no balance row yet.
+
+6. Date boundaries on the movement ledger reuse P3-06's StoreTimeZone
+   conversion exactly (store-local yyyy-MM-dd -> UTC instant range), with
+   the applied range and "Asia/Manila" always echoed back, never left for
+   the caller to infer.
+
+-------------------------------------------------------------------------
+SECTION 1 — bug found and fixed during implementation
+-------------------------------------------------------------------------
+
+StockRepository.ReadMovementItem originally read CorrelationId with
+reader.GetString(), which threw:
+  System.InvalidCastException: Unable to cast object of type 'System.Guid'
+  to type 'System.String'
+MySqlConnector maps CHAR(36) columns to System.Guid, not String - the exact
+gotcha MaintenanceLockRepository's own header already documents for every
+CHAR(36) column in this schema (StockMovements.CorrelationId,
+IdempotencyKeys.KeyValue, BackupLogs.CorrelationId). Nothing had read
+StockMovements.CorrelationId back before this card - it was write-only
+until now. Fixed with reader.GetGuid(...).ToString("d"), the same pattern
+MaintenanceLockRepository already uses. Caught by
+GetStockMovements_SumsToCurrentBalance failing with a 500 before the fix.
+
+-------------------------------------------------------------------------
+SECTION 2 — done-when verification
+-------------------------------------------------------------------------
+
+[x] Low-stock threshold is per product, read from Products.ReorderLevel
+    - StockRepository.SearchLowStockAsync's WHERE clause compares each row
+      against its OWN p.ReorderLevel, never a constant.
+    - Proven by LowStockAndStockReviewTests.GetLowStock_
+      IncludesAtOrBelowReorderLevel_ExcludesAboveAndInactive: two products
+      raised to the SAME balance (5.000) via real adjustments, one with
+      ReorderLevel=10.000 (included) and one with ReorderLevel=2.000
+      (excluded) - the threshold is what differs, not the balance.
+
+[x] The movement history for a product sums to its current balance,
+    exposed through the API.
+    - Proven by GetStockMovements_SumsToCurrentBalance: two adjustments
+      (+5.000, +3.000) and one decrement (-2.000) via real HTTP commands;
+      GET stock/movements?productId=...&pageSize=100 returns 3 rows whose
+      Delta sums to 6.000, matching both the response's own CurrentBalance
+      field and a direct SELECT against StockBalances.
+
+[x] Pagination, max page size, sorting and filtering consistent with
+    P3-03's definitions.
+    - GetStock_PaginationMatchesP3_03Contract: default pageSize=25,
+      MaxPageSize=100, an oversized pageSize=5000 clamped to 100, and two
+      pages of 2 never overlap.
+    - GetStock_UnknownSort_Refused400 / GetStockMovements_UnknownSort_
+      Refused400: an unrecognised sort value is refused 400
+      VALIDATION_FAILED, never silently ignored.
+
+[x] Date boundaries defined in the store time zone, stated in the response.
+    - GetStockMovements_DateRangeFilter_StoreLocalBoundaries: a movement
+      recorded "today" (store-local) is included by a today-to-today
+      window and excluded once the window moves entirely to tomorrow or
+      entirely to yesterday; FromDate/ToDate/TimeZone are echoed back.
+    - GetStockMovements_NoDateFilters_EchoesUnboundedRange: an unfiltered
+      query states both bounds as null and the zone as "Asia/Manila"
+      rather than leaving the caller to guess.
+
+[x] Matrix suite extended - LowStock.Review, Stock.Read,
+    Stock.ReviewMovements; integration suite green.
+    - AuthorizationMatrixTests gained StockRead_MatrixMatchesPolicyRegistry,
+      LowStockReview_MatrixMatchesPolicyRegistry,
+      StockReviewMovements_MatrixMatchesPolicyRegistry - each probes all
+      five roles plus an anonymous call against its own route.
+    - EveryControllerAction_DeclaresAllowAnonymousOrARegisteredPolicy
+      passes unchanged, covering the three new actions automatically
+      (each declares <Authorize(Policy:=...)> against a name
+      PolicyRegistry.Definitions already registers).
+
+-------------------------------------------------------------------------
+SECTION 3 — test run, new/targeted classes
+-------------------------------------------------------------------------
+
+> dotnet test src\tests\Merchandising.Tests.Integration\Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~LowStockAndStockReviewTests"
+
+  Passed GetStockMovements_SumsToCurrentBalance [2 s]
+  Passed GetStockMovements_MissingProductId_Refused400 [445 ms]
+  Passed GetStockMovements_UnknownSort_Refused400 [337 ms]
+  Passed GetLowStock_IncludesAtOrBelowReorderLevel_ExcludesAboveAndInactive [1 s]
+  Passed GetStock_PaginationMatchesP3_03Contract [496 ms]
+  Passed GetStock_UnknownSort_Refused400 [291 ms]
+  Passed GetStockMovements_DateRangeFilter_StoreLocalBoundaries [428 ms]
+  Passed GetStockMovements_NoDateFilters_EchoesUnboundedRange [342 ms]
+
+  Test Run Successful.
+Total tests: 8
+     Passed: 8
+ Total time: 7.2739 Seconds
+
+> dotnet test src\tests\Merchandising.Tests.Integration\Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~AuthorizationMatrixTests"
+
+  Passed EveryControllerAction_DeclaresAllowAnonymousOrARegisteredPolicy [830 ms]
+  Passed DiagnosticsAdminPing_MatrixMatchesPolicyRegistry [1 s]
+  Passed MaintenancePerform_MatrixMatchesPolicyRegistry [973 ms]
+  Passed AdjustmentsRequest_MatrixMatchesPolicyRegistry [1 s]
+  Passed AdjustmentsApprove_MatrixMatchesPolicyRegistry [1 s]
+  Passed ConfigurationManage_MatrixMatchesPolicyRegistry [850 ms]
+  Passed ProductsChangePrice_MatrixMatchesPolicyRegistry [817 ms]
+  Passed PurchaseOrdersCreate_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersTrack_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersSubmit_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersApprove_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersCancel_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseOrdersClose_MatrixMatchesPolicyRegistry [1 s]
+  Passed ReceivingConfirm_MatrixMatchesPolicyRegistry [1 s]
+  Passed PurchaseReturnsManage_MatrixMatchesPolicyRegistry [2 s]
+  Passed StockCountsPerform_MatrixMatchesPolicyRegistry [1 s]
+  Passed StockRead_MatrixMatchesPolicyRegistry [1 s]
+  Passed LowStockReview_MatrixMatchesPolicyRegistry [1 s]
+  Passed StockReviewMovements_MatrixMatchesPolicyRegistry [1 s]
+
+  Test Run Successful.
+Total tests: 19
+     Passed: 19
+ Total time: 25.4610 Seconds
+
+-------------------------------------------------------------------------
+SECTION 4 — full verification pass (pwsh ./scripts/run-tests.ps1)
+-------------------------------------------------------------------------
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    44, Skipped:     0, Total:    44, Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   339, Skipped:     0, Total:   339, Duration: 1 m 23 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+(339 total includes P4-01's LedgerReconciliationTests AssemblyCleanup, which
+scans every product in the database - confirming this card's fixtures, all
+created at a 0.000 starting balance with balance changes made only through
+real commands (adjustment/decrement), never broke the whole-database
+SUM(StockMovements) = StockBalances invariant.)

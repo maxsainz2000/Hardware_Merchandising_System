@@ -285,7 +285,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-10-adjustments.txt`
 
-### ⬜ P4-11 · Low-stock logic and reconciliation views
+### ✅ P4-11 · Low-stock logic and reconciliation views
 
 **Spec:** §10.2, §14 · **Files:** `src/Merchandising.Api/Controllers/InventoryController.vb`, `src/Merchandising.Infrastructure/Data/StockRepository.vb`
 
@@ -293,11 +293,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Low-stock threshold is per product and read from the product master, never a global constant
-- [ ] The movement history for a product **sums to its current balance** — the same invariant P4-01 asserts, now exposed through the API so the Phase 6 report and the detail screen cannot disagree
-- [ ] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
-- [ ] Date boundaries defined in the **store time zone** and stated in the response (spec §14)
-- [ ] **Matrix suite extended** — `LowStock.Review`, `Stock.Read`, `Stock.ReviewMovements`; integration suite green
+- [x] Low-stock threshold is per product and read from the product master, never a global constant
+- [x] The movement history for a product **sums to its current balance** — the same invariant P4-01 asserts, now exposed through the API so the Phase 6 report and the detail screen cannot disagree
+- [x] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
+- [x] Date boundaries defined in the **store time zone** and stated in the response (spec §14)
+- [x] **Matrix suite extended** — `LowStock.Review`, `Stock.Read`, `Stock.ReviewMovements`; integration suite green
 
 **Evidence:** `evidence/phase-4/p4-11-low-stock.txt`
 

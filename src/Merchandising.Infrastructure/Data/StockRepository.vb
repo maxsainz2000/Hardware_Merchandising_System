@@ -8,12 +8,35 @@
 ' before/after values for the movement row. It cannot change what already
 ' happened, and InnoDB guarantees a transaction sees its own uncommitted
 ' write, so QuantityAfter always reflects the UPDATE that just ran.
+'
+' P4-11 ADDS THREE READ QUERIES - Stock.Read, LowStock.Review,
+' Stock.ReviewMovements - in PurchaseOrderRepository's own SearchAsync shape
+' (that class's header): sort is a closed enum, never a caller-supplied
+' column name; COUNT(*) then a LIMIT/OFFSET page; Id is always the final
+' tie-break so paging is stable. SearchStockAsync and SearchLowStockAsync
+' share one query shape (StockBalanceItem's own header explains why) - the
+' low-stock list is that same projection with a server-side WHERE applied,
+' not a second definition of "current stock".
 
+Imports System.Collections.Generic
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports Merchandising.Domain.Entities
 Imports MySqlConnector
 
 Namespace Data
+
+    ''' <summary>The sort fields <see cref="StockRepository.SearchStockAsync"/> and <see cref="StockRepository.SearchLowStockAsync"/> will honour.</summary>
+    Public Enum StockSortField
+        ProductName
+        Quantity
+        ReorderLevel
+    End Enum
+
+    ''' <summary>The one sort field <see cref="StockRepository.SearchMovementsAsync"/> honours - kept as an enum, not a bare "always CreatedAt", so a future second field is a one-line addition rather than a new mechanism.</summary>
+    Public Enum StockMovementSortField
+        CreatedAt
+    End Enum
 
     Public NotInheritable Class StockRepository
 
@@ -153,6 +176,247 @@ Namespace Data
                 Dim quantityAfter As Decimal = CDec(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
                 Return (Succeeded:=True, QuantityBefore:=quantityAfter + quantity, QuantityAfter:=quantityAfter)
             End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Paginated, sorted list of every product's current stock position -
+        ''' Stock.Read (spec section 13 <c>GET /stock</c>). <paramref name="includeInactive"/>
+        ''' defaults False, the same convention ProductRepository.SearchAsync
+        ''' uses for the same reason (P2-09).
+        ''' </summary>
+        Public Shared Async Function SearchStockAsync(
+            connection As MySqlConnection,
+            includeInactive As Boolean,
+            sortField As StockSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of StockBalanceItem), TotalCount As Integer))
+
+            Dim whereClause As String = If(includeInactive, String.Empty, " WHERE p.IsActive = 1")
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM Products p" & whereClause & ";"
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of StockBalanceItem)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT p.Id, p.Sku, p.Name, p.IsActive, p.ReorderLevel, COALESCE(b.Quantity, 0.000) AS Quantity " &
+                    "  FROM Products p" &
+                    "  LEFT JOIN StockBalances b ON b.ProductId = p.Id" &
+                    whereClause &
+                    " ORDER BY " & StockOrderByClause(sortField, sortDescending) &
+                    " LIMIT @pageSize OFFSET @offset;"
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadStockBalanceItem(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Paginated, sorted list of ACTIVE products at or below their own
+        ''' reorder level - LowStock.Review (spec section 14's low-stock
+        ''' report: "Active products at or below reorder level"). A product
+        ''' with no StockBalances row at all is treated as zero, which is at
+        ''' or below any non-negative reorder level - never excluded merely
+        ''' for having no balance row yet.
+        ''' </summary>
+        Public Shared Async Function SearchLowStockAsync(
+            connection As MySqlConnection,
+            sortField As StockSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of StockBalanceItem), TotalCount As Integer))
+
+            Const whereClause As String = " WHERE p.IsActive = 1 AND COALESCE(b.Quantity, 0.000) <= p.ReorderLevel"
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) FROM Products p LEFT JOIN StockBalances b ON b.ProductId = p.Id" & whereClause & ";"
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of StockBalanceItem)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT p.Id, p.Sku, p.Name, p.IsActive, p.ReorderLevel, COALESCE(b.Quantity, 0.000) AS Quantity " &
+                    "  FROM Products p" &
+                    "  LEFT JOIN StockBalances b ON b.ProductId = p.Id" &
+                    whereClause &
+                    " ORDER BY " & StockOrderByClause(sortField, sortDescending) &
+                    " LIMIT @pageSize OFFSET @offset;"
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadStockBalanceItem(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Paginated, sorted movement ledger for ONE product -
+        ''' Stock.ReviewMovements (spec section 13 <c>GET /stock/movements</c>).
+        ''' <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/> are
+        ''' already-converted UTC instants - the caller (StockService) does the
+        ''' store-local-date-to-UTC conversion, the same layering
+        ''' PurchaseOrderRepository.SearchHistoryAsync uses.
+        ''' </summary>
+        Public Shared Async Function SearchMovementsAsync(
+            connection As MySqlConnection,
+            productId As Integer,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As StockMovementSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of StockMovementItem), TotalCount As Integer))
+
+            Dim conditions As New List(Of String) From {"ProductId = @productId"}
+
+            If fromUtc.HasValue Then
+                conditions.Add("CreatedAtUtc >= @fromUtc")
+            End If
+
+            If toUtcExclusive.HasValue Then
+                conditions.Add("CreatedAtUtc < @toUtcExclusive")
+            End If
+
+            Dim whereClause As String = " WHERE " & String.Join(" AND ", conditions)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM StockMovements" & whereClause & ";"
+                AddMovementFilterParameters(command, productId, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of StockMovementItem)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT Id, ProductId, Delta, QuantityBefore, QuantityAfter, Reason, ActorUserId, CorrelationId, CreatedAtUtc " &
+                    "  FROM StockMovements" &
+                    whereClause &
+                    " ORDER BY " & MovementOrderByClause(sortField, sortDescending) &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddMovementFilterParameters(command, productId, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadMovementItem(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ' --------------------------------------------------------------- helpers
+
+        Private Shared Sub AddMovementFilterParameters(
+            command As MySqlCommand, productId As Integer, fromUtc As DateTime?, toUtcExclusive As DateTime?)
+
+            command.Parameters.AddWithValue("@productId", productId)
+
+            If fromUtc.HasValue Then
+                command.Parameters.AddWithValue("@fromUtc", fromUtc.Value)
+            End If
+
+            If toUtcExclusive.HasValue Then
+                command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive.Value)
+            End If
+
+        End Sub
+
+        ''' <summary>Id is always the final tie-break so paging is stable - the same reasoning PurchaseOrderRepository.OrderByClause's own header gives.</summary>
+        Private Shared Function StockOrderByClause(sortField As StockSortField, sortDescending As Boolean) As String
+
+            Dim column As String
+
+            Select Case sortField
+                Case StockSortField.Quantity
+                    column = "Quantity"
+                Case StockSortField.ReorderLevel
+                    column = "p.ReorderLevel"
+                Case Else
+                    column = "p.Name"
+            End Select
+
+            Dim direction As String = If(sortDescending, " DESC", " ASC")
+
+            Return column & direction & ", p.Id" & direction
+
+        End Function
+
+        Private Shared Function MovementOrderByClause(sortField As StockMovementSortField, sortDescending As Boolean) As String
+
+            Dim direction As String = If(sortDescending, " DESC", " ASC")
+            Return "CreatedAtUtc" & direction & ", Id" & direction
+
+        End Function
+
+        Private Shared Function ReadStockBalanceItem(reader As MySqlDataReader) As StockBalanceItem
+
+            Return New StockBalanceItem With {
+                .ProductId = reader.GetInt32(reader.GetOrdinal("Id")),
+                .Sku = reader.GetString(reader.GetOrdinal("Sku")),
+                .Name = reader.GetString(reader.GetOrdinal("Name")),
+                .IsActive = reader.GetBoolean(reader.GetOrdinal("IsActive")),
+                .ReorderLevel = reader.GetDecimal(reader.GetOrdinal("ReorderLevel")),
+                .Quantity = reader.GetDecimal(reader.GetOrdinal("Quantity"))
+            }
+
+        End Function
+
+        ''' <summary>
+        ''' MySqlConnector maps CHAR(36) to System.Guid, not String -
+        ''' reader.GetString() throws InvalidCastException on CorrelationId
+        ''' (MaintenanceLockRepository's header names this exact gotcha for
+        ''' every CHAR(36) column in the schema). GetGuid() is the correct
+        ''' typed accessor.
+        ''' </summary>
+        Private Shared Function ReadMovementItem(reader As MySqlDataReader) As StockMovementItem
+
+            Return New StockMovementItem With {
+                .Id = reader.GetInt32(reader.GetOrdinal("Id")),
+                .ProductId = reader.GetInt32(reader.GetOrdinal("ProductId")),
+                .Delta = reader.GetDecimal(reader.GetOrdinal("Delta")),
+                .QuantityBefore = reader.GetDecimal(reader.GetOrdinal("QuantityBefore")),
+                .QuantityAfter = reader.GetDecimal(reader.GetOrdinal("QuantityAfter")),
+                .Reason = reader.GetString(reader.GetOrdinal("Reason")),
+                .ActorUserId = reader.GetInt32(reader.GetOrdinal("ActorUserId")),
+                .CorrelationId = reader.GetGuid(reader.GetOrdinal("CorrelationId")).ToString("d"),
+                .CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("CreatedAtUtc"))
+            }
 
         End Function
 

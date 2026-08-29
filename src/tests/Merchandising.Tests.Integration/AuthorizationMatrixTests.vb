@@ -895,6 +895,97 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>P4-11's GET /api/v1/inventory/stock - Stock.Read's first live route, EveryOperationalRole.</summary>
+    <TestMethod>
+    Public Async Function StockRead_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.StockRead)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, "/api/v1/inventory/stock?pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("Stock.Read", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, "/api/v1/inventory/stock", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("Stock.Read", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P4-11's GET /api/v1/inventory/low-stock - LowStock.Review's first live route, InventoryAndAbove.</summary>
+    <TestMethod>
+    Public Async Function LowStockReview_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.LowStockReview)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, "/api/v1/inventory/low-stock?pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("LowStock.Review", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, "/api/v1/inventory/low-stock", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("LowStock.Review", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P4-11's GET /api/v1/inventory/stock/movements - Stock.ReviewMovements' first live route, InventoryAndAbove.</summary>
+    <TestMethod>
+    Public Async Function StockReviewMovements_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.StockReviewMovements)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, $"/api/v1/inventory/stock/movements?productId={productId}&pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("Stock.ReviewMovements", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/inventory/stock/movements?productId={productId}", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("Stock.ReviewMovements", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)

@@ -61,8 +61,11 @@
 ' this method ever writes, not just the first one. Left un-set (Nothing) by
 ' every caller except the P1-12 test itself.
 
+Imports System.Collections.Generic
+Imports System.Linq
 Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Domain
+Imports Merchandising.Domain.Entities
 Imports Merchandising.Infrastructure.Data
 Imports System.Data
 Imports System.Text.Json
@@ -208,6 +211,124 @@ Namespace Inventory
 
             End Using
 
+        End Function
+
+        ''' <summary>P4-11: Stock.Read - every product's current stock position.</summary>
+        Public Async Function SearchStockAsync(
+            includeInactive As Boolean,
+            sortField As StockSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of StockBalanceResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result = Await StockRepository.SearchStockAsync(
+                    connection, includeInactive, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Return (Items:=CType(result.Items.Select(AddressOf ToBalanceResponse).ToList(), IReadOnlyList(Of StockBalanceResponse)),
+                        TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
+        ''' <summary>P4-11: LowStock.Review - active products at or below their own reorder level.</summary>
+        Public Async Function SearchLowStockAsync(
+            sortField As StockSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of LowStockItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result = Await StockRepository.SearchLowStockAsync(
+                    connection, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Return (Items:=CType(result.Items.Select(AddressOf ToLowStockItemResponse).ToList(), IReadOnlyList(Of LowStockItemResponse)),
+                        TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' P4-11: Stock.ReviewMovements - one product's ledger, plus its
+        ''' current balance in the same read (StockMovementSearchResponse's
+        ''' own header explains why: reconciling without a second call).
+        ''' <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/> are
+        ''' already-converted UTC instants - the controller does the
+        ''' store-local-date-to-UTC conversion, the same layering
+        ''' PurchaseOrdersController/PurchaseOrderService use for history.
+        ''' </summary>
+        Public Async Function SearchMovementsAsync(
+            productId As Integer,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As StockMovementSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of StockMovementItemResponse), TotalCount As Integer, CurrentBalance As Decimal))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result = Await StockRepository.SearchMovementsAsync(
+                    connection, productId, fromUtc, toUtcExclusive, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                ' A plain, non-locking read (this class header's own GetQuantityAsync
+                ' documentation) - no ambient transaction, so Nothing is passed for it.
+                Dim currentBalance As Decimal =
+                    Await StockRepository.GetQuantityAsync(connection, Nothing, productId, cancellationToken).ConfigureAwait(False)
+
+                Return (Items:=CType(result.Items.Select(AddressOf ToMovementItemResponse).ToList(), IReadOnlyList(Of StockMovementItemResponse)),
+                        TotalCount:=result.TotalCount,
+                        CurrentBalance:=currentBalance)
+
+            End Using
+
+        End Function
+
+        ' --------------------------------------------------------------- mapping
+
+        Private Shared Function ToBalanceResponse(item As StockBalanceItem) As StockBalanceResponse
+            Return New StockBalanceResponse With {
+                .ProductId = item.ProductId,
+                .Sku = item.Sku,
+                .Name = item.Name,
+                .IsActive = item.IsActive,
+                .Quantity = item.Quantity,
+                .ReorderLevel = item.ReorderLevel
+            }
+        End Function
+
+        Private Shared Function ToLowStockItemResponse(item As StockBalanceItem) As LowStockItemResponse
+            Return New LowStockItemResponse With {
+                .ProductId = item.ProductId,
+                .Sku = item.Sku,
+                .Name = item.Name,
+                .Quantity = item.Quantity,
+                .ReorderLevel = item.ReorderLevel
+            }
+        End Function
+
+        Private Shared Function ToMovementItemResponse(item As StockMovementItem) As StockMovementItemResponse
+            Return New StockMovementItemResponse With {
+                .Id = item.Id,
+                .ProductId = item.ProductId,
+                .Delta = item.Delta,
+                .QuantityBefore = item.QuantityBefore,
+                .QuantityAfter = item.QuantityAfter,
+                .Reason = item.Reason,
+                .ActorUserId = item.ActorUserId,
+                .CorrelationId = item.CorrelationId,
+                .CreatedAtUtc = item.CreatedAtUtc
+            }
         End Function
 
     End Class
