@@ -89,7 +89,7 @@ Public Class StockCountTests
         Assert.AreEqual(_inventoryUserId, outcome.Session.CountedByUserId)
         Assert.IsNull(outcome.Session.ApprovedByUserId)
         Assert.IsNull(outcome.Session.ApprovedAtUtc)
-        Assert.AreEqual(0, outcome.Session.Lines.Count)
+        Assert.IsEmpty(outcome.Session.Lines)
 
     End Function
 
@@ -210,7 +210,7 @@ Public Class StockCountTests
         Assert.AreEqual(StockCountOutcomeKind.ProductNotFound, outcome.Kind)
 
         Dim reread As StockCountResponse = Await _stockCountService.GetAsync(session.Session.Id)
-        Assert.AreEqual(0, reread.Lines.Count, "A refused ProductNotFound line must not be written.")
+        Assert.IsEmpty(reread.Lines, "A refused ProductNotFound line must not be written.")
 
     End Function
 
@@ -281,11 +281,11 @@ Public Class StockCountTests
 
         Assert.AreEqual(StockCountOutcomeKind.Created, closeOutcome.Kind)
         Assert.AreEqual("Closed", closeOutcome.Session.Status)
-        Assert.AreEqual(2, closeOutcome.Session.Lines.Count)
+        Assert.HasCount(2, closeOutcome.Session.Lines)
 
         Dim reread As StockCountResponse = Await _stockCountService.GetAsync(session.Session.Id)
         Assert.AreEqual("Closed", reread.Status)
-        Assert.AreEqual(2, reread.Lines.Count)
+        Assert.HasCount(2, reread.Lines)
         Assert.AreEqual(closeOutcome.Session.Lines(0).Variance, reread.Lines(0).Variance)
         Assert.AreEqual(closeOutcome.Session.Lines(1).Variance, reread.Lines(1).Variance)
 
@@ -332,7 +332,7 @@ Public Class StockCountTests
                 End Using
 
                 Dim reread As StockCountResponse = Await _stockCountService.GetAsync(opened.Id)
-                Assert.AreEqual(0, reread.Lines.Count, "A refused over-scale line must never reach a bound SQL parameter.")
+                Assert.IsEmpty(reread.Lines, "A refused over-scale line must never reach a bound SQL parameter.")
 
             End Using
 

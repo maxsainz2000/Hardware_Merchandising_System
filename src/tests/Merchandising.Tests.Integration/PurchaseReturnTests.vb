@@ -119,7 +119,7 @@ Public Class PurchaseReturnTests
         Assert.AreEqual("Approved", outcome.Response.Status)
         Assert.AreEqual(_procurementUserId, outcome.Response.RequestedByUserId)
         Assert.AreEqual(_procurementUserId, outcome.Response.ApprovedByUserId)
-        Assert.AreEqual(1, outcome.Response.Lines.Count)
+        Assert.HasCount(1, outcome.Response.Lines)
 
         Dim line = outcome.Response.Lines(0)
         Assert.AreEqual(productId, line.ProductId)
@@ -598,7 +598,7 @@ Public Class PurchaseReturnTests
 
                 Dim body As PurchaseReturnResponse = Await response.Content.ReadFromJsonAsync(Of PurchaseReturnResponse)()
                 Assert.AreEqual("Approved", body.Status)
-                Assert.AreEqual(1, body.Lines.Count)
+                Assert.HasCount(1, body.Lines)
                 Assert.AreEqual(productId, body.Lines(0).ProductId)
 
             End Using

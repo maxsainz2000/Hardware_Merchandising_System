@@ -174,7 +174,7 @@ Public Class ReceivingTests
 
         Assert.AreEqual(ReceivingOutcomeKind.Created, outcome.Kind)
         Assert.AreEqual("FullyReceived", outcome.Response.PurchaseOrderStatus)
-        Assert.AreEqual(2, outcome.Response.Lines.Count)
+        Assert.HasCount(2, outcome.Response.Lines)
 
         Assert.AreEqual(5.000D, Await ReadBalanceAsync(productA))
         Assert.AreEqual(8.000D, Await ReadBalanceAsync(productB))
@@ -825,7 +825,7 @@ Public Class ReceivingTests
 
                 Dim body As ReceiptResponse = Await response.Content.ReadFromJsonAsync(Of ReceiptResponse)()
                 Assert.AreEqual("FullyReceived", body.PurchaseOrderStatus)
-                Assert.AreEqual(1, body.Lines.Count)
+                Assert.HasCount(1, body.Lines)
                 Assert.AreEqual(productId, body.Lines(0).ProductId)
 
             End Using
