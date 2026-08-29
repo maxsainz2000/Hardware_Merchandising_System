@@ -128,7 +128,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-4/p4-02-receiving-schema.txt`, `evidence/phase-4/p4-02-receiving-grants.txt`
 
-### ⬜ P4-03 · Migration 0010 — `StockCounts`, `StockCountLines`, `StockAdjustments`, and grants 0012
+### ✅ P4-03 · Migration 0010 — `StockCounts`, `StockCountLines`, `StockAdjustments`, and grants 0012
 
 **Spec:** §10.2, §12 · **Files:** `db/migrations/0010_counts-and-adjustments.sql`, `db/grants/0012_counts-and-adjustments-grants.sql`
 
@@ -136,12 +136,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Variance is **stored as counted-minus-system at the moment of counting**, not recomputed later from a balance that has since moved — the whole point of a count is what was true then
-- [ ] `RequestedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — the threshold rule compares them and cannot if they are one field. Asserted from `information_schema`, not from reading the migration
-- [ ] Status stored as a stable identifier the Domain enum maps to — not a display string, not a renumbering ordinal. Every name walked from `[Enum].GetNames`, an ordinal refused. ⚠ **`COLLATE utf8mb4_bin` on that column**, or the `CHECK` accepts `'draft'` under the table's case-insensitive collation and stores it verbatim — the exact defect P3-02 hit and found only because a test looked
-- [ ] Applies clean as `merch_migrator` on a database carrying `0001`–`0009`; applied exactly once
-- [ ] `db/grants/0012` applied after, lowercase, justified per table in its own header
-- [ ] Integration suite green
+- [x] Variance is **stored as counted-minus-system at the moment of counting**, not recomputed later from a balance that has since moved — the whole point of a count is what was true then
+- [x] `RequestedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — the threshold rule compares them and cannot if they are one field. Asserted from `information_schema`, not from reading the migration
+- [x] Status stored as a stable identifier the Domain enum maps to — not a display string, not a renumbering ordinal. Every name walked from `[Enum].GetNames`, an ordinal refused. ⚠ **`COLLATE utf8mb4_bin` on that column**, or the `CHECK` accepts `'draft'` under the table's case-insensitive collation and stores it verbatim — the exact defect P3-02 hit and found only because a test looked
+- [x] Applies clean as `merch_migrator` on a database carrying `0001`–`0009`; applied exactly once
+- [x] `db/grants/0012` applied after, lowercase, justified per table in its own header
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-4/p4-03-counts-schema.txt`, `evidence/phase-4/p4-03-counts-grants.txt`
 

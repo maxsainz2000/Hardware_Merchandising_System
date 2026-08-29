@@ -1,0 +1,103 @@
+P4-03 - db/migrations/0010_counts-and-adjustments.sql - schema evidence
+Captured 2026-08-29, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Grants evidence is a separate file: p4-03-counts-grants.txt.
+
+Design decisions confirmed with the user before implementation:
+  - StockCountLines, not StockCountItems (spec section 12's forward list),
+    the same "Lines" naming precedent P3-02/P4-02 already established.
+  - StockCounts.Status: Open, Closed, Approved, Rejected (Domain enum
+    Merchandising.Domain.Inventory.StockCountStatus).
+  - StockAdjustments.Status: Pending, Approved, Rejected, Applied (Domain
+    enum Merchandising.Domain.Inventory.StockAdjustmentStatus), so P4-10's
+    approval workflow needs no schema change of its own.
+
+===============================================================================
+1. Apply 0010_counts-and-adjustments.sql as merch_migrator, after 0001-0009
+===============================================================================
+
+$ dotnet run --project src/Merchandising.Maintenance --no-build --configuration Debug -- migrate --config "C:\ProgramData\MerchandisingSystem\config\database.migrator.json"
+
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0010_counts-and-adjustments
+
+===============================================================================
+2. Full verification pass - scripts/run-tests.ps1
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 44, Skipped: 0, Total: 44
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed: 0, Passed: 249, Skipped: 0, Total: 249, Duration: 31 s
+
+All checks passed.
+
+===============================================================================
+3. StockCountSchemaTests in detail (18/18)
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --no-build --filter "FullyQualifiedName~StockCountSchemaTests" --logger "console;verbosity=detailed"
+
+  Passed Migration0010_IsRecordedExactlyOnce_AfterMigrations0001To0009 [297 ms]
+
+  Passed DeletingAUserReferencedAsCountedBy_IsRefusedWith1451 [40 ms]
+    P4-03 counted-by delete -> ERROR 1451: Cannot delete or update a parent
+    row: a foreign key constraint fails (`merchandising`.`stockcounts`,
+    CONSTRAINT `FK_StockCounts_CountedBy` FOREIGN KEY (`CountedByUserId`)
+    REFERENCES `users` (`Id`))
+
+  Passed DeletingAStockCountReferencedByALine_IsRefusedWith1451 [32 ms]
+  Passed DeletingAProductReferencedByAStockCountLine_IsRefusedWith1451 [30 ms]
+  Passed DeletingAProductReferencedByAnAdjustment_IsRefusedWith1451 [20 ms]
+  Passed DeletingAUserReferencedAsAdjustmentRequester_IsRefusedWith1451 [19 ms]
+
+  Passed RequestedByAndApprovedBy_AreTwoDistinctUserColumns_OnStockAdjustments [39 ms]
+  Passed CountedByAndApprovedBy_AreTwoDistinctUserColumns_OnStockCounts [31 ms]
+
+  Passed StockCountsStatusColumn_AcceptsEveryDomainStatusName [31 ms]
+  Passed StockAdjustmentsStatusColumn_AcceptsEveryDomainStatusName [32 ms]
+
+  Passed StockCountsStatusColumn_RefusesAnOrdinalAndAnUnknownName [38 ms]
+    P4-03 count status '1' -> ERROR 4025
+    P4-03 count status 'openn' -> ERROR 4025
+    P4-03 count status 'open' -> ERROR 4025
+    P4-03 count status '' -> ERROR 4025
+
+  Passed StockAdjustmentsStatusColumn_RefusesAnOrdinalAndAnUnknownName [23 ms]
+    P4-03 adjustment status '1' -> ERROR 4025
+    P4-03 adjustment status 'pendingg' -> ERROR 4025
+    P4-03 adjustment status 'pending' -> ERROR 4025
+    P4-03 adjustment status '' -> ERROR 4025
+
+  Passed DecimalColumns_RoundTripBoundaryValuesExactly [43 ms]
+    0.001 through StockCountLines.CountedQuantity/SystemQuantity (DECIMAL(19,3))
+    -0.001 through StockAdjustments.QuantityVariance (DECIMAL(19,3), signed)
+
+  Passed DecimalColumns_AreDeclaredAtTheRequiredScale [76 ms]
+    stockcountlines.countedquantity/systemquantity/variance -> decimal(19,3)
+    stockadjustments.quantityvariance -> decimal(19,3)
+    stockcounts.{countedatutc,approvedatutc,createdatutc,updatedatutc} -> datetime(6)
+    stockcounts/stockcountlines/stockadjustments -> utf8mb4_unicode_ci
+
+  Passed MerchApi_CanInsertAndUpdateHeaders_AndInsertOnlyLines [29 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnAnyOfTheThreeTables [25 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnStockCountLines [19 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [22 ms]
+
+Test Run Successful.
+Total tests: 18
+     Passed: 18
