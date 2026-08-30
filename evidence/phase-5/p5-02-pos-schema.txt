@@ -1,0 +1,176 @@
+P5-02 - db/migrations/0011_pos.sql - schema evidence
+Captured 2026-08-30, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Grants evidence is a separate file: p5-02-pos-grants.txt.
+
+Design decisions confirmed with the user before implementation:
+  - Tables: CashierSessions, Sales, SaleLines, SalePayments (not SaleItems/
+    Payments, spec section 12's forward list - the "Lines, not Items"
+    precedent 0008/0009/0010 already set, extended to "SalePayments, not
+    Payments").
+  - No persisted in-progress Sales row: the atomic sale (P5-07) writes a
+    Completed header or nothing at all. "Cancelled only before completion"
+    (spec section 10.3) is a client-side, pre-API-call fact, never a
+    database transition. SaleStatus.Cancelled is declared but driven by no
+    card in this phase - the StockCounts/StockAdjustments forward-naming
+    precedent (P4-03).
+  - Sales and SalePayments (and their child SaleLines) are append-only,
+    like Receipts/ReceiptLines - not like PurchaseReturns. No RowVersion,
+    no UpdatedAtUtc.
+  - CashierSessions carries no running TotalSalesAmount/TransactionCount.
+    Every total is a query over committed Sales/SalePayments rows, never a
+    maintained counter that could drift from the ledger (ADR-021's
+    reconciliation principle, applied here).
+  - One open session per cashier enforced now, by the ADR-018 generated-
+    column trick (OpenSessionOwner), because P5-04 has no migration file of
+    its own to add the index in later.
+  - New Domain enums this card: Merchandising.Domain.Sales.PaymentMethod,
+    SaleStatus, CashierSessionStatus - the StockCountStatus/
+    StockAdjustmentStatus precedent (P4-03): the schema card defines the
+    enum, and PosSchemaTests walks [Enum].GetNames against each CHECK.
+  - SalePayments.TenderedAmount/ChangeAmount: nullable, cash only, tied to
+    Method = 'Cash' by CHECK - for receipt redisplay, mirroring the
+    CashTenderResult shape P5-01 built in Domain.
+
+===============================================================================
+1. Apply 0011_pos.sql as merch_migrator, after 0001-0010
+===============================================================================
+
+$ dotnet run --project src/Merchandising.Maintenance --configuration Debug -- migrate --config "C:\ProgramData\MerchandisingSystem\config\database.migrator.json"
+
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0011_pos
+
+===============================================================================
+2. Full verification pass - scripts/run-tests.ps1
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 61, Skipped: 0, Total: 61
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed: 0, Passed: 376, Skipped: 0, Total: 376, Duration: 53 s
+
+All checks passed.
+
+(376 = 348 carried from the Phase 4 gate + 28 new PosSchemaTests. No other
+suite count moved - the DatabaseDesignDocumentationTests drift check below
+is part of the same 376, not additional.)
+
+===============================================================================
+3. PosSchemaTests in detail (28/28)
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --no-build --filter "FullyQualifiedName~PosSchemaTests" --logger "console;verbosity=detailed"
+
+  Passed Migration0011_IsRecordedExactlyOnce_AfterMigrations0001To0010 [295 ms]
+
+  Passed DeletingAUserReferencedAsSessionOpener_IsRefusedWith1451 [48 ms]
+    P5-02 session opener delete -> ERROR 1451: Cannot delete or update a
+    parent row: a foreign key constraint fails (`merchandising`.
+    `cashiersessions`, CONSTRAINT `FK_CashierSessions_OpenedBy` FOREIGN KEY
+    (`OpenedByUserId`) REFERENCES `users` (`Id`))
+
+  Passed DeletingAUserReferencedAsSessionCloser_IsRefusedWith1451 [29 ms]
+  Passed DeletingACashierSessionReferencedBySale_IsRefusedWith1451 [28 ms]
+  Passed DeletingAUserReferencedAsSaleCashier_IsRefusedWith1451 [26 ms]
+  Passed DeletingASaleReferencedByALine_IsRefusedWith1451 [28 ms]
+  Passed DeletingAProductReferencedByASaleLine_IsRefusedWith1451 [28 ms]
+  Passed DeletingASaleReferencedByAPayment_IsRefusedWith1451 [31 ms]
+
+  Passed SaleLines_CarriesItsOwnUnitPriceAndCostColumns [43 ms]
+  Passed SaleLines_UnitPriceIsUnmoved_AfterTheProductsPriceLaterChanges [32 ms]
+    - a line is written at UnitPrice 12.5000, Products.Price is then changed
+      to 999.9999, and the line re-reads 12.5000 unmoved - the P5-07/
+      plan.md section 7 defect, caught here where it is cheap.
+
+  Passed CashierSessionsStatusColumn_AcceptsEveryDomainStatusName [29 ms]
+  Passed SalesStatusColumn_AcceptsEveryDomainStatusName [25 ms]
+  Passed SalePaymentsMethodColumn_AcceptsEveryDomainMethodName [31 ms]
+
+  Passed CashierSessionsStatusColumn_RefusesAnOrdinalAndAnUnknownName [21 ms]
+    P5-02 session status '1' -> ERROR 4025
+    P5-02 session status 'openn' -> ERROR 4025
+    P5-02 session status 'open' -> ERROR 4025
+    P5-02 session status '' -> ERROR 4025
+
+  Passed SalesStatusColumn_RefusesAnOrdinalAndAnUnknownName [23 ms]
+    P5-02 sale status '1' -> ERROR 4025
+    P5-02 sale status 'completedd' -> ERROR 4025
+    P5-02 sale status 'completed' -> ERROR 4025
+    P5-02 sale status '' -> ERROR 4025
+
+  Passed SalePaymentsMethodColumn_RefusesAnOrdinalAndAnUnknownName [25 ms]
+    P5-02 payment method '1' -> ERROR 4025
+    P5-02 payment method 'cashh' -> ERROR 4025
+    P5-02 payment method 'cash' -> ERROR 4025
+    P5-02 payment method '' -> ERROR 4025
+
+  Passed SalePayments_CashRow_RequiresTenderedAndChange [22 ms]
+  Passed SalePayments_NonCashRow_MustNotCarryTenderedOrChange [21 ms]
+  Passed SalePayments_TenderedBelowAmount_IsRefused [23 ms]
+  Passed SalePayments_ChangeNotEqualToTenderedMinusAmount_IsRefused [21 ms]
+
+  Passed TwoConcurrentOpenSessionInserts_SameCashier_ExactlyOneSucceeds [25 ms]
+    P5-02 concurrent open-session insert -> success | ERROR 1062
+  Passed OpeningASecondSession_SucceedsOnlyAfterTheFirstCloses [23 ms]
+
+  Passed DecimalColumns_RoundTripBoundaryValuesExactly [28 ms]
+    - 0.001 through SaleLines.Quantity; 12345678901234.5678 through
+      SaleLines.UnitPrice/Cost/LineTotal, SalePayments.Amount/
+      TenderedAmount, Sales.Total - all exact.
+  Passed MoneyAndQuantityColumns_AreDeclaredAtTheRequiredPrecision [136 ms]
+
+  Passed MerchApi_CanInsertAndUpdateCashierSessions_AndInsertOnlySalesTables [32 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnAnyOfTheFourTables [37 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnTheThreeImmutableTables [34 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [18 ms]
+
+Test Run Successful.
+Total tests: 28
+     Passed: 28
+
+===============================================================================
+4. Carried-forward drift check - DatabaseDesignDocumentationTests (7/7)
+===============================================================================
+
+This card also updates docs/database-design.md (section 3.6 POS, the ER
+diagram, the foreign-keys table, the append-only grant table, and the
+migrations table) and DatabaseDesignDocumentationTests.vb's CanonicalTables/
+ExpectedGrants (P4-13's drift check - not this card's own "done when" list,
+but required for the integration suite to stay green once four tables exist
+that the check did not yet know about). First run after adding the tables
+failed exactly as designed:
+
+  Failed LiveSchema_MatchesTheCanonicalTableList
+    Table(s) exist in the running schema with no entry in this test's
+    CanonicalTables: cashiersessions, salelines, salepayments, sales.
+
+After updating CanonicalTables, ExpectedGrants and the document:
+
+$ dotnet test ... --filter "FullyQualifiedName~DatabaseDesignDocumentationTests"
+
+  Passed LiveSchema_MatchesTheCanonicalTableList [ms]
+  Passed EveryCanonicalTable_IsNamedInTheDocument [ms]
+  Passed AllDecimalColumns_AreDeclaredAtOneOfTheTwoPinnedScales [28 ms]
+  Passed AllDatetimeColumns_AreDeclaredWithMicrosecondPrecision [14 ms]
+  Passed EveryTable_UsesUtf8mb4UnicodeCiCollation [4 ms]
+  Passed EveryForeignKey_IsRestrictOnDeleteAndUpdate [4 ms]
+  Passed MerchApiGrants_MatchTheDocumentedPostureForEveryTable [4 ms]
+
+Test Run Successful.
+Total tests: 7
+     Passed: 7

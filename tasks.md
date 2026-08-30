@@ -119,7 +119,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. Migration then grants, and `0011` before `0012`.*
 
-### ⬜ P5-02 · Migration 0011 — `CashierSessions`, `Sales`, `SaleLines`, `SalePayments`, and grants 0013
+### ✅ P5-02 · Migration 0011 — `CashierSessions`, `Sales`, `SaleLines`, `SalePayments`, and grants 0013
 
 **Spec:** §10.3, §11, §12 · **Files:** `db/migrations/0011_pos.sql`, `db/grants/0013_pos-grants.sql`
 
@@ -127,13 +127,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] All four tables created; foreign keys to `Products`, `Users` and each other **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
-- [ ] `SaleLines` carries its own `UnitPrice` and `Cost` columns — **not** a join to `Products`. Asserted from `information_schema`, because this is the one schema decision the whole phase's reporting integrity rests on
-- [ ] Payment method stored as a stable identifier the Domain enum maps to, `COLLATE utf8mb4_bin` on that column so the `CHECK` cannot accept `'cash'` under the table's case-insensitive collation — the P3-02 / P4-03 defect, which has now been found twice and must not be found a third time
-- [ ] Applies clean as `merch_migrator` on a database already carrying `0001`–`0010`; runner applies it exactly once
-- [ ] `db/grants/0013` applied **after**, lowercase table names, and **argue per table in its own header why any `UPDATE` exists at all**. A completed sale is never edited (spec §10.3) — nothing at all for `stockmovements` or `auditlogs` (ADR-013)
-- [ ] Round-trip test: `0.0001` and `123456789012345.6789` exact through the new decimal columns, **plus** the declared column types read back from `information_schema`
-- [ ] Integration suite green against pinned MariaDB
+- [x] All four tables created; foreign keys to `Products`, `Users` and each other **prevent** deletion of a referenced row, proven with `ERROR 1451` rather than asserted by inspection, attempted as `merch_migrator` so the refusal is the constraint and not the grant
+- [x] `SaleLines` carries its own `UnitPrice` and `Cost` columns — **not** a join to `Products`. Asserted from `information_schema`, because this is the one schema decision the whole phase's reporting integrity rests on
+- [x] Payment method stored as a stable identifier the Domain enum maps to, `COLLATE utf8mb4_bin` on that column so the `CHECK` cannot accept `'cash'` under the table's case-insensitive collation — the P3-02 / P4-03 defect, which has now been found twice and must not be found a third time
+- [x] Applies clean as `merch_migrator` on a database already carrying `0001`–`0010`; runner applies it exactly once
+- [x] `db/grants/0013` applied **after**, lowercase table names, and **argue per table in its own header why any `UPDATE` exists at all**. A completed sale is never edited (spec §10.3) — nothing at all for `stockmovements` or `auditlogs` (ADR-013)
+- [x] Round-trip test: `0.0001` and `123456789012345.6789` exact through the new decimal columns, **plus** the declared column types read back from `information_schema`
+- [x] Integration suite green against pinned MariaDB
 
 **Evidence:** `evidence/phase-5/p5-02-pos-schema.txt`, `evidence/phase-5/p5-02-pos-grants.txt`
 
