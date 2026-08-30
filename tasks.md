@@ -216,7 +216,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-06-product-lookup.txt`
 
-### ⬜ P5-07 · The atomic sale — seven effects, one transaction 🎯
+### ✅ P5-07 · The atomic sale — seven effects, one transaction 🎯
 
 **Spec:** §10.3, §11 · **Closes:** G-12 (sale component) · **Files:** `src/Merchandising.Api/Controllers/SalesController.vb`, `src/Merchandising.Api/Sales/SaleService.vb`, `src/Merchandising.Infrastructure/Data/SaleRepository.vb`, `src/Merchandising.Contracts/Sales/`
 
@@ -224,14 +224,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The API re-checks **everything** before committing: product activity, current price, available stock, duplicate request state, payment validity (spec §10.3). Each re-check has its own test, and each has its own stable error code
-- [ ] Each sale line stores the **effective unit price and cost at sale time**, taken server-side. A test changes the product's price after the sale and asserts the line is unmoved — the defect `plan.md` §7 names as very hard to fix later
-- [ ] Stock decrements use ADR-006's conditional update with the affected-row count verified before returning success — never a read-then-write, and never a new second pattern
-- [ ] All **seven** effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 / P4-05 shape
-- [ ] For cash, tendered < total is refused with a stable code; change is exact per P5-01 and stored, not recomputed on read
-- [ ] Card/e-wallet is **recorded**, and the response says recorded — never "approved", "authorised", or "accepted" (G-24)
-- [ ] The P4-01 reconciliation passes after the sale, asserted **in this card's own test**, not only by the suite-wide fixture
-- [ ] **Matrix suite extended** — `Sales.Create` positive and negative cells; integration suite green
+- [x] The API re-checks **everything** before committing: product activity, current price, available stock, duplicate request state, payment validity (spec §10.3). Each re-check has its own test, and each has its own stable error code
+- [x] Each sale line stores the **effective unit price and cost at sale time**, taken server-side. A test changes the product's price after the sale and asserts the line is unmoved — the defect `plan.md` §7 names as very hard to fix later
+- [x] Stock decrements use ADR-006's conditional update with the affected-row count verified before returning success — never a read-then-write, and never a new second pattern
+- [x] All **seven** effects commit together or not at all, proven by a **forced-failure test** in the P1-12 / P2-08 / P4-05 shape
+- [x] For cash, tendered < total is refused with a stable code; change is exact per P5-01 and stored, not recomputed on read
+- [x] Card/e-wallet is **recorded**, and the response says recorded — never "approved", "authorised", or "accepted" (G-24)
+- [x] The P4-01 reconciliation passes after the sale, asserted **in this card's own test**, not only by the suite-wide fixture
+- [x] **Matrix suite extended** — `Sales.Create` positive and negative cells; integration suite green
 
 **Evidence:** `evidence/phase-5/p5-07-atomic-sale.txt`
 

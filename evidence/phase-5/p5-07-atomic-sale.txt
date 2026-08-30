@@ -1,0 +1,144 @@
+=== P5-07: The atomic sale - seven effects, one transaction ===
+Captured 2026-08-30, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+--- What was built ---
+POST /api/v1/sales (Sales.Create, CashierAndAbove - live for the first time).
+One transaction commits: the Sales header, its SaleLines, the one SalePayments
+record, one StockMovements row per line, the conditional StockBalances
+decrement, and the AuditLogs row - or none of them (spec section 11). Session
+totals are satisfied structurally (Sales.CashierSessionId written in the same
+transaction; CashierSessionRepository.GetPaymentTotalsAsync, P5-04, computes
+them on demand from committed rows) - no stored running counter to drift.
+
+Design calls made and why (full reasoning is in each file's own header):
+  - No client-supplied price. Each line is only {ProductId, Quantity}; the
+    server reads Products.Price/Cost fresh, inside the transaction, via
+    ProductRepository.GetByIdAsync's existing transaction overload - a plain
+    read, not FOR UPDATE, so two concurrent sales naming the same two
+    products in reverse order cannot deadlock against each other.
+  - No client-supplied CashierSessionId. The server locks and finds the
+    CALLING user's own Open session (new CashierSessionRepository.
+    GetOpenForUpdateByUserAsync) and refuses 409 CASHIER_SESSION_REQUIRED
+    if none exists.
+  - One Payment per sale, not a list - spec section 10.3's "record an
+    allowed payment" (singular); SalePayments stays one-to-many in the
+    schema for a future card. Amount always equals the sale Total.
+  - SalePaymentResponse.Status is always the literal "Recorded" (G-24) -
+    asserted directly against the real JSON body, not just the enum.
+  New files: Contracts/Sales/{CreateSaleRequest,CreateSaleLineRequest,
+  CreateSalePaymentRequest,SaleResponse,SaleLineResponse,SalePaymentResponse}.vb;
+  Infrastructure/Data/SaleRepository.vb (new) + CashierSessionRepository.vb
+  (+GetOpenForUpdateByUserAsync); Api/Sales/{SaleOutcome,SaleService}.vb;
+  Api/Controllers/SalesController.vb; Program.vb (DI registration);
+  tests/SaleServiceTests.vb (new, 14 tests); AuthorizationMatrixTests.vb
+  (+SalesCreate_MatrixMatchesPolicyRegistry).
+
+--- Guardrails (scripts/check-no-csharp.ps1) ---
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+--- Full build ---
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Whole solution builds clean, including the three WPF clients and
+Merchandising.ClientCommon - nothing under src/Merchandising.POS or
+Merchandising.ClientCommon references this card's new types yet (P5-13 is
+the POS client card), so there was nothing else to break.
+
+--- P5-07 test run: SaleServiceTests + Sales.Create matrix (detailed) ---
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --no-build --nologo --filter "FullyQualifiedName~SaleServiceTests|FullyQualifiedName~SalesCreate_MatrixMatchesPolicyRegistry" --logger "console;verbosity=detailed"
+
+  Passed SalesCreate_MatrixMatchesPolicyRegistry [1 s]
+  Passed CompleteAsync_Success_CommitsAllSevenEffectsAndReconciles [112 ms]
+  Passed CompleteAsync_PriceChangedAfterSale_LineRemainsUnmoved [36 ms]
+  Passed CompleteAsync_UsesCurrentPriceAtSaleTime_NotAStalePrice [28 ms]
+  Passed CompleteAsync_NoOpenSession_Refused [20 ms]
+  Passed CompleteAsync_UnknownProduct_Refused [17 ms]
+  Passed CompleteAsync_InactiveProduct_Refused [23 ms]
+  Passed CompleteAsync_InsufficientStock_RefusedWithNoTrace [24 ms]
+  Passed CompleteAsync_CashTenderBelowTotal_RefusedWithNoTrace [23 ms]
+  Passed CompleteAsync_CardAndEWalletPayments_RecordedNeverAuthorised [45 ms]
+  Passed CompleteAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockDecrement [34 ms]
+  Passed CompleteAsync_FaultInjectedBeforeCommit_RollsBackAllSevenEffects [60 ms]
+  Passed CreateSale_Success_Returns201WithRecordedPaymentWording [230 ms]
+  Passed CreateSale_NoOpenSession_Returns409WithStableCode [198 ms]
+  Passed CreateSale_CashTenderBelowTotal_Returns400WithStableCode [202 ms]
+
+Test Run Successful.
+Total tests: 15
+     Passed: 15
+
+--- Summary against the card's Done-when boxes ---
+  [PASS] box 1 (five re-checks, each with its own stable code and its own
+  test) -
+    product activity   -> CompleteAsync_InactiveProduct_Refused
+                           (SaleOutcomeKind.ProductInactive, 409 PRODUCT_INACTIVE)
+    current price       -> CompleteAsync_UsesCurrentPriceAtSaleTime_NotAStalePrice
+                           (price changed BEFORE the sale is what gets
+                           captured, never the product's original price)
+    available stock     -> CompleteAsync_InsufficientStock_RefusedWithNoTrace
+                           (409 INSUFFICIENT_STOCK, zero rows written)
+    duplicate request    -> CompleteAsync_RepeatedIdempotencyKey_
+                           ReplaysWithoutASecondStockDecrement
+    payment validity     -> CompleteAsync_CashTenderBelowTotal_RefusedWithNoTrace
+                           (400 CASH_TENDER_INSUFFICIENT) and its HTTP-level
+                           twin CreateSale_CashTenderBelowTotal_Returns400WithStableCode
+    (plus the foundational open-session precondition, its own code:
+    CompleteAsync_NoOpenSession_Refused / CreateSale_NoOpenSession_Returns409WithStableCode,
+    409 CASHIER_SESSION_REQUIRED; and ProductNotFound for a bad reference:
+    CompleteAsync_UnknownProduct_Refused)
+  [PASS] box 2 - CompleteAsync_PriceChangedAfterSale_LineRemainsUnmoved:
+  UnitPrice captured at sale time (5.0000) is unchanged after the product's
+  price is changed to 9.0000 directly in the database afterward.
+  [PASS] box 3 - StockRepository.TryDecrementAsync's existing ADR-006
+  conditional UPDATE is reused unchanged (no new pattern); proven both by a
+  real decrement (CompleteAsync_Success_CommitsAllSevenEffectsAndReconciles:
+  balance 20.000 -> 17.000, one StockMovements row, Delta=-3.000) and by its
+  refusal leaving zero trace (CompleteAsync_InsufficientStock_RefusedWithNoTrace).
+  [PASS] box 4 (all seven effects, forced failure) -
+  CompleteAsync_FaultInjectedBeforeCommit_RollsBackAllSevenEffects: a fault
+  injected after the audit insert and idempotency completion write, still
+  inside the open transaction, propagates out as an unhandled
+  InvalidOperationException; StockBalances, StockMovements, Sales and
+  AuditLogs are all confirmed unchanged afterward.
+  [PASS] box 5 - tendered < total refused with CASH_TENDER_INSUFFICIENT and
+  an exact shortfall (6.0000 short on a 10.0000 total tendered 4.0000);
+  change stored, not recomputed - CashTenderResult.Change is written once
+  into SalePayments.ChangeAmount at insert time
+  (CompleteAsync_Success_CommitsAllSevenEffectsAndReconciles: tendered
+  50.0000, total 30.0000, ChangeAmount 20.0000).
+  [PASS] box 6 (G-24) -
+  CompleteAsync_CardAndEWalletPayments_RecordedNeverAuthorised asserts
+  Payment.Status = "Recorded" for both Card and EWallet, with no
+  TenderedAmount/ChangeAmount; CreateSale_Success_Returns201WithRecordedPaymentWording
+  additionally scans the REAL HTTP response body for "approved", "authorised",
+  "authorized", "accepted" (case-insensitive) and asserts none are present.
+  [PASS] box 7 (P4-01 reconciliation) - asserted directly inside
+  CompleteAsync_Success_CommitsAllSevenEffectsAndReconciles via
+  LedgerReconciliation.FindDiscrepanciesAsync, not only by the suite-wide
+  fixture.
+  [PASS] box 8 (matrix suite extended) -
+  SalesCreate_MatrixMatchesPolicyRegistry is new: SuperAdmin/Admin/Cashier
+  each open a session, complete a real sale (201), then close the session;
+  ProcurementOfficer/InventoryClerk/anonymous are refused before any session
+  or stock check runs (403/401).
+
+--- Full suite (unit + integration) ---
+$ pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+All guardrails passed.
+=== Build ===
+Build succeeded. 0 Warning(s), 0 Error(s)
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    61, Skipped:     0, Total:    61, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   440, Skipped:     0, Total:   440, Duration: 1 m 2 s - Merchandising.Tests.Integration.dll (net10.0)
+All checks passed.

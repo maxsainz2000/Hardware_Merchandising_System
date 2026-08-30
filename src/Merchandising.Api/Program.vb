@@ -299,6 +299,12 @@ Public Module Program
         ' controlled AlreadyOpen outcome rather than an unhandled exception.
         builder.Services.AddScoped(Of CashierSessionService)()
 
+        ' P5-07 / ADR-006 + ADR-007: the atomic sale - seven effects, one
+        ' transaction, or none of them. Requires the calling user to hold
+        ' their own Open CashierSession (CashierSessionRepository.
+        ' GetOpenForUpdateByUserAsync); never a client-supplied session id.
+        builder.Services.AddScoped(Of SaleService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

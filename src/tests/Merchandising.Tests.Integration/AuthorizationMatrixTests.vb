@@ -1081,6 +1081,91 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P5-07's atomic sale endpoint - Sales.Create's first live route,
+    ''' CashierAndAbove. An allowed role must actually COMPLETE a sale - its
+    ''' own open cashier session, opened and closed around the attempt so no
+    ''' fixture user is left holding a session other tests would trip on
+    ''' (CashierSessionsManage_MatrixMatchesPolicyRegistry's identical
+    ''' reasoning) - while a disallowed role is refused 403 before any
+    ''' session or stock check ever runs.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SalesCreate_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Await CloseAnyOpenFixtureCashierSessionsDirectlyAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.SalesCreate)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim isAllowed As Boolean = allowedRoles.Contains(roleName)
+                Dim token As String = Await LoginAsync(client, roleName)
+                Dim openedSessionId As Integer? = Nothing
+
+                If isAllowed Then
+
+                    Await ResetStockBalanceDirectlyAsync(productId, 50.000D)
+
+                    Dim openBody As New OpenCashierSessionRequest With {
+                        .OpeningFloat = 0D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+                    Using openResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token, openBody)
+                        Assert.AreEqual(
+                            HttpStatusCode.Created, openResponse.StatusCode,
+                            $"Fixture session for role '{roleName}' could not be opened. Body: " & Await openResponse.Content.ReadAsStringAsync())
+                        Dim opened As CashierSessionResponse = Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()
+                        openedSessionId = opened.Id
+                    End Using
+
+                End If
+
+                Dim saleBody As New CreateSaleRequest With {
+                    .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                    .Lines = New List(Of CreateSaleLineRequest) From {
+                        New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                    .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 5.0000D}
+                }
+
+                Using saleResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", token, saleBody)
+                    Await AssertCellAsync("Sales.Create", roleName, isAllowed, saleResponse)
+                End Using
+
+                If openedSessionId.HasValue Then
+
+                    Dim closeBody As New CloseCashierSessionRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+                    Using closeResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Post, $"/api/v1/cashier-sessions/{openedSessionId.Value}/close", token, closeBody)
+                        Assert.AreEqual(HttpStatusCode.OK, closeResponse.StatusCode)
+                    End Using
+
+                End If
+
+            Next
+
+            Dim anonymousBody As New CreateSaleRequest With {
+                .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                .Lines = New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 5.0000D}
+            }
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", token:=Nothing, requestBody:=anonymousBody)
+                Await AssertUnauthenticatedAsync("Sales.Create", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)

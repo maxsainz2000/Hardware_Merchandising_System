@@ -117,6 +117,39 @@ Namespace Data
         End Function
 
         ''' <summary>
+        ''' P5-07: locks and finds <paramref name="userId"/>'s own OPEN
+        ''' session, if any, with <c>SELECT ... FOR UPDATE</c> - the same
+        ''' "lock, then decide" discipline <see cref="GetForUpdateAsync"/>
+        ''' already uses, applied here so a sale cannot commit against a
+        ''' session that closes concurrently underneath it (and, symmetrically,
+        ''' a concurrent close blocks until this sale's transaction resolves).
+        ''' At most one row can ever match - UQ_CashierSessions_OpenSessionOwner
+        ''' (0011_pos.sql, ADR-018's generated-column trick) guarantees a user
+        ''' holds at most one Open session at a time. Found = False when this
+        ''' user holds no Open session at all.
+        ''' </summary>
+        Public Shared Async Function GetOpenForUpdateByUserAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            userId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Found As Boolean, Id As Integer))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "SELECT Id FROM CashierSessions WHERE OpenedByUserId = @userId AND Status = 'Open' FOR UPDATE;"
+                command.Parameters.AddWithValue("@userId", userId)
+
+                Dim result As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                If result Is Nothing Then
+                    Return (Found:=False, Id:=0)
+                End If
+                Return (Found:=True, Id:=CInt(result))
+            End Using
+
+        End Function
+
+        ''' <summary>
         ''' Moves a locked (Open) session to Closed, storing the
         ''' already-computed declared cash, calculated cash and variance.
         ''' Always called after <see cref="GetForUpdateAsync"/> has already
