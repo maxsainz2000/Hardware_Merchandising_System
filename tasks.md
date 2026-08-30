@@ -335,7 +335,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track G — The POS client
 
-### ⬜ P5-13 · POS WPF client reaches usable state, mouse-free
+### 🟡 P5-13 · POS WPF client reaches usable state, mouse-free — **the authenticated pass is owed once the service is redeployed**
 
 **Spec:** §10.3, §16 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.ClientCommon/`
 
@@ -343,13 +343,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] All nine operations work against the **running, redeployed** API — an authenticated pass, in the P4-15 shape (`evidence/phase-4/p4-15-authenticated-client-pass.txt`). ⚠ **Redeploy the service first and record the deployed build's identity in the evidence.** CARRY-05: a green suite says nothing about what is deployed, and the Phase 4 gate found exactly that
-- [ ] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
-- [ ] Server-side refusals (insufficient stock 409, tendered-below-total, closed session, over-return) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
-- [ ] Client-side validation is for usability only; every rule is re-checked server-side
-- [ ] **The whole sale workflow is completable without a mouse**, asserted by a test over TabIndex and access keys per screen, not by a sentence — `plan.md` §7 makes mouse-free POS its own Phase 7 criterion, and it is far cheaper to build in now
-- [ ] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test**, extending `ProcurementLayoutTests` / `InventoryLayoutTests`' three assertions to this window. **Check the arithmetic against the 1092.8 × 576.0 DIP work area**: the Phase 3 gate found a window whose own evidence file computed a number larger than the space it claimed to fit
-- [ ] Guardrails and both suites green
+- [ ] All nine operations work against the **running, redeployed** API — an authenticated pass, in the P4-15 shape (`evidence/phase-4/p4-15-authenticated-client-pass.txt`). ⚠ **Redeploy the service first and record the deployed build's identity in the evidence.** CARRY-05: a green suite says nothing about what is deployed, and the Phase 4 gate found exactly that — **BLOCKED: the deployed service is stale (confirmed by a live 404 probe against `POST /api/v1/cashier-sessions`), and the redeploy needs an elevated shell this session does not have. See the card's own note in the evidence file for the exact commands to run.**
+- [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
+- [x] Server-side refusals (insufficient stock 409, tendered-below-total, closed session, over-return) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
+- [x] Client-side validation is for usability only; every rule is re-checked server-side
+- [x] **The whole sale workflow is completable without a mouse**, asserted by a test over TabIndex and access keys per screen, not by a sentence — `plan.md` §7 makes mouse-free POS its own Phase 7 criterion, and it is far cheaper to build in now
+- [x] **Keyboard navigation and focus order work at 1366×768 and 125% scaling — asserted by a test**, extending `ProcurementLayoutTests` / `InventoryLayoutTests`' three assertions to this window. **Check the arithmetic against the 1092.8 × 576.0 DIP work area**: the Phase 3 gate found a window whose own evidence file computed a number larger than the space it claimed to fit
+- [x] Guardrails and both suites green
 
 **Evidence:** `evidence/phase-5/p5-13-pos-client.txt`
 

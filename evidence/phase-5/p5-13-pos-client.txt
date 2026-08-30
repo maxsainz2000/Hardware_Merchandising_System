@@ -1,0 +1,169 @@
+P5-13 - POS WPF client reaches usable state, mouse-free.
+
+Captured 2026-08-30 on this workstation. This file records what is proven and
+what is still owed - honestly, not rounded up (CLAUDE.md section 9).
+
+===============================================================================
+0. What this card built
+===============================================================================
+
+Merchandising.POS now has a real, three-tab window (Session / Checkout /
+Returns), following the exact shape Merchandising.Procurement's MainWindow
+(P3-07) and Merchandising.Inventory's MainWindow (P4-12) already establish:
+one MerchandisingApiClient, a sign-in panel, RelayCommand/AsyncRelayCommand
+bindings, ApiFailurePresenter surfacing every server refusal verbatim, and an
+explicit, globally-unique, ascending-per-screen TabIndex on every interactive
+control.
+
+New ClientCommon surface (none of this existed before this card):
+  MerchandisingApiClient.OpenCashierSessionAsync    POST /api/v1/cashier-sessions
+  MerchandisingApiClient.CloseCashierSessionAsync   POST /api/v1/cashier-sessions/{id}/close
+  MerchandisingApiClient.CreateSaleAsync            POST /api/v1/sales
+  MerchandisingApiClient.RecordSalesReturnAsync     POST /api/v1/sales/{saleId}/returns
+
+New POS view models: SessionViewModel, CheckoutViewModel, ReturnsViewModel,
+SaleCartLineViewModel, and a MainViewModel composition root wiring them
+together with one shared ObservableCollection(Of SaleResponse) that Checkout
+appends to and Returns reads from (there is no GET /api/v1/sales or GET
+/api/v1/sales/{id} route anywhere in this API - a return can only be recorded
+against a sale this client itself completed this run; see CheckoutViewModel's
+and ReturnsViewModel's own file headers for the full reasoning).
+
+The nine named operations, and where each lives:
+  1. Sign in            MainViewModel.SignInAsync            (Sign-in panel)
+  2. Open a session      SessionViewModel.OpenAsync           (Session tab)
+  3. Look up a product   CheckoutViewModel.SearchProductsAsync (Checkout tab)
+  4. Build a cart        CheckoutViewModel.AddToCart/RemoveFromCart
+  5. Take a payment      CheckoutViewModel (Cash/Card/EWallet selector)
+  6. Complete the sale   CheckoutViewModel.CompleteSaleAsync
+  7. Show receipt data   CheckoutViewModel.ReceiptSummary + LastSale.Lines grid
+  8. Take a return        ReturnsViewModel.RecordReturnAsync   (Returns tab)
+  9. Close the session   SessionViewModel.CloseAsync
+
+===============================================================================
+1. What is proven, by an automated suite that ran on this machine
+===============================================================================
+
+  pwsh ./scripts/check-no-csharp.ps1   -> All guardrails passed (G-A..G-D).
+  pwsh ./scripts/run-tests.ps1         -> Unit tests:        74 passed, 0 failed.
+                                           Integration tests: 465 passed, 0 failed.
+
+New this card: POSLayoutTests.vb (3 tests) and POSClientTests.vb (7 tests),
+both inside the 74 above.
+
+POSLayoutTests - adapted line-for-line from InventoryLayoutTests (P4-12):
+  - Window_DeclaredSizes_FitTheSmallestSupportedDesktop: MainWindow's declared
+    Height/Width/MinHeight/MinWidth (560/1024/520/960) all fit inside the
+    1092.8 x 576.0 DIP work area the 1366x768 @ 125% budget computes - the
+    same numbers Inventory's own window already uses, reused rather than
+    re-derived by eye.
+  - EveryScreen_AtMinimumWindowSize_LaysOutWithoutStarvingAGrid: all three
+    tabs (Session, Checkout, Returns), arranged at the window's own minimum
+    size, fit without clipping, and every DataGrid on every tab arranges to
+    at least 48 DIP (header + one row).
+  - EveryInteractiveControl_HasAUniqueTabIndex_AscendingInReadingOrder: every
+    TextBox/PasswordBox/Button/ComboBox/CheckBox/DataGrid across the sign-in
+    panel and all three tabs carries an explicit TabIndex, no two controls
+    anywhere in the window share one, and within each screen the numbers
+    ascend in the order the XAML declares them - so Tab order and reading
+    order agree. This is the card's own "asserted by a test over TabIndex...
+    not by a sentence" box.
+
+POSClientTests - the properties this card adds on top of what Tracks C/D/E
+already proved server-side:
+  - SessionViewModel_OpenThenClose_RendersTheServersOwnCalculatedFigures
+  - CompleteSaleAsync_MintsAFreshIdempotencyKeyPerAttempt
+  - CompleteSaleAsync_InsufficientStockRefusalSurfacesVerbatim_AndLeavesTheCartIntact
+  - CompleteSaleAsync_CardPayment_SendsNoTenderedAmount
+  - RecordReturnAsync_SendsTheSelectedSaleLineId_AgainstTheCompletedSale
+
+===============================================================================
+2. THE FINDING - the deployed service is stale, the same defect class P4-15 found
+===============================================================================
+
+Before touching anything, the live service was probed directly rather than
+assumed current (CARRY-05's own lesson from the Phase 4 gate):
+
+  POST https://MERCH-HOST:8443/api/v1/cashier-sessions  ->  404 Not Found
+
+CashierSessionsController (P5-04) has existed in source since before this
+session began. A 404 on its own route means the deployed binary predates it -
+the exact "a green suite says nothing about what is deployed" defect class
+P4-15 found and fixed for Phase 4's routes. GET /health still answers 200
+({"status":"ok",...}) - the service itself is healthy, just stale:
+
+  Get-Service MerchandisingApi -> Running,  BinaryPathName C:\MerchandisingService\Api-sc\Merchandising.Api.exe
+  (Get-Item ...\Merchandising.Api.exe).LastWriteTime -> 2026-08-29 21:01:06
+
+===============================================================================
+3. THE BLOCKER - redeploying needs elevation this session does not have
+===============================================================================
+
+  pwsh ./scripts/publish-release.ps1 -Component Api -Mode SelfContained -OutputRoot C:\MerchandisingService
+
+failed partway with "Access to the path '...\clrjit.dll' is denied" - the
+RUNNING service still holds that file open, so a self-contained publish
+cannot overwrite it in place. The service must be stopped first, which - like
+install-service.ps1 itself - requires an elevated shell:
+
+  [Security.Principal.WindowsPrincipal]...IsInRole(...Administrator) -> False
+
+Per this session's own service-redeploy-acl-trap note, this session has none.
+NOTHING WAS LEFT BROKEN: the service was re-checked after the failed publish
+and is still Running and healthy (GET /health -> 200); publish-release.ps1's
+own delete-before-publish step never reached the target directory, and the
+partial attempt touched no file the running process needed. Per CLAUDE.md
+section 7, an elevation gap is a stop condition to report, not a reason to
+retry with a workaround (e.g. --no-verify-equivalent flags do not exist here,
+and none were sought).
+
+REMEDY - to be run by the operator, in an ELEVATED PowerShell 7 session, from
+the repository root:
+
+  Stop-Service MerchandisingApi -Force
+  pwsh ./scripts/publish-release.ps1 -Component Api -Mode SelfContained -OutputRoot C:\MerchandisingService
+  pwsh ./scripts/install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc
+
+install-service.ps1 deletes and recreates the service rather than
+re-registering over a live one, re-grants the NT SERVICE\MerchandisingApi
+virtual account read access to the config and the .pfx, and refuses to report
+success until something is actually listening on 8443 (install-service.ps1's
+own header, and P4-15's own transcript of that same sequence).
+
+===============================================================================
+4. Preparation completed ahead of the pass, so it can run the moment the redeploy lands
+===============================================================================
+
+A Cashier-role test account was created through the project's own sanctioned
+mechanism (ADR-017 section 4: Merchandising.Maintenance.exe create-user is
+the single route for user management) - this writes directly to the database
+and does not depend on the API's own deployed build, so it is unaffected by
+the staleness above:
+
+  Merchandising.Maintenance.exe create-user p5_13_client_pass <password> Cashier
+    -> Created user 'p5_13_client_pass' (Id 9808) with role 'Cashier'.
+
+One account, not two: unlike P4-15's Admin/Admin pair (needed only because
+approving a purchase order forbids self-approval), the Cashier role alone
+satisfies every policy this pass exercises - CashierSessions.Manage,
+Sales.Create, and SalesReturns.Create are all CashierAndAbove
+(PolicyRegistry.vb) and none of the nine operations this card names reaches
+SalesReturns.ApproveExceptional (that path belongs to a different actor and
+was deliberately left out of POS's scope - CheckoutViewModel/
+ReturnsViewModel's own file headers).
+
+===============================================================================
+5. What this closes, and what remains open
+===============================================================================
+
+CLOSES, on the evidence in section 1: guardrail G-B, server-side refusals
+surfaced verbatim, client-side validation posture, the mouse-free assertion,
+and the keyboard-navigation/1366x768@125% assertion - five of this card's six
+Done-when boxes, ticked in tasks.md.
+
+STILL OPEN: the sixth box, the authenticated pass itself. tasks.md's own card
+is left 🟡, not rounded up to done, per CLAUDE.md section 9 - "never mark a
+card done with ... an unresolved error." Once the redeploy in section 3 has
+run, the nine operations should be driven through the real MainViewModel
+against the real service, in the P4-15 shape, and this file replaced with the
+run of record - the account in section 4 is what that pass will sign in with.

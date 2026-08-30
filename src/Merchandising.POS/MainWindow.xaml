@@ -1,12 +1,341 @@
-﻿<Window x:Class="MainWindow"
+<Window x:Class="MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Merchandising.POS"
+        xmlns:vm="clr-namespace:Merchandising.POS.ViewModels"
+        xmlns:conv="clr-namespace:Merchandising.ClientCommon.Converters;assembly=Merchandising.ClientCommon"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Merchandising - POS" Height="560" Width="1024" MinHeight="520" MinWidth="960">
+
+    <!--
+        Sizing is derived from the smallest supported desktop, not chosen by eye -
+        the same arithmetic Merchandising.Procurement's MainWindow (P3-07) and
+        Merchandising.Inventory's MainWindow (P4-12) already use. Spec section 5 /
+        section 16: 1366x768 at 125% scaling. WPF lays out in DIPs (1 DIP = 1/96"),
+        so that display is 1366/1.25 x 768/1.25 = 1092.8 x 614.4 DIP, and a default
+        taskbar (48 physical px = 38.4 DIP) leaves a work area of 1092.8 x 576.0
+        DIP. Window.Height/Width include the caption and border, so every one of
+        the four values below must fit inside that work area:
+
+            Width  1024 <= 1092.8      MinWidth  960 <= 1092.8
+            Height  560 <=   576.0     MinHeight 520 <=   576.0
+
+        MinHeight is the value that matters - a minimum taller than the work area
+        can never be resized to fit (Phase 3's own P3-07 regression, carried
+        forward as the box P4-12 and this card are both warned not to repeat).
+        POSLayoutTests asserts these four numbers against the work area it
+        computes from the same arithmetic - change one and the test fails.
+    -->
+
+    <!--
+        PaymentWording.xaml is merged HERE, into the window's own resources, not
+        only into Application.xaml - a test that constructs MainWindow directly
+        (POSLayoutTests, this project's own unit-test posture: layout is measured
+        without a running Application, so Application.Current is Nothing and
+        Application-level resources never merge in) still needs
+        CardEWalletRecordedNotice / CardEWalletIntegrationExclusionNotice to
+        resolve. Application.xaml's own merge stays too, for the ordinary
+        launched-app case; WPF resolves the nearer (window-level) copy first,
+        and defining the same key at two scopes is not a conflict.
+    -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Resources/PaymentWording.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+            <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis"/>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top bar: title, connection state, session, sign out -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
+            <TextBlock Text="Merchandising - POS" FontSize="18" FontWeight="Bold"
+                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+            <Button x:Name="SignOutButton" Content="Sign out" Command="{Binding SignOutCommand}"
+                    DockPanel.Dock="Right" TabIndex="99"
+                    Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}"/>
+            <TextBlock Text="{Binding CurrentUserDisplay}" DockPanel.Dock="Right" Margin="0,0,16,0"
+                       VerticalAlignment="Center"
+                       Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}"/>
+            <TextBlock Text="{Binding ConnectionText}" DockPanel.Dock="Right" Margin="0,0,16,0"
+                       VerticalAlignment="Center"/>
+        </DockPanel>
+
+        <!-- Sign-in panel, shown only while signed out -->
+        <Border x:Name="SignInPanel" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+                MaxWidth="360" BorderBrush="Gray" BorderThickness="1" Padding="16"
+                Visibility="{Binding IsSignedIn, Converter={StaticResource InverseBoolToVis}}">
+            <StackPanel>
+                <TextBlock Text="Sign in" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock Text="Username"/>
+                <TextBox x:Name="UsernameBox" TabIndex="0" Margin="0,0,0,8"
+                         Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Text="Password"/>
+                <PasswordBox x:Name="PasswordBox" TabIndex="1" Margin="0,0,0,8"/>
+                <Button x:Name="SignInButton" Content="Sign in" Click="SignInButton_Click"
+                        IsDefault="True" TabIndex="2" HorizontalAlignment="Left"
+                        IsEnabled="{Binding CanSignIn}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Workspace, shown only once signed in -->
+        <TabControl Grid.Row="1" Visibility="{Binding IsSignedIn, Converter={StaticResource BoolToVis}}">
+
+            <TabItem Header="Session">
+                <Grid DataContext="{Binding Session}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1*" MinHeight="90"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock Text="Opening float:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox x:Name="OpeningFloatBox" Width="100" TabIndex="10" Margin="0,0,8,0"
+                                 Text="{Binding OpeningFloatText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Open session" Command="{Binding OpenCommand}" TabIndex="11"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="1" Text="{Binding SessionDisplay}" FontWeight="Bold" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="2" Margin="0,0,0,8">
+                        <TextBlock Text="Declared cash:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox x:Name="DeclaredCashBox" Width="100" TabIndex="12" Margin="0,0,8,0"
+                                 Text="{Binding DeclaredCashText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Close session" Command="{Binding CloseCommand}" TabIndex="13" FontWeight="Bold"/>
+                    </StackPanel>
+
+                    <GroupBox Header="Payment totals (closed session)" Grid.Row="3">
+                        <DataGrid ItemsSource="{Binding CurrentSession.PaymentTotals}" AutoGenerateColumns="False" IsReadOnly="True" TabIndex="14">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Method" Binding="{Binding Method}" Width="120"/>
+                                <DataGridTextColumn Header="Amount" Binding="{Binding Amount}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Checkout">
+                <Grid DataContext="{Binding Checkout}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="1.4*" MinHeight="170"/>
+                        <RowDefinition Height="1*" MinHeight="120"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+                        <TextBlock Text="Product (SKU / barcode / name):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox x:Name="ProductSearchBox" Width="200" TabIndex="20" Margin="0,0,8,0"
+                                 Text="{Binding ProductSearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Look up" Command="{Binding SearchProductsCommand}" TabIndex="21" IsDefault="True"/>
+                    </StackPanel>
+
+                    <GroupBox Header="Products" Grid.Column="0" Grid.Row="1" Margin="0,0,8,0">
+                        <DataGrid ItemsSource="{Binding ProductResults}" SelectedItem="{Binding SelectedProduct}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="22">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="80"/>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Price" Binding="{Binding Price}" Width="70"/>
+                                <DataGridTextColumn Header="In stock" Binding="{Binding AvailableStock}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Header="Add to cart" Grid.Column="1" Grid.Row="1">
+                        <StackPanel>
+                            <TextBlock Text="Quantity:" Margin="0,0,0,2"/>
+                            <TextBox x:Name="CartQuantityBox" Width="100" TabIndex="23" Margin="0,0,0,8" HorizontalAlignment="Left"
+                                     Text="{Binding CartQuantityText, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Content="Add to cart" Command="{Binding AddToCartCommand}" TabIndex="24"
+                                    HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Cart and payment" Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="2" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DataGrid Grid.Row="0" ItemsSource="{Binding Cart}" SelectedItem="{Binding SelectedCartLine}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="25">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="80"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                    <DataGridTextColumn Header="Qty" Binding="{Binding Quantity}" Width="60"/>
+                                    <DataGridTextColumn Header="Est. total" Binding="{Binding EstimatedLineTotal}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <WrapPanel Grid.Row="1" Margin="0,8,0,0">
+                                <TextBlock VerticalAlignment="Center" Margin="0,0,16,0" FontWeight="Bold">
+                                    <Run Text="Estimated total: "/><Run Text="{Binding CartEstimatedTotal, Mode=OneWay}"/>
+                                </TextBlock>
+
+                                <Button Content="Remove selected line" Command="{Binding RemoveFromCartCommand}"
+                                        TabIndex="26" Margin="0,0,16,0"/>
+
+                                <TextBlock Text="Payment method:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <ComboBox x:Name="PaymentMethodCombo" Width="110" TabIndex="27" Margin="0,0,8,0"
+                                          ItemsSource="{x:Static vm:CheckoutViewModel.PaymentMethods}"
+                                          SelectedItem="{Binding SelectedPaymentMethod}"/>
+
+                                <TextBlock Text="Tendered:" VerticalAlignment="Center" Margin="0,0,4,0"
+                                           Visibility="{Binding IsCashPayment, Converter={StaticResource BoolToVis}}"/>
+                                <TextBox x:Name="TenderedAmountBox" Width="90" TabIndex="28" Margin="0,0,16,0"
+                                         Text="{Binding TenderedAmountText, UpdateSourceTrigger=PropertyChanged}"
+                                         Visibility="{Binding IsCashPayment, Converter={StaticResource BoolToVis}}"/>
+
+                                <Button Content="Complete sale" Command="{Binding CompleteSaleCommand}" TabIndex="29" FontWeight="Bold"/>
+                            </WrapPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="Card and e-wallet payments" FontWeight="Bold"/>
+                        <TextBlock Text="{StaticResource CardEWalletRecordedNotice}" TextWrapping="Wrap"/>
+                        <TextBlock Text="{StaticResource CardEWalletIntegrationExclusionNotice}" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <GroupBox Header="Receipt" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock Text="{Binding ReceiptSummary}" FontWeight="Bold" TextWrapping="Wrap"/>
+                            <DataGrid Height="70" ItemsSource="{Binding LastSale.Lines}" AutoGenerateColumns="False" IsReadOnly="True" TabIndex="30">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SKU" Binding="{Binding ProductSku}" Width="80"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding ProductName}" Width="*"/>
+                                    <DataGridTextColumn Header="Qty" Binding="{Binding Quantity}" Width="60"/>
+                                    <DataGridTextColumn Header="Unit price" Binding="{Binding UnitPrice}" Width="80"/>
+                                    <DataGridTextColumn Header="Line total" Binding="{Binding LineTotal}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                            <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                            <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                                <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                            </TextBlock>
+                        </StackPanel>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Returns">
+                <Grid DataContext="{Binding Returns}" Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="1.2*" MinHeight="110"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <GroupBox Header="Completed sales (this session)" Grid.Column="0" Grid.Row="0" Margin="0,0,8,0">
+                        <DataGrid ItemsSource="{Binding CompletedSales}" SelectedItem="{Binding SelectedSale}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="40">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Sale #" Binding="{Binding Id}" Width="60"/>
+                                <DataGridTextColumn Header="Total" Binding="{Binding Total}" Width="80"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Header="Sale lines" Grid.Column="1" Grid.Row="0">
+                        <DataGrid ItemsSource="{Binding SaleLines}" SelectedItem="{Binding SelectedSaleLine}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" TabIndex="41">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="*"/>
+                                <DataGridTextColumn Header="Qty sold" Binding="{Binding Quantity}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Header="Record return" Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="1" Margin="0,8,0,0">
+                        <WrapPanel>
+                            <TextBlock Text="Qty returned:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBox x:Name="QuantityReturnedBox" Width="80" TabIndex="42" Margin="0,0,16,0"
+                                     Text="{Binding QuantityReturnedText, UpdateSourceTrigger=PropertyChanged}"/>
+
+                            <CheckBox x:Name="RestocksItemBox" Content="Restocks item" TabIndex="43" VerticalAlignment="Center" Margin="0,0,16,0"
+                                      IsChecked="{Binding RestocksItem}"/>
+
+                            <TextBlock Text="Reason:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBox x:Name="ReasonBox" Width="200" TabIndex="44" Margin="0,0,16,0"
+                                     Text="{Binding ReasonText, UpdateSourceTrigger=PropertyChanged}"/>
+
+                            <TextBlock Text="Refund method:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <ComboBox x:Name="RefundMethodCombo" Width="110" TabIndex="45" Margin="0,0,16,0"
+                                      ItemsSource="{x:Static vm:ReturnsViewModel.RefundMethods}"
+                                      SelectedItem="{Binding SelectedRefundMethod}"/>
+
+                            <Button Content="Record return" Command="{Binding RecordReturnCommand}" TabIndex="46" FontWeight="Bold"/>
+                        </WrapPanel>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding LastReturnSummary}" FontWeight="Bold" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                        <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                            <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+
+        <!-- Status bar: last call's outcome, honestly - never invented wording (CLAUDE.md section 5) -->
+        <Border Grid.Row="2" BorderBrush="LightGray" BorderThickness="0,1,0,0" Padding="0,8,0,0" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap"/>
+                <TextBlock Visibility="{Binding HasCorrelationId, Converter={StaticResource BoolToVis}}">
+                    <Run Text="Correlation Id: "/><Run Text="{Binding CorrelationId, Mode=OneWay}"/>
+                </TextBlock>
+                <Border Background="#FFF3CD" Padding="8" Margin="0,4,0,0"
+                        Visibility="{Binding IsInMaintenance, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding MaintenanceMessage}" TextWrapping="Wrap"/>
+                </Border>
+            </StackPanel>
+        </Border>
 
     </Grid>
 </Window>

@@ -62,6 +62,7 @@
     <ProjectReference Include="..\..\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Inventory\Merchandising.Inventory.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Procurement\Merchandising.Procurement.vbproj" />
+    <ProjectReference Include="..\..\Merchandising.POS\Merchandising.POS.vbproj" />
   </ItemGroup>
 
 </Project>

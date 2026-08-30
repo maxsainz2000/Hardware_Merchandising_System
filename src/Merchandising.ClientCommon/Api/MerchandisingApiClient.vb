@@ -35,6 +35,7 @@ Imports Merchandising.Contracts.Inventory
 Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
 Imports Merchandising.Contracts.Receiving
+Imports Merchandising.Contracts.Sales
 Imports Merchandising.Contracts.Suppliers
 
 Namespace Api
@@ -623,6 +624,132 @@ Namespace Api
                 Await SendCoreAsync(HttpMethod.Post, $"api/v1/adjustments/{id}/reject", Nothing, requiresAuthentication:=True)
 
             Return Materialize(Of AdjustmentResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Opens a new cashier session for the calling cashier - POST
+        ''' /api/v1/cashier-sessions (P5-04, CashierSessions.Manage). A cashier
+        ''' who already holds an Open session gets back an ordinary Rejected
+        ''' outcome (CashierSessionOutcome.AlreadyOpenErrorCode); this client
+        ''' never pre-empts the Open button by guessing whether one is already
+        ''' held.
+        ''' </summary>
+        ''' <param name="idempotencyKey">Client-generated per ADR-007. A fresh key per distinct open attempt.</param>
+        Public Async Function OpenCashierSessionAsync(openingFloat As Decimal,
+                                                       idempotencyKey As String) As Task(Of ApiResult(Of CashierSessionResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New OpenCashierSessionRequest With {
+                .OpeningFloat = openingFloat,
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, "api/v1/cashier-sessions", request, requiresAuthentication:=True)
+
+            Return Materialize(Of CashierSessionResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Closes an Open cashier session - POST /api/v1/cashier-sessions/{id}/close
+        ''' (P5-05). CalculatedCash and CashVariance are computed server-side and
+        ''' returned in the response; this request carries only what the cashier
+        ''' physically counted (CloseCashierSessionRequest's own header).
+        ''' </summary>
+        ''' <param name="idempotencyKey">Client-generated per ADR-007. A fresh key per distinct close attempt.</param>
+        Public Async Function CloseCashierSessionAsync(id As Integer,
+                                                        declaredCash As Decimal,
+                                                        idempotencyKey As String) As Task(Of ApiResult(Of CashierSessionResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New CloseCashierSessionRequest With {
+                .DeclaredCash = declaredCash,
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/cashier-sessions/{id}/close", request, requiresAuthentication:=True)
+
+            Return Materialize(Of CashierSessionResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Completes a sale against the calling cashier's own open session -
+        ''' POST /api/v1/sales (P5-07, Sales.Create). The one payment always
+        ''' covers the sale's full total; <paramref name="tenderedAmount"/> is
+        ''' required for a Cash <paramref name="paymentMethod"/> and must be
+        ''' Nothing otherwise (CreateSalePaymentRequest's own header). Product
+        ''' activity, current price, available stock and payment validity are
+        ''' all re-checked server-side; this client sends no price and no
+        ''' session Id (SaleService derives the session from the caller).
+        ''' </summary>
+        ''' <param name="idempotencyKey">Client-generated per ADR-007. A fresh key per distinct sale attempt.</param>
+        Public Async Function CreateSaleAsync(lines As IReadOnlyList(Of CreateSaleLineRequest),
+                                              paymentMethod As String,
+                                              tenderedAmount As Decimal?,
+                                              idempotencyKey As String) As Task(Of ApiResult(Of SaleResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New CreateSaleRequest With {
+                .Lines = lines,
+                .Payment = New CreateSalePaymentRequest With {
+                    .Method = If(paymentMethod, String.Empty),
+                    .TenderedAmount = tenderedAmount
+                },
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, "api/v1/sales", request, requiresAuthentication:=True)
+
+            Return Materialize(Of SaleResponse)(raw)
+
+        End Function
+
+        ''' <summary>
+        ''' Records a return against one completed sale - POST /api/v1/sales/
+        ''' {saleId}/returns (P5-11, SalesReturns.Create). Below the configured
+        ''' threshold the response comes back Completed immediately; at or above
+        ''' it, PendingApproval, awaiting a second person - this client renders
+        ''' whichever status the server assigns, never guessing which applies.
+        ''' No product Id, unit price or ProductId is sent: every return line
+        ''' names only the sale line it returns against (CreateSalesReturnLineRequest's
+        ''' own header).
+        ''' </summary>
+        ''' <param name="idempotencyKey">Client-generated per ADR-007. A fresh key per distinct return attempt.</param>
+        Public Async Function RecordSalesReturnAsync(saleId As Integer,
+                                                      lines As IReadOnlyList(Of CreateSalesReturnLineRequest),
+                                                      reason As String,
+                                                      refundMethod As String,
+                                                      idempotencyKey As String) As Task(Of ApiResult(Of SalesReturnResponse))
+
+            If String.IsNullOrWhiteSpace(idempotencyKey) Then
+                Throw New ArgumentException("An idempotency key is required for every write.", NameOf(idempotencyKey))
+            End If
+
+            Dim request As New CreateSalesReturnRequest With {
+                .Lines = lines,
+                .Reason = If(reason, String.Empty),
+                .RefundMethod = If(refundMethod, String.Empty),
+                .IdempotencyKey = idempotencyKey
+            }
+
+            Dim raw As RawResponse =
+                Await SendCoreAsync(HttpMethod.Post, $"api/v1/sales/{saleId}/returns", request, requiresAuthentication:=True)
+
+            Return Materialize(Of SalesReturnResponse)(raw)
 
         End Function
 
