@@ -10,6 +10,15 @@
 ' MaintenanceLockRepository/IdempotencyStore already use for their own
 ' unique constraints. A caller that skips the pre-check entirely (as the
 ' concurrency proof does, deliberately) still cannot create two rows.
+'
+' P5-06 REWRITES SearchAsync into two phases (SearchExactAsync then, only if
+' that finds nothing, SearchPartialAsync) - spec section 10.3's "exact SKU,
+' exact barcode, or partial name" lookup, with exact taking priority so a
+' scanned barcode never comes back diluted by an unrelated partial-name
+' match (ADR-018's rule - Products.Barcode is the one field this searches -
+' stands unmodified). Both phases now join StockBalances so every hit
+' carries its current available stock, and both honour a ProductSortField
+' the caller passes rather than a fixed ORDER BY Name.
 
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -23,6 +32,12 @@ Namespace Data
         DuplicateSku
         DuplicateBarcode
         NotFound
+    End Enum
+
+    ''' <summary>The sort fields <see cref="ProductRepository.SearchAsync"/> will honour - the same closed-enum shape StockRepository's StockSortField uses, so no caller-supplied text ever reaches an ORDER BY.</summary>
+    Public Enum ProductSortField
+        Name
+        Sku
     End Enum
 
     Public NotInheritable Class ProductRepository
@@ -165,12 +180,18 @@ Namespace Data
         End Function
 
         ''' <summary>
-        ''' Free-text search against Sku, Barcode, and Name (spec section
-        ''' 10.3: "search by SKU, optional barcode, or product name") - one
-        ''' OR'd LIKE, not three separate parameters, matching how a caller
-        ''' actually searches. Nothing/empty <paramref name="query"/> returns
-        ''' every product, paginated. Results are ordered by Name for stable
-        ''' paging.
+        ''' Lookup a cashier/inventory clerk can drive from the keyboard
+        ''' (spec section 10.3: "search by SKU, optional barcode, or product
+        ''' name") - EXACT Sku/Barcode match first, so a scanned barcode (or
+        ''' a typed exact Sku) never comes back diluted by an unrelated
+        ''' partial-name match; only when nothing matches exactly does this
+        ''' fall through to the partial <c>LIKE</c> search across Sku,
+        ''' Barcode, and Name. Nothing/empty <paramref name="query"/> skips
+        ''' the exact phase entirely and returns every product, paginated.
+        ''' Each row carries its current available stock (COALESCE'd against
+        ''' StockBalances, the same "never touched yet = 0" shape
+        ''' StockRepository's own read queries use) so the caller never needs
+        ''' a second call to show it.
         ''' <paramref name="includeInactive"/> is False by default (spec
         ''' section 10.2: an inactive product "cannot be newly sold or newly
         ''' ordered", and P2-09 treats ordinary search/lookup as one of
@@ -182,34 +203,114 @@ Namespace Data
             query As String,
             page As Integer,
             pageSize As Integer,
+            sortField As ProductSortField,
+            sortDescending As Boolean,
             Optional includeInactive As Boolean = False,
-            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of Product), TotalCount As Integer))
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of ProductSearchItem), TotalCount As Integer))
 
-            Dim hasQuery As Boolean = Not String.IsNullOrWhiteSpace(query)
+            Dim trimmedQuery As String = If(query, String.Empty).Trim()
+
+            If trimmedQuery.Length > 0 Then
+
+                Dim exactResult = Await SearchExactAsync(
+                    connection, trimmedQuery, page, pageSize, sortField, sortDescending, includeInactive, cancellationToken).ConfigureAwait(False)
+
+                If exactResult.TotalCount > 0 Then
+                    Return exactResult
+                End If
+
+            End If
+
+            Return Await SearchPartialAsync(
+                connection, If(trimmedQuery.Length > 0, trimmedQuery, Nothing), page, pageSize, sortField, sortDescending, includeInactive, cancellationToken).ConfigureAwait(False)
+
+        End Function
+
+        ''' <summary>The exact-match phase <see cref="SearchAsync"/> tries first - an empty result here (never an exception) is what tells the caller to fall through to the partial search.</summary>
+        Private Shared Async Function SearchExactAsync(
+            connection As MySqlConnection,
+            exactValue As String,
+            page As Integer,
+            pageSize As Integer,
+            sortField As ProductSortField,
+            sortDescending As Boolean,
+            includeInactive As Boolean,
+            cancellationToken As CancellationToken) As Task(Of (Items As IReadOnlyList(Of ProductSearchItem), TotalCount As Integer))
+
+            Dim conditions As New List(Of String) From {"(p.Sku = @exact OR p.Barcode = @exact)"}
+            If Not includeInactive Then
+                conditions.Add("p.IsActive = 1")
+            End If
+            Dim whereClause As String = " WHERE " & String.Join(" AND ", conditions)
+
+            Dim totalCount As Integer
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM Products p" & whereClause & ";"
+                command.Parameters.AddWithValue("@exact", exactValue)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            If totalCount = 0 Then
+                Return (Items:=Array.Empty(Of ProductSearchItem)(), TotalCount:=0)
+            End If
+
+            Dim items As New List(Of ProductSearchItem)
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    SelectColumnsWithStock & FromWithStock & whereClause &
+                    " ORDER BY " & ProductOrderByClause(sortField, sortDescending) & " LIMIT @pageSize OFFSET @offset;"
+                command.Parameters.AddWithValue("@exact", exactValue)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadProductSearchItem(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>The fallback phase <see cref="SearchAsync"/> uses only when the exact phase found nothing - the original P2-07 <c>LIKE</c> search, now stock-joined and sorted by <paramref name="sortField"/> instead of a fixed <c>ORDER BY Name</c>.</summary>
+        Private Shared Async Function SearchPartialAsync(
+            connection As MySqlConnection,
+            query As String,
+            page As Integer,
+            pageSize As Integer,
+            sortField As ProductSortField,
+            sortDescending As Boolean,
+            includeInactive As Boolean,
+            cancellationToken As CancellationToken) As Task(Of (Items As IReadOnlyList(Of ProductSearchItem), TotalCount As Integer))
+
+            Dim hasQuery As Boolean = Not String.IsNullOrEmpty(query)
             Dim likePattern As String = If(hasQuery, "%" & query & "%", Nothing)
 
             Dim conditions As New List(Of String)
             If hasQuery Then
-                conditions.Add("(Sku LIKE @pattern OR Barcode LIKE @pattern OR Name LIKE @pattern)")
+                conditions.Add("(p.Sku LIKE @pattern OR p.Barcode LIKE @pattern OR p.Name LIKE @pattern)")
             End If
             If Not includeInactive Then
-                conditions.Add("IsActive = 1")
+                conditions.Add("p.IsActive = 1")
             End If
             Dim whereClause As String = If(conditions.Count > 0, " WHERE " & String.Join(" AND ", conditions), "")
 
             Dim totalCount As Integer
             Using command As MySqlCommand = connection.CreateCommand()
-                command.CommandText = "SELECT COUNT(*) FROM Products" & whereClause & ";"
+                command.CommandText = "SELECT COUNT(*) FROM Products p" & whereClause & ";"
                 If hasQuery Then
                     command.Parameters.AddWithValue("@pattern", likePattern)
                 End If
                 totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
             End Using
 
-            Dim items As New List(Of Product)
+            Dim items As New List(Of ProductSearchItem)
             Using command As MySqlCommand = connection.CreateCommand()
                 command.CommandText =
-                    SelectColumns & " FROM Products" & whereClause & " ORDER BY Name LIMIT @pageSize OFFSET @offset;"
+                    SelectColumnsWithStock & FromWithStock & whereClause &
+                    " ORDER BY " & ProductOrderByClause(sortField, sortDescending) & " LIMIT @pageSize OFFSET @offset;"
                 If hasQuery Then
                     command.Parameters.AddWithValue("@pattern", likePattern)
                 End If
@@ -218,7 +319,7 @@ Namespace Data
 
                 Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
                     While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
-                        items.Add(ReadProduct(reader))
+                        items.Add(ReadProductSearchItem(reader))
                     End While
                 End Using
             End Using
@@ -386,6 +487,30 @@ Namespace Data
         Private Const SelectColumns As String =
             "SELECT Id, Sku, Barcode, Name, Description, CategoryId, BrandId, UnitId, Price, Cost, ReorderLevel, IsActive, RowVersion, CreatedAtUtc, UpdatedAtUtc"
 
+        ''' <summary>
+        ''' The same 15 Products columns SelectColumns projects, in the same
+        ''' order (so ReadProduct's ordinal reads stay valid), plus one more:
+        ''' AvailableStock at ordinal 15. Columns are "p."-qualified because
+        ''' StockBalances has its own RowVersion/UpdatedAtUtc columns that
+        ''' would otherwise be ambiguous once joined.
+        ''' </summary>
+        Private Const SelectColumnsWithStock As String =
+            "SELECT p.Id, p.Sku, p.Barcode, p.Name, p.Description, p.CategoryId, p.BrandId, p.UnitId, p.Price, p.Cost, p.ReorderLevel, p.IsActive, p.RowVersion, p.CreatedAtUtc, p.UpdatedAtUtc, " &
+            "COALESCE(b.Quantity, 0.000) AS AvailableStock"
+
+        Private Const FromWithStock As String =
+            " FROM Products p LEFT JOIN StockBalances b ON b.ProductId = p.Id"
+
+        ''' <summary>Id is always the final tie-break so paging is stable - the same reasoning StockRepository.StockOrderByClause's own header gives.</summary>
+        Private Shared Function ProductOrderByClause(sortField As ProductSortField, sortDescending As Boolean) As String
+
+            Dim column As String = If(sortField = ProductSortField.Sku, "p.Sku", "p.Name")
+            Dim direction As String = If(sortDescending, " DESC", " ASC")
+
+            Return column & direction & ", p.Id" & direction
+
+        End Function
+
         Private Shared Async Function ReadOneAsync(command As MySqlCommand, cancellationToken As CancellationToken) As Task(Of Product)
 
             Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
@@ -415,6 +540,16 @@ Namespace Data
                 .RowVersion = reader.GetInt64(12),
                 .CreatedAtUtc = reader.GetDateTime(13),
                 .UpdatedAtUtc = reader.GetDateTime(14)
+            }
+
+        End Function
+
+        ''' <summary>Relies on SelectColumnsWithStock projecting the same 15 Products columns, in the same order, as SelectColumns - ReadProduct's ordinals stay valid, with AvailableStock as one more column at ordinal 15.</summary>
+        Private Shared Function ReadProductSearchItem(reader As MySqlDataReader) As ProductSearchItem
+
+            Return New ProductSearchItem With {
+                .Product = ReadProduct(reader),
+                .AvailableStock = reader.GetDecimal(15)
             }
 
         End Function

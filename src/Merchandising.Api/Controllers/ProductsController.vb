@@ -64,21 +64,49 @@ Namespace Controllers
         End Sub
 
         ''' <summary>
-        ''' Free-text search against SKU, barcode, and product name (spec
-        ''' section 10.3), paginated. An absent/blank <paramref name="q"/>
-        ''' returns every product. <paramref name="includeInactive"/>
+        ''' The keyboard-driven lookup spec section 10.3 describes: exact
+        ''' SKU, exact barcode, or partial name - exact takes priority
+        ''' (ProductRepository.SearchAsync's own header), so a scanned
+        ''' barcode never comes back as a list to pick from. An absent/blank
+        ''' <paramref name="q"/> returns every product. <paramref name="includeInactive"/>
         ''' defaults False - P2-09: ordinary lookup excludes inactive
         ''' products (spec section 10.2), while GetProduct below stays
         ''' unrestricted for the history/reports case spec section 12
-        ''' requires.
+        ''' requires - and P5-06 has the response say so rather than leaving
+        ''' the caller to assume it. Every hit carries AvailableStock so the
+        ''' POS/Inventory client never needs a second call to show it.
         ''' </summary>
         <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ProductsRead)>
         <HttpGet>
         Public Async Function SearchProducts(
             <FromQuery(Name:="q")> q As String,
+            <FromQuery> Optional sort As String = Nothing,
             <FromQuery> Optional page As Integer = 1,
             <FromQuery> Optional pageSize As Integer = DefaultPageSize,
             <FromQuery> Optional includeInactive As Boolean = False) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim sortField As ProductSortField = ProductSortField.Name
+            Dim sortDescending As Boolean = False
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseSort(sort, sortField, sortDescending) Then
+                    fieldErrors("sort") = {
+                        "Unsupported sort. Use one of " & String.Join(", ", SortFieldNames()) &
+                        ", optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return BadRequest(New ApiErrorResponse With {
+                    .ErrorCode = "VALIDATION_FAILED",
+                    .Message = "The product search could not run because of a validation failure.",
+                    .CorrelationId = correlationId,
+                    .Errors = fieldErrors
+                })
+            End If
 
             Dim effectivePage As Integer = If(page < 1, 1, page)
             Dim effectivePageSize As Integer = If(pageSize < 1, DefaultPageSize, Math.Min(pageSize, MaxPageSize))
@@ -86,13 +114,16 @@ Namespace Controllers
             Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync(HttpContext.RequestAborted)
 
                 Dim result = Await ProductRepository.SearchAsync(
-                    connection, q, effectivePage, effectivePageSize, includeInactive, HttpContext.RequestAborted)
+                    connection, q, effectivePage, effectivePageSize, sortField, sortDescending, includeInactive, HttpContext.RequestAborted)
 
                 Return Ok(New ProductSearchResponse With {
-                    .Items = result.Items.Select(AddressOf ToResponse).ToList(),
+                    .Items = result.Items.Select(AddressOf ToLookupResponse).ToList(),
                     .TotalCount = result.TotalCount,
                     .Page = effectivePage,
-                    .PageSize = effectivePageSize
+                    .PageSize = effectivePageSize,
+                    .MaxPageSize = MaxPageSize,
+                    .Sort = CanonicalSort(sortField, sortDescending),
+                    .IncludeInactive = includeInactive
                 })
 
             End Using
@@ -473,6 +504,60 @@ Namespace Controllers
                 .CreatedAtUtc = product.CreatedAtUtc,
                 .UpdatedAtUtc = product.UpdatedAtUtc
             }
+        End Function
+
+        ''' <summary>ToResponse plus the one field only the search/lookup path computes - see ProductResponse.AvailableStock's own header for why it is null everywhere else.</summary>
+        Private Shared Function ToLookupResponse(item As ProductSearchItem) As ProductResponse
+            Dim response As ProductResponse = ToResponse(item.Product)
+            response.AvailableStock = item.AvailableStock
+            Return response
+        End Function
+
+        Private Shared Function SortFieldNames() As String()
+            Return {"name", "sku"}
+        End Function
+
+        ''' <summary>Parses "field" or "field:direction" against the whitelist above - the same shape PurchaseOrdersController.TryParseSort uses, so no caller-supplied text ever reaches an ORDER BY (ProductRepository.SearchAsync takes an enum, not a column name).</summary>
+        Private Shared Function TryParseSort(value As String, ByRef sortField As ProductSortField, ByRef sortDescending As Boolean) As Boolean
+
+            Dim parts As String() = value.Split(":"c)
+
+            If parts.Length > 2 Then
+                Return False
+            End If
+
+            Dim fieldName As String = parts(0).Trim()
+            Dim descending As Boolean = False
+
+            If parts.Length = 2 Then
+
+                Dim direction As String = parts(1).Trim()
+
+                If String.Equals(direction, "desc", StringComparison.OrdinalIgnoreCase) Then
+                    descending = True
+                ElseIf Not String.Equals(direction, "asc", StringComparison.OrdinalIgnoreCase) Then
+                    Return False
+                End If
+
+            End If
+
+            If String.Equals(fieldName, "name", StringComparison.OrdinalIgnoreCase) Then
+                sortField = ProductSortField.Name
+            ElseIf String.Equals(fieldName, "sku", StringComparison.OrdinalIgnoreCase) Then
+                sortField = ProductSortField.Sku
+            Else
+                Return False
+            End If
+
+            sortDescending = descending
+            Return True
+
+        End Function
+
+        ''' <summary>The canonical "field:direction" text for what was actually applied, echoed back so a caller never has to infer it.</summary>
+        Private Shared Function CanonicalSort(sortField As ProductSortField, sortDescending As Boolean) As String
+            Dim fieldName As String = If(sortField = ProductSortField.Sku, "sku", "name")
+            Return fieldName & If(sortDescending, ":desc", ":asc")
         End Function
 
         Private Function DuplicateConflict(field As String, label As String, value As String, correlationId As String) As IActionResult

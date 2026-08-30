@@ -16,6 +16,7 @@
 ' in TearDown; each test uses a fresh Guid-derived SKU/barcode so runs never
 ' collide with each other or with earlier runs.
 
+Imports System.Diagnostics
 Imports System.Linq
 Imports System.Net
 Imports System.Net.Http
@@ -361,6 +362,211 @@ Public Class ProductsControllerTests
 
     End Function
 
+    ''' <summary>
+    ''' P5-06 done-when box 1: an exact Sku match must win over a partial
+    ''' Name match, so a scanned/typed exact code never comes back as a list
+    ''' to pick from. Product B's NAME is deliberately built to contain
+    ''' Product A's Sku as a substring, so the old single-phase LIKE search
+    ''' would have returned both - the new exact-first phase must return
+    ''' ONLY A.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SearchProducts_ExactSkuMatch_TakesPriorityOverPartialNameMatch() As Task
+
+        Dim skuA As String = FreshSku()
+        Dim skuB As String = FreshSku()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryClerkFixtureUsername)
+
+            Dim productA As ProductResponse = Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = skuA, .Name = "P5-06 Exact Match Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = skuB, .Name = $"P5-06 Contains {skuA} In Its Name", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Using response As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={skuA}", token, Nothing)
+
+                Assert.AreEqual(HttpStatusCode.OK, response.StatusCode)
+                Dim body As ProductSearchResponse = Await response.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+
+                Assert.AreEqual(1, body.TotalCount, "Exact Sku match must short-circuit before the partial-name match runs.")
+                Assert.HasCount(1, body.Items)
+                Assert.AreEqual(productA.Id, body.Items(0).Id)
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P5-06 done-when box 1, the barcode half: "a scanned barcode never returns a list" - proven the same way, with Product B's name built to contain Product A's barcode.</summary>
+    <TestMethod>
+    Public Async Function SearchProducts_ExactBarcodeMatch_TakesPriorityOverPartialNameMatch() As Task
+
+        Dim barcodeA As String = FreshBarcode()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryClerkFixtureUsername)
+
+            Dim productA As ProductResponse = Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = FreshSku(), .Barcode = barcodeA, .Name = "P5-06 Barcode Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = FreshSku(), .Name = $"P5-06 Contains {barcodeA} In Its Name", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Using response As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={barcodeA}", token, Nothing)
+
+                Assert.AreEqual(HttpStatusCode.OK, response.StatusCode)
+                Dim body As ProductSearchResponse = Await response.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+
+                Assert.AreEqual(1, body.TotalCount, "A scanned barcode must never come back as a list.")
+                Assert.HasCount(1, body.Items)
+                Assert.AreEqual(productA.Id, body.Items(0).Id)
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P5-06 done-when box 2: inactive excluded by default, AND the response says so.</summary>
+    <TestMethod>
+    Public Async Function SearchProducts_InactiveExcludedByDefault_AndResponseSaysSo() As Task
+
+        Dim sku As String = FreshSku()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryClerkFixtureUsername)
+
+            Dim created As ProductResponse = Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = sku, .Name = "P5-06 Deactivated Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Using deactivateResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/products/{created.Id}/deactivate", token, Nothing)
+                Assert.AreEqual(HttpStatusCode.OK, deactivateResponse.StatusCode)
+            End Using
+
+            Using defaultResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={sku}", token, Nothing)
+
+                Assert.AreEqual(HttpStatusCode.OK, defaultResponse.StatusCode)
+                Dim body As ProductSearchResponse = Await defaultResponse.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+
+                Assert.AreEqual(0, body.TotalCount, "An inactive product must not appear in the default search.")
+                Assert.IsFalse(body.IncludeInactive, "The response must say includeInactive=false was applied, not leave the caller to assume it.")
+
+            End Using
+
+            Using explicitResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={sku}&includeInactive=true", token, Nothing)
+
+                Assert.AreEqual(HttpStatusCode.OK, explicitResponse.StatusCode)
+                Dim body As ProductSearchResponse = Await explicitResponse.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+
+                Assert.AreEqual(1, body.TotalCount, "includeInactive=true must surface the deactivated product.")
+                Assert.IsTrue(body.IncludeInactive)
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P5-06 done-when box 3: every hit carries its current available stock, no second call needed.</summary>
+    <TestMethod>
+    Public Async Function SearchProducts_ReturnsAvailableStockPerHit() As Task
+
+        Dim skuWithStock As String = FreshSku()
+        Dim skuNeverTouched As String = FreshSku()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryClerkFixtureUsername)
+
+            Dim productWithStock As ProductResponse = Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = skuWithStock, .Name = "P5-06 Stocked Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = skuNeverTouched, .Name = "P5-06 Never Touched Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            Await SeedStockDirectlyAsync(productWithStock.Id, 12.500D)
+
+            Using stockedResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={skuWithStock}", token, Nothing)
+
+                Dim body As ProductSearchResponse = Await stockedResponse.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+                Assert.AreEqual(1, body.TotalCount)
+                Assert.AreEqual(12.500D, body.Items(0).AvailableStock)
+
+            End Using
+
+            Using neverTouchedResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={skuNeverTouched}", token, Nothing)
+
+                Dim body As ProductSearchResponse = Await neverTouchedResponse.Content.ReadFromJsonAsync(Of ProductSearchResponse)()
+                Assert.AreEqual(1, body.TotalCount)
+                Assert.AreEqual(0D, body.Items(0).AvailableStock, "A product with no StockBalances row yet must report 0, never null or a missing value.")
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P5-06 done-when box 5: measured, not described. Budget stated here:
+    ''' 300ms for a single keyboard-driven lookup against this machine's real
+    ''' MariaDB instance and whatever the seeded/fixture catalogue holds at
+    ''' run time - warmed up first so a one-time connection-open cost is not
+    ''' what gets measured. The actual figure is written to stdout so
+    ''' `--logger "console;verbosity=detailed"` captures a real number, the
+    ''' same evidence shape p1-13-concurrency.txt uses.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SearchProducts_ExactSkuLookup_RespondsWithinStatedBudget() As Task
+
+        Const BudgetMs As Long = 300
+
+        Dim sku As String = FreshSku()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, InventoryClerkFixtureUsername)
+
+            Await CreateProductAsync(client, token, New CreateProductRequest With {
+                .Sku = sku, .Name = "P5-06 Budget Target", .Price = 1.0000D, .Cost = 0.5000D})
+
+            ' Warm-up: pays for connection pool spin-up/JIT so the timed call
+            ' below measures the lookup itself, not one-time startup cost.
+            Using warmup As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={sku}", token, Nothing)
+                Assert.AreEqual(HttpStatusCode.OK, warmup.StatusCode)
+            End Using
+
+            Dim stopwatch As Stopwatch = Stopwatch.StartNew()
+
+            Using timed As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, $"/api/v1/products?q={sku}", token, Nothing)
+                stopwatch.Stop()
+                Assert.AreEqual(HttpStatusCode.OK, timed.StatusCode)
+            End Using
+
+            Console.WriteLine($"P5-06 exact-Sku lookup elapsed: {stopwatch.ElapsedMilliseconds} ms (stated budget {BudgetMs} ms)")
+
+            Assert.IsLessThan(
+                BudgetMs, stopwatch.ElapsedMilliseconds,
+                $"Exact-Sku lookup took {stopwatch.ElapsedMilliseconds} ms, exceeding the stated {BudgetMs} ms budget.")
+
+        End Using
+
+    End Function
+
     ''' <summary>A Cashier - not in Products.Manage's InventoryAndAbove list - is refused.</summary>
     <TestMethod>
     Public Async Function CreateProduct_AsCashier_Refused403() As Task
@@ -409,6 +615,47 @@ Public Class ProductsControllerTests
             Await transaction.DisposeAsync()
 
             Return result
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' Seeds a known StockBalances quantity via StockRepository.IncrementAsync
+    ''' (the same upsert every real receipt uses) PLUS a matching StockMovements
+    ''' row - the same "balance change without a ledger row" would otherwise
+    ''' trip LedgerReconciliationTests' whole-suite reconciliation check
+    ''' (P4-01), exactly the shape AdjustmentTests.SetBalanceAsync already
+    ''' established for the same reason.
+    ''' </summary>
+    Private Async Function SeedStockDirectlyAsync(productId As Integer, quantity As Decimal) As Task
+
+        Dim actorId As Integer
+        Using lookupConnection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Dim actor As User = Await UserRepository.FindByUsernameAsync(lookupConnection, InventoryClerkFixtureUsername)
+            actorId = actor.Id
+        End Using
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Dim transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+            Dim stockResult = Await StockRepository.IncrementAsync(connection, transaction, productId, quantity)
+
+            Using movementCommand As MySqlCommand = connection.CreateCommand()
+                movementCommand.Transaction = transaction
+                movementCommand.CommandText =
+                    "INSERT INTO StockMovements (ProductId, Delta, QuantityBefore, QuantityAfter, Reason, ActorUserId, CorrelationId, CreatedAtUtc) " &
+                    "VALUES (@productId, @delta, @before, @after, 'P5-06 test fixture stock seed', @actorUserId, @correlationId, UTC_TIMESTAMP(6));"
+                movementCommand.Parameters.AddWithValue("@productId", productId)
+                movementCommand.Parameters.AddWithValue("@delta", quantity)
+                movementCommand.Parameters.AddWithValue("@before", stockResult.QuantityBefore)
+                movementCommand.Parameters.AddWithValue("@after", stockResult.QuantityAfter)
+                movementCommand.Parameters.AddWithValue("@actorUserId", actorId)
+                movementCommand.Parameters.AddWithValue("@correlationId", Guid.NewGuid().ToString())
+                Await movementCommand.ExecuteNonQueryAsync()
+            End Using
+
+            Await transaction.CommitAsync()
+            Await transaction.DisposeAsync()
         End Using
 
     End Function

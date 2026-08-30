@@ -1,0 +1,131 @@
+=== P5-06: Fast product lookup by SKU, barcode, or name ===
+Captured 2026-08-30, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0), never a substitute (ADR-000, ADR-009).
+
+--- What was built ---
+GET /api/v1/products (Products.Read, already gated since P2-07) rewritten
+into a two-phase lookup, spec section 10.3: exact Sku/Barcode match first
+(ProductRepository.SearchExactAsync); only when that finds nothing does the
+original partial Sku/Barcode/Name LIKE search run (SearchPartialAsync). Both
+phases LEFT JOIN StockBalances so every hit carries AvailableStock, and both
+sort by a whitelisted ProductSortField (name|sku, default name:asc) instead
+of a fixed ORDER BY. ADR-018 stands unmodified - Products.Barcode is the one
+field this searches; ProductBarcodes is untouched.
+  src/Merchandising.Domain/Entities/ProductSearchItem.vb   - new
+  src/Merchandising.Infrastructure/Data/ProductRepository.vb - SearchAsync
+      rewritten (SearchExactAsync/SearchPartialAsync/ProductOrderByClause)
+  src/Merchandising.Api/Controllers/ProductsController.vb  - sort param,
+      parsing/whitelist, ToLookupResponse
+  src/Merchandising.Contracts/Products/ProductResponse.vb  - AvailableStock
+      (nullable, populated only by the search path)
+  src/Merchandising.Contracts/Products/ProductSearchResponse.vb -
+      MaxPageSize, Sort, IncludeInactive (P3-03 parity)
+  src/tests/Merchandising.Tests.Integration/ProductsControllerTests.vb -
+      6 new tests (below)
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb -
+      ProductsRead_MatrixMatchesPolicyRegistry (new matrix cell)
+
+--- Guardrails (scripts/check-no-csharp.ps1) ---
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+--- Full build ---
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+The whole solution builds clean, including the three WPF clients and
+Merchandising.ClientCommon - ProductResponse.AvailableStock is additive and
+nullable, so ClientCommon.SearchProductsAsync and the Procurement new-order
+screen (NewPurchaseOrderViewModel, the one other real caller of
+ProductSearchResponse) compile unchanged.
+
+--- P5-06 test run: new/changed tests (detailed) ---
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --no-build --nologo --filter "FullyQualifiedName~SearchProducts_Exact|FullyQualifiedName~SearchProducts_Inactive|FullyQualifiedName~SearchProducts_Returns|FullyQualifiedName~SearchProducts_ByExactSku|FullyQualifiedName~ProductsRead_MatrixMatchesPolicyRegistry" --logger "console;verbosity=detailed"
+
+  Passed ProductsRead_MatrixMatchesPolicyRegistry [1 s]
+  Passed SearchProducts_ByExactSku_FindsIt [267 ms]
+  Passed SearchProducts_ExactSkuMatch_TakesPriorityOverPartialNameMatch [187 ms]
+  Passed SearchProducts_ExactBarcodeMatch_TakesPriorityOverPartialNameMatch [192 ms]
+  Passed SearchProducts_InactiveExcludedByDefault_AndResponseSaysSo [244 ms]
+  Passed SearchProducts_ReturnsAvailableStockPerHit [197 ms]
+  Passed SearchProducts_ExactSkuLookup_RespondsWithinStatedBudget [188 ms]
+ P5-06 exact-Sku lookup elapsed: 10 ms (stated budget 300 ms)
+Test Run Successful.
+Total tests: 7
+     Passed: 7
+
+  [PASS] box 1 - ExactSkuMatch/ExactBarcodeMatch tests: Product B's NAME is
+  built to contain Product A's Sku/Barcode as a substring (the exact
+  condition that would have leaked into the old single-phase LIKE search);
+  the response returns ONLY Product A, TotalCount=1 - a scanned barcode
+  never comes back as a list.
+  [PASS] box 2 - InactiveExcludedByDefault test: a deactivated product is
+  absent from the default search (TotalCount=0) AND
+  ProductSearchResponse.IncludeInactive=False is in the body; with
+  includeInactive=true the same product is found and IncludeInactive=True.
+  [PASS] box 3 - ReturnsAvailableStockPerHit test: a product seeded to
+  12.500 via StockRepository.IncrementAsync (+matching StockMovements row,
+  so LedgerReconciliationTests' suite-wide check stays satisfied) reports
+  AvailableStock=12.500; a product never touched by a stock-changing
+  command reports 0 (COALESCE), never null or a missing value.
+  [PASS] box 4 - pagination/max page size/sorting/filtering: MaxPageSize
+  and Sort now echo in the response body (P3-03's PurchaseOrderSearchResponse
+  contract, brought to parity here), sort is a whitelisted field:direction
+  (name|sku) rejected 400 VALIDATION_FAILED if unrecognised, includeInactive
+  is the existing filter, now echoed too.
+  [PASS] box 5 (measured, not described) - 10 ms against this machine's
+  seeded/fixture catalogue for a warmed-up exact-Sku lookup, stated budget
+  300 ms.
+  [PASS] box 6 (matrix suite extended) - ProductsRead_MatrixMatchesPolicyRegistry
+  is new; Products.Read (EveryOperationalRole) had lived unasserted at the
+  matrix layer since P2-07.
+
+--- Full suite (unit + integration) ---
+$ pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+All guardrails passed.
+=== Build ===
+Build succeeded. 0 Warning(s), 0 Error(s)
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    61, Skipped:     0, Total:    61, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   425, Skipped:     0, Total:   425, Duration: 1 m 1 s - Merchandising.Tests.Integration.dll (net10.0)
+All checks passed.
+
+--- Note: a fixture-helper bug caught by this suite's own guarantees ---
+The first draft of SearchProducts_ReturnsAvailableStockPerHit's fixture
+helper (SeedStockDirectlyAsync) called StockRepository.IncrementAsync
+directly without writing a matching StockMovements row - exactly the
+"balance change without a ledger row" CLAUDE.md section 5 and P4-01's
+LedgerReconciliationTests exist to catch. The suite's own assembly-cleanup
+reconciliation check failed as designed
+(evidence/phase-5/p5-06-product-lookup.txt's own history: ProductId=5190,
+Expected=0.000, Actual=12.500). Fixed two ways: (1) SeedStockDirectlyAsync
+now writes a compensating StockMovements row in the same transaction, the
+same shape AdjustmentTests.SetBalanceAsync already established; (2) the one
+already-drifted row from the failing run was healed with a retroactive
+StockMovements row (reason "P5-06 ledger repair") so the shared dev
+database's ledger integrity holds for every other suite that depends on it.
+Confirmed by the full-suite run above being green, including
+LedgerReconciliationTests.

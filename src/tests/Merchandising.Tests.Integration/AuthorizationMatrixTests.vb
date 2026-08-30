@@ -418,6 +418,36 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>P2-07's product search endpoint - Products.Read's first matrix cell, EveryOperationalRole (live since P2-07, but never asserted at this layer until P5-06).</summary>
+    <TestMethod>
+    Public Async Function ProductsRead_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.ProductsRead)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, "/api/v1/products?pageSize=1", token, requestBody:=Nothing)
+                    Await AssertCellAsync("Products.Read", roleName, allowedRoles.Contains(roleName), response)
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Get, "/api/v1/products", token:=Nothing, requestBody:=Nothing)
+                Await AssertUnauthenticatedAsync("Products.Read", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ''' <summary>P2-08's price-change endpoint - Products.ChangePrice's first live endpoint. Admin succeeds, Cashier (and every other non-Admin/SuperAdmin role) is refused 403.</summary>
     <TestMethod>
     Public Async Function ProductsChangePrice_MatrixMatchesPolicyRegistry() As Task

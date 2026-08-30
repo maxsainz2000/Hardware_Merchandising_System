@@ -199,7 +199,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. One worker, in order — each card consumes the last. This is the track the phase exists for.*
 
-### ⬜ P5-06 · Fast product lookup by SKU, barcode, or name
+### ✅ P5-06 · Fast product lookup by SKU, barcode, or name
 
 **Spec:** §10.3, §13 · **Files:** `src/Merchandising.Api/Controllers/ProductsController.vb`, `src/Merchandising.Infrastructure/Data/ProductRepository.vb`
 
@@ -207,12 +207,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Exact SKU and exact barcode match before any partial-name match, so a scanned barcode never returns a list
-- [ ] Inactive products are excluded by default and the response says so — an inactive product must be refused by the sale command anyway (spec §11), and a cashier should not be able to add one to a cart in the first place
-- [ ] Available stock is returned with each hit, so the client shows it without a second call
-- [ ] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
-- [ ] Measured: the lookup returns within a stated budget against the seeded catalogue, with the number recorded rather than described
-- [ ] **Matrix suite extended** — `Products.Read`; integration suite green
+- [x] Exact SKU and exact barcode match before any partial-name match, so a scanned barcode never returns a list
+- [x] Inactive products are excluded by default and the response says so — an inactive product must be refused by the sale command anyway (spec §11), and a cashier should not be able to add one to a cart in the first place
+- [x] Available stock is returned with each hit, so the client shows it without a second call
+- [x] Pagination, max page size, sorting and filtering consistent with P3-03's definitions
+- [x] Measured: the lookup returns within a stated budget against the seeded catalogue, with the number recorded rather than described
+- [x] **Matrix suite extended** — `Products.Read`; integration suite green
 
 **Evidence:** `evidence/phase-5/p5-06-product-lookup.txt`
 
