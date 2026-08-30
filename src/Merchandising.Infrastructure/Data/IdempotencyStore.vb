@@ -20,6 +20,17 @@
 ' exists, so the second INSERT does not collide at all. Either way, this
 ' mirrors the row-locking mechanism P1-13 already proved for
 ' StockRepository.TryDecrementAsync, not a fresh assumption.
+'
+' P5-09 / ADR-007.1: requestHash is OPTIONAL and additive. A caller that
+' opts in (currently only SaleService.CompleteAsync) passes a hash of its
+' own meaningful request fields; TryClaimAsync stores it on the claiming
+' INSERT and, on a LOSING claim, reads the winner's stored hash back as
+' ExistingRequestHash so the caller can tell "the same retry" from "a
+' different command reusing this key" BEFORE deciding to replay. The
+' winner's row is guaranteed already committed by the time a losing claim
+' observes it (this header's own paragraph above), so the read is never
+' racing an uncommitted hash. A caller that does not pass one writes NULL
+' and gets NULL back - every other scope's behavior is untouched.
 
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -35,32 +46,73 @@ Namespace Data
         ''' Returns Claimed = False, with no row changed, when the key is
         ''' already claimed by a committed transaction (or blocks until a
         ''' concurrently-claiming transaction resolves, then reports the
-        ''' outcome of that resolution).
+        ''' outcome of that resolution) - ExistingRequestHash is populated
+        ''' only in that case, from the row that won the claim.
+        ''' <paramref name="requestHash"/> is optional (see this class's
+        ''' header) - Nothing writes a NULL and skips the read-back. Placed
+        ''' AFTER <paramref name="cancellationToken"/>, not before it -
+        ''' every existing caller passes cancellationToken positionally as
+        ''' the 5th argument, and inserting a new parameter ahead of it
+        ''' would have silently reordered every one of those call sites.
         ''' </summary>
         Public Shared Async Function TryClaimAsync(
             connection As MySqlConnection,
             transaction As MySqlTransaction,
             scope As String,
             keyValue As String,
-            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Claimed As Boolean, Id As Integer))
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional requestHash As String = Nothing) As Task(Of (Claimed As Boolean, Id As Integer, ExistingRequestHash As String))
 
+            Dim claimed As Boolean = False
+            Dim claimedId As Integer = 0
+            Dim duplicateKey As Boolean = False
+
+            ' VB cannot Await inside a Catch (BC36943, CLAUDE.md section 3) -
+            ' the duplicate-key branch only sets a flag here; the read-back
+            ' that needs Await happens below, once this Using/Try has exited.
             Using command As MySqlCommand = connection.CreateCommand()
                 command.Transaction = transaction
                 command.CommandText =
-                    "INSERT INTO IdempotencyKeys (Scope, KeyValue, CreatedAtUtc) " &
-                    "VALUES (@scope, @keyValue, UTC_TIMESTAMP(6));"
+                    "INSERT INTO IdempotencyKeys (Scope, KeyValue, RequestHash, CreatedAtUtc) " &
+                    "VALUES (@scope, @keyValue, @requestHash, UTC_TIMESTAMP(6));"
                 command.Parameters.AddWithValue("@scope", scope)
                 command.Parameters.AddWithValue("@keyValue", keyValue)
+                command.Parameters.AddWithValue("@requestHash", CType(If(requestHash, CType(DBNull.Value, Object)), Object))
 
                 Try
                     Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
-                    Return (Claimed:=True, Id:=CInt(command.LastInsertedId))
+                    claimed = True
+                    claimedId = CInt(command.LastInsertedId)
 
                 Catch ex As MySqlException When ex.ErrorCode = MySqlErrorCode.DuplicateKeyEntry
-                    Return (Claimed:=False, Id:=0)
+                    duplicateKey = True
                 End Try
 
             End Using
+
+            If claimed Then
+                Return (Claimed:=True, Id:=claimedId, ExistingRequestHash:=CType(Nothing, String))
+            End If
+
+            If Not duplicateKey Then
+                Throw New InvalidOperationException(
+                    $"TryClaimAsync for scope '{scope}', key '{keyValue}' neither claimed nor hit a duplicate-key error. This should be unreachable.")
+            End If
+
+            Dim existingHash As String = Nothing
+
+            Using hashCommand As MySqlCommand = connection.CreateCommand()
+                hashCommand.Transaction = transaction
+                hashCommand.CommandText =
+                    "SELECT RequestHash FROM IdempotencyKeys WHERE Scope = @scope AND KeyValue = @keyValue;"
+                hashCommand.Parameters.AddWithValue("@scope", scope)
+                hashCommand.Parameters.AddWithValue("@keyValue", keyValue)
+
+                Dim result As Object = Await hashCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                existingHash = If(result Is Nothing OrElse result Is DBNull.Value, Nothing, CStr(result))
+            End Using
+
+            Return (Claimed:=False, Id:=0, ExistingRequestHash:=existingHash)
 
         End Function
 

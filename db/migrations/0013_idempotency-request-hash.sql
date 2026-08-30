@@ -1,0 +1,35 @@
+-- =============================================================================
+-- 0013_idempotency-request-hash.sql
+--
+-- P5-09: ADR-007's idempotency mechanism, amended (ADR-007.1). "A repeated
+-- key returns the original committed result" (spec section 11) has always
+-- meant a caller sending the SAME command twice. It never covered a caller
+-- reusing a key with a DIFFERENT body - a client bug that, until now, this
+-- schema could not even represent: IdempotencyKeys stores nothing about the
+-- request that won the claim, only the response it produced, so a losing
+-- claim had no way to tell "the same retry" from "a different command that
+-- happens to reuse a UUID."
+--
+-- RequestHash is the SHA-256 (hex, lowercase, 64 characters) of the
+-- caller's meaningful request fields, computed by the SERVICE before it
+-- claims the key - the identical CHAR(64) shape 0002_authentication.sql
+-- already uses for Sessions.TokenHash, for the identical reason (a fixed-
+-- width hex digest, never a value trusted verbatim from outside the
+-- system). NULLable and NOT retrofitted onto existing rows: every OTHER
+-- idempotency scope (Inventory.StockDecrement, Procurement.ReceiveGoods,
+-- Inventory.AdjustmentRequest, Sales.CashierSessionOpen/Close,
+-- Procurement.CreatePurchaseOrder, ...) keeps working exactly as before -
+-- IdempotencyStore.TryClaimAsync's new parameter is Optional, and a caller
+-- that never passes one writes NULL and never reads the comparison back.
+-- Sales.CompleteSale is the only scope that opts in at P5-09; a later card
+-- can opt another scope in without a further migration.
+--
+-- Applied by merch_migrator, after 0001-0012. No grants file follows this
+-- one - db/grants/0002_post-migration-grants.sql already grants merch_api
+-- INSERT, UPDATE, DELETE on idempotencykeys at the TABLE level (ADR-013:
+-- MariaDB privileges are table- or column-level, never "table minus one
+-- column"), and a new nullable column needs no new privilege to write.
+-- =============================================================================
+
+ALTER TABLE IdempotencyKeys
+    ADD COLUMN RequestHash CHAR(64) NULL AFTER KeyValue;

@@ -370,6 +370,27 @@ UPDATE StockBalances
 
 ---
 
+### ADR-007.1 · A same key, a different body, is refused rather than replayed
+
+**Status:** ACCEPTED
+**Date:** 2026-08-30
+**Amends:** the ADR-007 decision above. "A repeated key returns the original committed result" always meant the same command sent twice; it never covered a caller reusing a key with a genuinely different body, and the original `IdempotencyKeys` schema had no way to even represent that distinction.
+
+**What changed.** `IdempotencyKeys` gains a nullable `RequestHash CHAR(64)` column (`db/migrations/0013_idempotency-request-hash.sql`) — the same fixed-width hex-digest shape `Sessions.TokenHash` already uses. `IdempotencyStore.TryClaimAsync` gains an `Optional requestHash` parameter, stored on the claiming `INSERT`; on a **losing** claim it also reads the winner's stored hash back as `ExistingRequestHash` (safe, because by the time a claim loses, the winning transaction has already committed — the same guarantee the base ADR already established for `ResponsePayload`). `SaleService.CompleteAsync` is the first, and so far only, consumer: it computes a SHA-256 over the request's meaningful fields (every line's `ProductId`+`Quantity`, the payment method, the tendered amount) before claiming, and a losing claim whose stored hash disagrees is refused (`IdempotencyKeyReused`, `409 IDEMPOTENCY_KEY_REUSED`) rather than replayed.
+
+**Why P5-09, not earlier.** Every idempotency Done-when box before this phase asked "does a retry avoid a duplicate," never "does a *different* request get caught." P5-09 is the first card to require the second question, for the largest transaction in the system.
+
+**Additive, not breaking.** `requestHash` is `Optional` and placed *after* `cancellationToken`, not before it — every existing caller (`StockService`, `ReceivingService`, `AdjustmentService`, `CashierSessionService`, `PurchaseOrderService`, `StockCountService`, `PurchaseReturnService`) passes `cancellationToken` positionally as the 5th argument today; inserting a new parameter ahead of it would have silently reordered every one of those call sites into a type mismatch. None of them pass a hash, none of them are affected, and none needed to change. `ExistingRequestHash` being `Nothing` — a claim made before this migration, or by a scope that never opts in — is **not** treated as a mismatch: there is no evidence of a different body, so the pre-existing "always replay" behavior applies. This is what makes the change safe for keys already in flight at the moment the migration runs, rather than a breaking change disguised as an addition.
+
+**Rejected.**
+
+- **A `RequestHash` comparison scoped outside `IdempotencyKeys` (e.g. a side table, or reconstructing the hash from the stored response).** The response is server-computed output (captured price, computed totals), not the client's input — two different requests can legitimately produce output that hashes the same, and the actual input is not reliably recoverable from it. Storing the input's own hash directly is the only version of this that is actually checking what the rule cares about.
+- **Making every scope hash its request immediately.** Rejected as scope creep for this card: nothing else in the Done-when list asks for it, and the mechanism is opt-in per scope by construction, so a later card can extend it without a further migration.
+
+**Evidence.** `evidence/phase-5/p5-09-idempotent-sale.txt`.
+
+---
+
 ## ADR-008 · Migration mechanism
 
 **Status:** ACCEPTED

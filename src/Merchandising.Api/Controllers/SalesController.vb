@@ -113,6 +113,16 @@ Namespace Controllers
                         .CorrelationId = correlationId
                     })
 
+                Case SaleOutcomeKind.IdempotencyKeyReused
+                    ' P5-09/ADR-007.1: this idempotency key was already used
+                    ' for a DIFFERENT request body - a client bug, refused
+                    ' rather than replayed (never look like success).
+                    Return Conflict(New ApiErrorResponse With {
+                        .ErrorCode = SaleOutcome.IdempotencyKeyReusedErrorCode,
+                        .Message = "This idempotency key was already used for a different request. Generate a new key for a new sale.",
+                        .CorrelationId = correlationId
+                    })
+
                 Case Else ' CashTenderInsufficient
                     Return BadRequest(New ApiErrorResponse With {
                         .ErrorCode = SaleOutcome.CashTenderInsufficientErrorCode,

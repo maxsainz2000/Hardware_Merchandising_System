@@ -45,7 +45,7 @@ These hold for every table below; they are stated once here rather than repeated
 
 ## 2. Entity-relationship diagram
 
-Every table that exists through `0012_sales-returns.sql`.
+Every table that exists through `0012_sales-returns.sql`, plus `IdempotencyKeys.RequestHash` added by `0013_idempotency-request-hash.sql` (ADR-007.1) — a column on an already-listed table, not a new one.
 
 ```mermaid
 erDiagram
@@ -196,6 +196,7 @@ erDiagram
         int Id PK
         varchar Scope
         char KeyValue
+        char RequestHash
     }
     SystemSettings {
         varchar SettingKey PK
@@ -406,7 +407,7 @@ the grants file that gave `merch_api` its runtime privileges (§4 explains the g
 | `SchemaMigrations` | bootstrapped by `MigrationRunner` itself, before `0001` runs → **no grant to `merch_api`** | PK `MigrationId` | Owned entirely by `merch_migrator`. `merch_api` cannot write here — a stray row would let the runner believe a migration was applied when it was not (ADR-008). |
 | `BackupLogs` | `0003` → `0004` (**INSERT only**, granted to `merch_backup`, not `merch_api`) | PK `Id` | **Append-only, ledger** (by the ADR-013 default, not a rule written here — `merch_backup` never held a write privilege beyond this one `INSERT`). One row per backup *attempt*: `Result` is `Succeeded` / `Partial` / `Failed`, not a boolean — a dump that verified but could not copy off-host is neither. |
 | `MaintenanceLocks` | `0004` → `0005` (INSERT+UPDATE, no DELETE) | PK `Id`; FK `RequestedByUserId`/`ReleasedByUserId` → `Users`; UK `IsActive` (generated) | **Not** append-only — a release is an `UPDATE` of the acquiring row (operational state, not a ledger; the immutable trail lives in `AuditLogs`). "One active lock at a time" is enforced by a `PERSISTENT` generated column (`1` while held, `NULL` once released) under a plain `UNIQUE KEY` — MariaDB's unique index treats every `NULL` as distinct, so released rows never collide and a second concurrent acquisition is refused by the database itself (measured: `ERROR 1062` on a second unreleased row), not by a check-then-insert race. |
-| `IdempotencyKeys` | `0001` → `0002` (INSERT+UPDATE+DELETE) | PK `Id`; UK (`Scope`,`KeyValue`) | ADR-007: insert-first strategy — a command claims its key before doing work, and the committed response payload is stored and replayed verbatim on a repeat. `DELETE` is granted for an eventual expiry sweep. |
+| `IdempotencyKeys` | `0001`, `0013` → `0002` (INSERT+UPDATE+DELETE) | PK `Id`; UK (`Scope`,`KeyValue`) | ADR-007: insert-first strategy — a command claims its key before doing work, and the committed response payload is stored and replayed verbatim on a repeat. `DELETE` is granted for an eventual expiry sweep. `RequestHash CHAR(64)` (nullable, `0013`, ADR-007.1) is a SHA-256 of the claiming request's meaningful fields — an *opt-in* per scope; `Sales.CompleteSale` is the only scope that populates it (P5-09), so a losing claim there can tell "the same retry" from "a different command reusing this key" and refuse the latter instead of replaying it. |
 
 ### 3.4 Procurement
 
@@ -581,6 +582,7 @@ exist yet (`ERROR 1146`).
 | 10 | `0010_counts-and-adjustments.sql` | `0012_counts-and-adjustments-grants.sql` | `StockCounts`, `StockCountLines`, `StockAdjustments` |
 | 11 | `0011_pos.sql` | `0013_pos-grants.sql` | `CashierSessions`, `Sales`, `SaleLines`, `SalePayments` |
 | 12 | `0012_sales-returns.sql` | `0014_sales-returns-grants.sql` | `SalesReturns`, `SalesReturnLines` |
+| 13 | `0013_idempotency-request-hash.sql` | none — `0002` already grants `merch_api` INSERT/UPDATE/DELETE at the table level on `idempotencykeys`, and a new nullable column needs no new privilege | `IdempotencyKeys.RequestHash` (ADR-007.1) |
 
 `db/grants/` and `db/migrations/` are two independent numbering sequences, not a matched pair —
 `db/grants/0006_restore-grants.sql` grants `merch_migrator` `LOCK TABLES` (a privilege fix
@@ -588,7 +590,7 @@ discovered while proving restore against the real production identity, unrelated
 migration), which is why the table above pairs migration 5 with grants file `0007`, migration 6
 with `0008`, and migration 7 with `0009` rather than matching numbers straight across. From
 migration 8 onward the numbering happens to run in step (`0008`→`0010`, `0009`→`0011`,
-`0010`→`0012`, `0011`→`0013`, `0012`→`0014`) — coincidence of no further `LOCK TABLES`-style fixes since, not a rule.
+`0010`→`0012`, `0011`→`0013`, `0012`→`0014`) — coincidence of no further `LOCK TABLES`-style fixes since, not a rule. Migration 13 breaks that step-in-tandem run deliberately: it needs no grants file at all.
 
 ---
 

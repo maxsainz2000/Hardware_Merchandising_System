@@ -359,15 +359,21 @@ Public Class SaleServiceTests
 
     End Function
 
-    ' ------------------------------------------------------------------ duplicate request state
+    ' ------------------------------------------------------------------ duplicate request state (P5-07 re-check 4 of 5 / P5-09 boxes 1-2)
 
-    ''' <summary>Re-check 4 of 5: a repeated idempotency key replays the ORIGINAL committed sale - never a second stock decrease.</summary>
+    ''' <summary>
+    ''' P5-09 boxes 1-2: a repeated key replays the ORIGINAL committed sale
+    ''' byte-for-byte (not merely matching on Id), and exactly one row exists
+    ''' afterward in each of Sales, SaleLines, StockMovements and
+    ''' SalePayments - plus the session's own cash total reflects only the
+    ''' ONE sale, never a doubled total a demo would actually notice.
+    ''' </summary>
     <TestMethod>
-    Public Async Function CompleteAsync_RepeatedIdempotencyKey_ReplaysWithoutASecondStockDecrement() As Task
+    Public Async Function CompleteAsync_RepeatedIdempotencyKeySameBody_ReplaysByteForByteWithExactlyOneOfEachEffectRow() As Task
 
         Dim productId As Integer = Await CreateFixtureProductAsync(price:=4.0000D, cost:=1.0000D)
         Await SeedStockDirectlyAsync(productId, 10.000D)
-        Await EnsureOpenSessionAsync()
+        Dim sessionId As Integer = Await EnsureOpenSessionAsync()
 
         Dim idempotencyKey As String = Guid.NewGuid().ToString()
         Dim lines As New List(Of CreateSaleLineRequest) From {
@@ -385,11 +391,118 @@ Public Class SaleServiceTests
 
         Assert.AreEqual(SaleOutcomeKind.Replayed, secondOutcome.Kind)
 
-        Dim replayed As SaleResponse = JsonSerializer.Deserialize(Of SaleResponse)(secondOutcome.ReplayPayload)
-        Assert.AreEqual(firstOutcome.Response.Id, replayed.Id, "The replay must be the SAME sale, byte for byte.")
+        ' Box 1: byte-for-byte, not merely Id equality - the stored payload
+        ' IS the exact JSON the first commit produced, so re-serializing the
+        ' first outcome's own Response must match it character for character.
+        Dim expectedPayload As String = JsonSerializer.Serialize(firstOutcome.Response)
+        Assert.AreEqual(expectedPayload, secondOutcome.ReplayPayload, "The replay must be the ORIGINAL committed payload, byte for byte - not merely a matching Id.")
 
+        ' Box 2: exactly one of each effect row, and the session total is not doubled.
         Assert.AreEqual(8.000D, Await ReadBalanceOrZeroAsync(productId), "A replayed request must never decrement stock a second time.")
-        Assert.AreEqual(1L, Await CountSalesAsync(firstOutcome.Response.CorrelationId))
+        Assert.AreEqual(1L, Await CountSalesAsync(firstOutcome.Response.CorrelationId), "Exactly one Sales row may exist.")
+        Assert.AreEqual(1L, Await CountSaleLinesAsync(firstOutcome.Response.Id), "Exactly one SaleLines row may exist.")
+        Assert.AreEqual(1L, Await CountMovementsAsync(firstOutcome.Response.CorrelationId, productId), "Exactly one StockMovements row may exist.")
+        Assert.AreEqual(1L, Await CountSalePaymentsAsync(firstOutcome.Response.Id), "Exactly one SalePayments row may exist.")
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Dim totals = Await CashierSessionRepository.GetPaymentTotalsAsync(connection, sessionId)
+            Dim cashTotal As Decimal = totals.First(Function(t) String.Equals(t.Method, "Cash", StringComparison.Ordinal)).Amount
+            Assert.AreEqual(8.0000D, cashTotal, "The session's own cash total must reflect the ONE sale, not a doubled total from a silently-repeated replay.")
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P5-09 box 3: a key reused with a DIFFERENT body is refused with its
+    ''' own stable code, never silently replayed as if it were a legitimate
+    ''' retry - a client bug (a duplicated key sent with different lines)
+    ''' must not be allowed to look like success.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function CompleteAsync_SameIdempotencyKeyDifferentBody_RefusedWithoutReplayingOrTouchingStock() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=4.0000D, cost:=1.0000D)
+        Await SeedStockDirectlyAsync(productId, 10.000D)
+        Await EnsureOpenSessionAsync()
+
+        Dim idempotencyKey As String = Guid.NewGuid().ToString()
+
+        Dim firstOutcome As SaleOutcome =
+            Await _saleService.CompleteAsync(
+                New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 2.000D}},
+                PaymentMethod.Cash, 10.0000D, _cashierUserId, Guid.NewGuid().ToString(), idempotencyKey)
+        Assert.AreEqual(SaleOutcomeKind.Created, firstOutcome.Kind)
+
+        ' Same key, DIFFERENT body - a different quantity for the same line.
+        Dim secondOutcome As SaleOutcome =
+            Await _saleService.CompleteAsync(
+                New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 3.000D}},
+                PaymentMethod.Cash, 10.0000D, _cashierUserId, Guid.NewGuid().ToString(), idempotencyKey)
+
+        Assert.AreEqual(SaleOutcomeKind.IdempotencyKeyReused, secondOutcome.Kind, "A same-key, different-body retry must be refused, never replayed or completed as a new sale.")
+        Assert.IsNull(secondOutcome.Response, "A refused reuse must carry no committed response.")
+        Assert.IsNull(secondOutcome.ReplayPayload, "A refused reuse must not replay anything - that would be the client bug looking like success.")
+
+        Assert.AreEqual(8.000D, Await ReadBalanceOrZeroAsync(productId), "The refused second attempt must leave stock exactly where the first sale left it - no partial or extra effect.")
+        Assert.AreEqual(1L, Await CountSalesAsync(firstOutcome.Response.CorrelationId), "Only the first, legitimate sale may exist.")
+
+    End Function
+
+    ''' <summary>
+    ''' P5-09 box 4: N concurrent requests sharing one key and one identical
+    ''' body - exactly one commits, every other replays, none errors. The
+    ''' P1-13/P1-14 "launch every task, then await" shape, applied to the
+    ''' largest transaction in the system.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function CompleteAsync_ConcurrentRequestsSameIdempotencyKeyAndBody_ExactlyOneCommitsRestReplay() As Task
+
+        Const RequestCount As Integer = 5
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=4.0000D, cost:=1.0000D)
+        Await SeedStockDirectlyAsync(productId, 10.000D)
+        Await EnsureOpenSessionAsync()
+
+        Dim idempotencyKey As String = Guid.NewGuid().ToString()
+        Dim lines As New List(Of CreateSaleLineRequest) From {
+            New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 2.000D}
+        }
+
+        ' None of these are awaited individually - all RequestCount calls are
+        ' underway, sharing one idempotencyKey and one body, before this
+        ' method awaits any of them (StockDecrementTests' P1-14 concurrency shape).
+        Dim tasks(RequestCount - 1) As Task(Of SaleOutcome)
+        For i = 0 To RequestCount - 1
+            tasks(i) = _saleService.CompleteAsync(
+                lines, PaymentMethod.Cash, 10.0000D, _cashierUserId, Guid.NewGuid().ToString(), idempotencyKey)
+        Next
+
+        Dim outcomes As SaleOutcome() = Await Task.WhenAll(tasks)
+
+        Dim distribution As New System.Text.StringBuilder()
+        Dim createdCount As Integer = 0
+        Dim replayedCount As Integer = 0
+        For i = 0 To RequestCount - 1
+            If distribution.Length > 0 Then distribution.Append(" | ")
+            distribution.Append(outcomes(i).Kind.ToString())
+            Select Case outcomes(i).Kind
+                Case SaleOutcomeKind.Created
+                    createdCount += 1
+                Case SaleOutcomeKind.Replayed
+                    replayedCount += 1
+            End Select
+        Next
+        Console.WriteLine($"P5-09 box 4 x{RequestCount} raw distribution -> {distribution}")
+
+        Assert.AreEqual(1, createdCount, "Exactly one of the concurrent requests may commit a new sale.")
+        Assert.AreEqual(RequestCount - 1, replayedCount, "Every other concurrent request must replay - never error, never a second sale.")
+
+        Assert.AreEqual(8.000D, Await ReadBalanceOrZeroAsync(productId), "5 concurrent identical requests sharing one key must decrement stock exactly once.")
+
+        Dim winner As SaleOutcome = outcomes.First(Function(o) o.Kind = SaleOutcomeKind.Created)
+        Assert.AreEqual(1L, Await CountSalesAsync(winner.Response.CorrelationId), "Exactly one Sales row may exist across all concurrent attempts.")
 
     End Function
 
@@ -548,6 +661,56 @@ Public Class SaleServiceTests
                 Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode)
                 Dim errorBody As ApiErrorResponse = Await response.Content.ReadFromJsonAsync(Of ApiErrorResponse)()
                 Assert.AreEqual("CASH_TENDER_INSUFFICIENT", errorBody.ErrorCode)
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>P5-09 box 3, controller-level: a same-key different-body retry maps to 409 with its own stable code, through the real HTTP pipeline.</summary>
+    <TestMethod>
+    Public Async Function CreateSale_SameIdempotencyKeyDifferentBody_Returns409WithStableCode() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=10.0000D, cost:=5.0000D)
+        Await SeedStockDirectlyAsync(productId, 10.000D)
+        Await CloseOpenSessionDirectlyAsync(_cashierUserId)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, CashierUsername)
+
+            Using openResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token,
+                    New OpenCashierSessionRequest With {.OpeningFloat = 0D, .IdempotencyKey = Guid.NewGuid().ToString("d")})
+                Assert.AreEqual(HttpStatusCode.Created, openResponse.StatusCode)
+            End Using
+
+            Dim sharedKey As String = Guid.NewGuid().ToString("d")
+
+            Dim firstBody As New CreateSaleRequest With {
+                .IdempotencyKey = sharedKey,
+                .Lines = New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 20.0000D}
+            }
+
+            Using firstResponse As HttpResponseMessage = Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", token, firstBody)
+                Assert.AreEqual(HttpStatusCode.Created, firstResponse.StatusCode)
+            End Using
+
+            Dim secondBody As New CreateSaleRequest With {
+                .IdempotencyKey = sharedKey,
+                .Lines = New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 2.000D}},
+                .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 20.0000D}
+            }
+
+            Using response As HttpResponseMessage = Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", token, secondBody)
+
+                Assert.AreEqual(HttpStatusCode.Conflict, response.StatusCode)
+                Dim errorBody As ApiErrorResponse = Await response.Content.ReadFromJsonAsync(Of ApiErrorResponse)()
+                Assert.AreEqual("IDEMPOTENCY_KEY_REUSED", errorBody.ErrorCode)
 
             End Using
 
@@ -725,6 +888,30 @@ Public Class SaleServiceTests
             Using command As MySqlCommand = connection.CreateCommand()
                 command.CommandText = "SELECT COUNT(*) FROM Sales WHERE CorrelationId = @correlationId;"
                 command.Parameters.AddWithValue("@correlationId", correlationId)
+                Return CLng(Await command.ExecuteScalarAsync())
+            End Using
+        End Using
+
+    End Function
+
+    Private Async Function CountSaleLinesAsync(saleId As Integer) As Task(Of Long)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM SaleLines WHERE SaleId = @saleId;"
+                command.Parameters.AddWithValue("@saleId", saleId)
+                Return CLng(Await command.ExecuteScalarAsync())
+            End Using
+        End Using
+
+    End Function
+
+    Private Async Function CountSalePaymentsAsync(saleId As Integer) As Task(Of Long)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM SalePayments WHERE SaleId = @saleId;"
+                command.Parameters.AddWithValue("@saleId", saleId)
                 Return CLng(Await command.ExecuteScalarAsync())
             End Using
         End Using

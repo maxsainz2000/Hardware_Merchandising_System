@@ -36,6 +36,13 @@
 ' Replayed carries the response NOT ONLY when a new sale was rejected -
 ' Created/Replayed are ADR-007's usual pair, identical to every other
 ' claim-first command in this codebase.
+'
+' IdempotencyKeyReused (P5-09 / ADR-007.1) IS A SIXTH, DISTINCT FROM Replayed.
+' A losing idempotency claim whose freshly-computed request hash does not
+' match the winning claim's stored hash names a real client bug - the same
+' key reused for a DIFFERENT command - and must never be silently replayed
+' as if it were a legitimate retry (spec section 11's "return the original
+' committed result" only ever meant the same command sent twice).
 
 Imports Merchandising.Contracts.Sales
 
@@ -65,6 +72,9 @@ Namespace Sales
         ''' <summary>Cash tendered was less than the sale total.</summary>
         CashTenderInsufficient
 
+        ''' <summary>The idempotency key was already used, by a DIFFERENT request body - refused, never replayed.</summary>
+        IdempotencyKeyReused
+
     End Enum
 
     ''' <summary>The result of attempting to complete a sale.</summary>
@@ -81,6 +91,9 @@ Namespace Sales
 
         ''' <summary>P5-07's stable error code (ADR-014) for a CashTenderInsufficient outcome - deliberately distinct from the generic VALIDATION_FAILED bucket, so a caller can branch on "not enough cash" specifically.</summary>
         Public Const CashTenderInsufficientErrorCode As String = "CASH_TENDER_INSUFFICIENT"
+
+        ''' <summary>P5-09's stable error code (ADR-014/ADR-007.1) for an IdempotencyKeyReused outcome.</summary>
+        Public Const IdempotencyKeyReusedErrorCode As String = "IDEMPOTENCY_KEY_REUSED"
 
         Public ReadOnly Property Kind As SaleOutcomeKind
 
@@ -137,6 +150,10 @@ Namespace Sales
 
         Public Shared Function CashTenderInsufficient(shortfallAmount As Decimal) As SaleOutcome
             Return New SaleOutcome(SaleOutcomeKind.CashTenderInsufficient, Nothing, Nothing, 0, shortfallAmount)
+        End Function
+
+        Public Shared Function IdempotencyKeyReused() As SaleOutcome
+            Return New SaleOutcome(SaleOutcomeKind.IdempotencyKeyReused, Nothing, Nothing, 0, 0D)
         End Function
 
     End Class

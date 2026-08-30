@@ -252,7 +252,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-08-sale-concurrency.txt` — including the induced-failure run
 
-### ⬜ P5-09 · Idempotent retry returns the original sale, never a second one
+### ✅ P5-09 · Idempotent retry returns the original sale, never a second one
 
 **Spec:** §11 · **Files:** `src/Merchandising.Api/Sales/SaleService.vb`
 
@@ -260,11 +260,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] A repeated key returns the original committed payload byte-for-byte, asserted on the response, not merely on the row count
-- [ ] Exactly one stock decrement, one movement row, and one session-total update exist afterwards — asserted on all three, because a duplicate that only shows up in session totals is the one a demo would notice
-- [ ] A key reused with a **different** body is refused with a stable code rather than silently replaying — a client bug must not look like success
-- [ ] Two simultaneous requests carrying the same key: exactly one commits, the other replays, neither errors
-- [ ] Integration suite green
+- [x] A repeated key returns the original committed payload byte-for-byte, asserted on the response, not merely on the row count
+- [x] Exactly one stock decrement, one movement row, and one session-total update exist afterwards — asserted on all three, because a duplicate that only shows up in session totals is the one a demo would notice
+- [x] A key reused with a **different** body is refused with a stable code rather than silently replaying — a client bug must not look like success
+- [x] Two simultaneous requests carrying the same key: exactly one commits, the other replays, neither errors
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-5/p5-09-sale-idempotency.txt`
 

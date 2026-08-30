@@ -59,10 +59,26 @@
 ' header for the full mechanism. It fires after the audit insert and the
 ' idempotency completion write, immediately before commit: the strongest
 ' point available, proving rollback for every row this method writes.
+'
+' P5-09 / ADR-007.1: STEP 0 now also computes a RequestHash - SHA-256 over
+' this request's meaningful fields (every line's ProductId+Quantity, the
+' payment method, the tendered amount), BEFORE the key is claimed, and
+' passes it to IdempotencyStore.TryClaimAsync. A LOSING claim whose
+' ExistingRequestHash disagrees with this freshly-computed hash names a
+' real client bug - the same key reused for a genuinely different command -
+' and is refused (IdempotencyKeyReused), never replayed. ExistingRequestHash
+' being Nothing (a claim made before this feature existed, or by a scope
+' that never opts in) is NOT treated as a mismatch: there is no evidence of
+' a different body, so the pre-existing "always replay" behavior applies -
+' this is what makes the migration additive rather than a breaking change
+' for keys already in flight.
 
 Imports System.Collections.Generic
-Imports System.Data
+Imports System.Globalization
 Imports System.Linq
+Imports System.Security.Cryptography
+Imports System.Data
+Imports System.Text
 Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -89,6 +105,9 @@ Namespace Sales
 
         ''' <summary>AuditLogs.Action for an idempotency replay - nothing was sold, so it audits under its own name (ReceivingService's identical reasoning).</summary>
         Private Const AuditActionReplayed As String = "SaleReplayed"
+
+        ''' <summary>AuditLogs.Action for a refused same-key-different-body reuse (P5-09) - nothing was sold, and nothing was replayed either.</summary>
+        Private Const AuditActionKeyReused As String = "SaleIdempotencyKeyReused"
 
         Private ReadOnly _connectionFactory As ConnectionFactory
 
@@ -142,6 +161,8 @@ Namespace Sales
                 DecimalScaleGuard.EnsureMoneyScale(tenderedAmount.Value)
             End If
 
+            Dim requestHash As String = ComputeRequestHash(lines, paymentMethod, tenderedAmount)
+
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
 
@@ -154,12 +175,28 @@ Namespace Sales
                 ' ----------------------------------------------------- step 0
                 Dim claim =
                     Await IdempotencyStore.TryClaimAsync(
-                        connection, transaction, IdempotencyScope, idempotencyKey, cancellationToken).ConfigureAwait(False)
+                        connection, transaction, IdempotencyScope, idempotencyKey, cancellationToken, requestHash).ConfigureAwait(False)
 
                 If Not claim.Claimed Then
 
                     Await transaction.RollbackAsync(cancellationToken).ConfigureAwait(False)
                     Await transaction.DisposeAsync().ConfigureAwait(False)
+
+                    ' P5-09/ADR-007.1: a stored hash that disagrees with this
+                    ' request's own hash means a DIFFERENT command reused the
+                    ' key - refused, never replayed. Nothing (no stored hash
+                    ' at all) is not a mismatch - see this file's own header.
+                    If claim.ExistingRequestHash IsNot Nothing AndAlso
+                       Not String.Equals(claim.ExistingRequestHash, requestHash, StringComparison.Ordinal) Then
+
+                        Await AuditLogWriter.WriteAsync(
+                            connection, actorUserId, AuditActionKeyReused, idempotencyKey, "Refused", correlationId,
+                            detail:="Idempotency key already committed under a different request body; refused rather than replayed.",
+                            cancellationToken:=cancellationToken).ConfigureAwait(False)
+
+                        Return SaleOutcome.IdempotencyKeyReused()
+
+                    End If
 
                     Dim storedPayload As String =
                         Await IdempotencyStore.FindCompletedResponsePayloadAsync(
@@ -354,6 +391,42 @@ Namespace Sales
                 Return SaleOutcome.Created(response)
 
             End Using
+
+        End Function
+
+        ' ----------------------------------------------------------- helpers
+
+        ''' <summary>
+        ''' SHA-256 (lowercase hex, 64 characters - IdempotencyKeys.RequestHash's
+        ''' own CHAR(64) shape) over this request's meaningful fields: every
+        ''' line's ProductId+Quantity, IN THE ORDER SENT, then the payment
+        ''' method, then the tendered amount. Order matters deliberately - a
+        ''' genuine retry from the same client resends the same request, lines
+        ''' in the same order; this is not trying to be order-invariant, only
+        ''' to tell "the same command, sent twice" from "a different one."
+        ''' Quantities and amounts are formatted at their own storage scale
+        ''' (already validated by this point) so two requests that are equal
+        ''' in value hash identically regardless of how the caller's Decimal
+        ''' happened to be constructed.
+        ''' </summary>
+        Private Shared Function ComputeRequestHash(
+            lines As IReadOnlyList(Of CreateSaleLineRequest), paymentMethod As PaymentMethod, tenderedAmount As Decimal?) As String
+
+            Dim canonical As New StringBuilder()
+
+            For Each line As CreateSaleLineRequest In lines
+                canonical.Append(line.ProductId).
+                    Append(":").
+                    Append(line.Quantity.ToString("0.000", CultureInfo.InvariantCulture)).
+                    Append(";")
+            Next
+
+            canonical.Append("|method=").Append(paymentMethod.ToString())
+            canonical.Append("|tendered=").
+                Append(If(tenderedAmount.HasValue, tenderedAmount.Value.ToString("0.0000", CultureInfo.InvariantCulture), "none"))
+
+            Dim digest As Byte() = SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString()))
+            Return Convert.ToHexStringLower(digest)
 
         End Function
 

@@ -1,0 +1,176 @@
+P5-09 - Idempotent retry returns the original sale, never a second one.
+ADR-007's idempotency, applied to the largest transaction in the system, plus
+a new amendment (ADR-007.1) the card's own Done-when list required and the
+existing mechanism could not yet express.
+
+Captured 2026-08-30 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0).
+
+===============================================================================
+0. What this closes, and why it needed more than SaleService.vb
+===============================================================================
+
+Three of the card's four Done-when boxes exercise a mechanism that already
+existed (ADR-007, proven generically at P1-14): a repeated key replays the
+original response, and a concurrent race resolves to exactly one commit. The
+fourth - "a key reused with a DIFFERENT body is refused" - named a rule the
+existing IdempotencyKeys schema could not represent at all: the table stored
+only the RESPONSE a claim produced, never anything about the REQUEST that won
+it, so a losing claim had no way to distinguish "the same retry" from "a
+different command that happens to reuse a UUID."
+
+Closed by ADR-007.1 (docs/adr.md): IdempotencyKeys gains a nullable
+RequestHash CHAR(64) column (db/migrations/0013_idempotency-request-hash.sql,
+the same fixed-width hex-digest shape Sessions.TokenHash already uses).
+IdempotencyStore.TryClaimAsync gains an Optional requestHash parameter -
+placed AFTER cancellationToken, not before it, so none of the eleven existing
+call sites (StockService, ReceivingService, AdjustmentService,
+CashierSessionService x2, PurchaseOrderService, PurchaseReturnService,
+StockCountService x3) needed to change or even recompile differently.
+SaleService.CompleteAsync is the only current consumer.
+
+  Migration: 0013_idempotency-request-hash.sql, applied via
+             `dotnet run --project src/Merchandising.Maintenance -- migrate`
+
+  DESCRIBE IdempotencyKeys; (after)
+    Field            Type          Null  Key
+    Id               int(11)       NO    PRI
+    Scope            varchar(100)  NO    MUL
+    KeyValue         char(36)      NO
+    RequestHash      char(64)      YES        <- new
+    ResponsePayload  text          YES
+    CreatedAtUtc     datetime(6)   NO
+    CompletedAtUtc   datetime(6)   YES
+
+  No grants file follows 0013 - db/grants/0002_post-migration-grants.sql
+  already grants merch_api INSERT, UPDATE, DELETE on idempotencykeys at the
+  TABLE level; a new nullable column needs no new privilege to write.
+
+===============================================================================
+1. Box 1 + Box 2 - byte-for-byte replay, exactly one of each effect row
+===============================================================================
+
+CompleteAsync_RepeatedIdempotencyKeySameBody_ReplaysByteForByteWithExactlyOneOfEachEffectRow
+
+A cash sale is completed, then the identical request (same lines, same
+idempotency key) is sent again.
+
+  Assert.AreEqual(expectedPayload, secondOutcome.ReplayPayload)
+    where expectedPayload = JsonSerializer.Serialize(firstOutcome.Response)
+    -> exact character-for-character match, not merely matching .Id.
+
+  Assert.AreEqual(8.000D, balance)                       -- one decrement only
+  Assert.AreEqual(1L, CountSalesAsync(correlationId))     -- one Sales row
+  Assert.AreEqual(1L, CountSaleLinesAsync(saleId))        -- one SaleLines row
+  Assert.AreEqual(1L, CountMovementsAsync(...))           -- one StockMovements row
+  Assert.AreEqual(1L, CountSalePaymentsAsync(saleId))     -- one SalePayments row
+  Assert.AreEqual(8.0000D, sessionCashTotal)              -- session total NOT doubled
+
+  Passed CompleteAsync_RepeatedIdempotencyKeySameBody_ReplaysByteForByteWithExactlyOneOfEachEffectRow [425 ms]
+
+A duplicate that only showed up in the session's cash total is exactly the
+failure mode this box exists to catch - a demo would notice a doubled total
+before it noticed a duplicate Sales row, and this test asserts both.
+
+===============================================================================
+2. Box 3 - a different body is refused, never replayed (ADR-007.1)
+===============================================================================
+
+CompleteAsync_SameIdempotencyKeyDifferentBody_RefusedWithoutReplayingOrTouchingStock
+
+The same idempotency key is sent twice with two DIFFERENT bodies (quantity
+2.000, then quantity 3.000, same product).
+
+  Failed BEFORE implementation (the watched-fail run, section 4 below):
+    Assert.AreEqual failed. Expected:<IdempotencyKeyReused>. Actual:<Replayed>.
+
+  After IdempotencyStore/SaleService/SaleOutcome/SalesController changed:
+
+    Passed CompleteAsync_SameIdempotencyKeyDifferentBody_RefusedWithoutReplayingOrTouchingStock [40 ms]
+
+  Asserted: SaleOutcomeKind.IdempotencyKeyReused (not Replayed, not Created);
+  Response and ReplayPayload both Nothing (nothing is replayed - a client bug
+  must not look like success); balance and Sales row count unaffected by the
+  refused second attempt, exactly as the first, legitimate sale left them.
+
+Controller-level round trip, through the real HTTP pipeline:
+
+  Passed CreateSale_SameIdempotencyKeyDifferentBody_Returns409WithStableCode [632 ms]
+
+    POST /api/v1/sales (qty 1.000, key K) -> 201 Created
+    POST /api/v1/sales (qty 2.000, SAME key K) -> 409 Conflict,
+      { "errorCode": "IDEMPOTENCY_KEY_REUSED", ... }
+
+===============================================================================
+3. Box 4 - concurrent identical-body requests: exactly one commits, rest replay
+===============================================================================
+
+CompleteAsync_ConcurrentRequestsSameIdempotencyKeyAndBody_ExactlyOneCommitsRestReplay
+
+5 requests sharing one idempotency key AND one identical body, none awaited
+individually until all 5 are in flight (the P1-13/P1-14 "launch every task,
+then await" shape, applied to SaleService for the first time).
+
+  P5-09 box 4 x5 raw distribution -> Created | Replayed | Replayed | Replayed | Replayed
+
+  Passed CompleteAsync_ConcurrentRequestsSameIdempotencyKeyAndBody_ExactlyOneCommitsRestReplay [32 ms]
+
+Asserted: exactly 1 Created, exactly 4 Replayed, 0 exceptions/unexpected
+outcomes; final balance reflects exactly one decrement (8.000, from 10.000);
+exactly one Sales row exists across all 5 attempts.
+
+===============================================================================
+4. Watched fail - the new rule, before it existed
+===============================================================================
+
+Box 3's test was written and run BEFORE any implementation change, against
+the codebase as SaleService/IdempotencyStore stood at P5-08:
+
+  Failed CompleteAsync_SameIdempotencyKeyDifferentBody_RefusedWithoutReplayingOrTouchingStock [450 ms]
+  Error Message:
+   Assert.AreEqual failed. Expected:<IdempotencyKeyReused>. Actual:<Replayed>.
+   A same-key, different-body retry must be refused, never replayed or
+   completed as a new sale.
+
+This is the right failure for the right reason: the pre-existing mechanism
+correctly replays ANY repeated key regardless of body, which is precisely
+the gap ADR-007.1 exists to close. Implemented (migration 0013,
+IdempotencyStore.TryClaimAsync's requestHash parameter, SaleService's
+ComputeRequestHash + mismatch branch, SaleOutcomeKind.IdempotencyKeyReused,
+SalesController's 409 mapping), then re-run green (section 2 above).
+
+No separate "break and revert" cycle was needed here the way P5-08's did -
+the rule under test did not exist yet, so watching it fail for the right
+reason WAS the red half of red/green, and implementing it is what turned it
+green. Nothing pre-existing was broken and reverted.
+
+===============================================================================
+5. Suite state
+===============================================================================
+
+  $ pwsh ./scripts/run-tests.ps1
+
+  Guardrails    G-A, G-B, G-C, G-D all pass
+  Build         0 warnings, 0 errors
+  Unit          61 / 61   passed, 0 skipped
+  Integration  446 / 446  passed, 0 skipped   (443 at P5-08; one existing
+                                               test upgraded in place, three
+                                               new tests added -> net +3)
+
+===============================================================================
+6. What this closes, and what it does not
+===============================================================================
+
+CLOSES: all four P5-09 Done-when boxes - byte-for-byte replay, exactly one of
+each effect row (including the session total), a same-key-different-body
+retry refused with a stable code rather than silently replayed, and a
+concurrent identical-body race resolving to exactly one commit. ADR-007 is
+amended (ADR-007.1) to record the new RequestHash mechanism, additive and
+opt-in per scope, with all eleven pre-existing IdempotencyStore.TryClaimAsync
+call sites confirmed unaffected (docs/adr.md ADR-007.1 lists them).
+docs/database-design.md's IdempotencyKeys entry, ER diagram, and migration
+history table are updated to match.
+
+DOES NOT CLAIM: that any scope other than Sales.CompleteSale checks a request
+hash - the mechanism is deliberately opt-in, and no other card's Done-when
+list has asked for it yet.
