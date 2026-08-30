@@ -1,0 +1,47 @@
+=== P5-05: Daily closing - declared vs. calculated, with variance ===
+Captured 2026-08-30T05:30:44Z
+
+--- Guardrails (scripts/check-no-csharp.ps1) ---
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+--- P5-05 test run: CashierSessionTests (P5-05 section) + CashierSessionsManage matrix (detailed) ---
+  Passed CashierSessionsManage_MatrixMatchesPolicyRegistry [1 s]
+  Passed OpenAsync_FreshCashier_CreatesOpenSession [97 ms]
+  Passed OpenAsync_CashierAlreadyHasOpenSession_ReturnsAlreadyOpen [85 ms]
+  Passed TwoConcurrentOpens_SameCashier_ExactlyOneSucceeds [88 ms]
+  Passed OpenAsync_AfterPriorSessionCloses_Succeeds [90 ms]
+  Passed OpenAsync_OverScaleOpeningFloat_Throws [77 ms]
+  Passed OpenAsync_NegativeOpeningFloat_Throws [70 ms]
+  Passed OpenCashierSession_OverScaleOpeningFloat_Refused400 [249 ms]
+  Passed OpenCashierSession_AlreadyOpen_Refused409 [233 ms]
+  Passed CloseAsync_OpenSession_ClosesAndRecordsActor [81 ms]
+  Passed CloseAsync_AlreadyClosed_ReturnsNotOpen [84 ms]
+  Passed CloseAsync_UnknownId_ReturnsNotFound [75 ms]
+  Passed CloseAsync_ClosedSession_RemainsFullyReadable [90 ms]
+  Passed OpenAsync_WritesAuditRow [89 ms]
+  Passed CloseAsync_WritesAuditRow [89 ms]
+  Passed OpenAsync_RepeatedIdempotencyKey_ReplaysOriginal [82 ms]
+  Passed CloseAsync_RepeatedIdempotencyKey_ReplaysOriginal [90 ms]
+  Passed CloseAsync_NoSales_ClosesCleanlyWithZeroTotals [98 ms]
+  Passed CloseAsync_ComputesCalculatedCashFromCommittedCashPayments [119 ms]
+  Passed CloseAsync_BreaksDownTotalsByPaymentMethod [109 ms]
+  Passed CloseAsync_VarianceIsStoredAtClosingTime_NotRecomputedLater [97 ms]
+  Passed CloseCashierSession_IgnoresClientSuppliedCalculatedCash [276 ms]
+  Passed CloseCashierSession_OverScaleDeclaredCash_Refused400 [233 ms]
+Test Run Successful.
+Total tests: 23
+     Passed: 23
+
+--- Full suite (unit + integration) ---
+=== Guardrails ===
+=== Build ===
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    61, Skipped:     0, Total:    61, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   419, Skipped:     0, Total:   419, Duration: 57 s - Merchandising.Tests.Integration.dll (net10.0)
+All checks passed.

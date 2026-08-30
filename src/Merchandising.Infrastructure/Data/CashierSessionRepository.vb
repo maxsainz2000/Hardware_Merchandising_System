@@ -20,9 +20,30 @@
 ' EVERY WRITE HERE TAKES A TRANSACTION, WITH NO OPTIONAL OVERLOAD -
 ' CashierSessionService owns it (ADR-006), the same arrangement every other
 ' repository in this solution uses.
+'
+' P5-05: MarkClosedAsync now also sets DeclaredCash/CalculatedCash/
+' CashVariance, computed once by CashierSessionService.CloseAsync and stored
+' here - never recomputed by a later read, the same "computed once, inside
+' the transaction, and stored" rule StockCountService.RecordLineAsync already
+' applies to a count line's own Variance.
+'
+' GetPaymentTotalsAsync IS A PLAIN, NON-LOCKING READ - it has nothing to
+' lock. It always returns one row per Merchandising.Domain.Sales.PaymentMethod
+' name, COALESCEd to 0.0000 for a method with no committed SalePayments
+' rows against this session (card Done-when box 4: "a session with no sales
+' closes cleanly with zero totals"). Safe to call for a session that is
+' still Open - no sale can ever attach to a session that later Closes and
+' then un-Closes, so recomputing this on every read (CashierSessionService's
+' ToResponse does, for a Closed session) can never disagree with what was
+' true at close time. The persisted CalculatedCash column above is the one
+' exception that is NOT safe to recompute this way - see CloseAsync's
+' header for why it is captured once instead.
 
+Imports System.Collections.Generic
+Imports System.Linq
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports Merchandising.Domain.Sales
 Imports MySqlConnector
 
 Namespace Data
@@ -96,20 +117,22 @@ Namespace Data
         End Function
 
         ''' <summary>
-        ''' Moves a locked (Open) session to Closed. Always called after
-        ''' <see cref="GetForUpdateAsync"/> has already locked and confirmed
-        ''' the row within the same transaction, so the affected-row count
-        ''' here is a defensive check, not the mechanism that prevents a lost
-        ''' update - the row lock is (same arrangement as
-        ''' AdjustmentRepository.MarkAppliedAsync). DeclaredCash/CalculatedCash/
-        ''' CashVariance are P5-05's columns to set, in the same UPDATE it
-        ''' extends this one into - untouched here.
+        ''' Moves a locked (Open) session to Closed, storing the
+        ''' already-computed declared cash, calculated cash and variance.
+        ''' Always called after <see cref="GetForUpdateAsync"/> has already
+        ''' locked and confirmed the row within the same transaction, so the
+        ''' affected-row count here is a defensive check, not the mechanism
+        ''' that prevents a lost update - the row lock is (same arrangement
+        ''' as AdjustmentRepository.MarkAppliedAsync).
         ''' </summary>
         Public Shared Async Function MarkClosedAsync(
             connection As MySqlConnection,
             transaction As MySqlTransaction,
             id As Integer,
             closedByUserId As Integer,
+            declaredCash As Decimal,
+            calculatedCash As Decimal,
+            cashVariance As Decimal,
             closedAtUtc As DateTime,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
 
@@ -119,17 +142,65 @@ Namespace Data
                     "UPDATE CashierSessions " &
                     "   SET Status = 'Closed', " &
                     "       ClosedByUserId = @closedByUserId, " &
+                    "       DeclaredCash = @declaredCash, " &
+                    "       CalculatedCash = @calculatedCash, " &
+                    "       CashVariance = @cashVariance, " &
                     "       ClosedAtUtc = @closedAtUtc, " &
                     "       RowVersion = RowVersion + 1, " &
                     "       UpdatedAtUtc = @closedAtUtc " &
                     " WHERE Id = @id;"
                 command.Parameters.AddWithValue("@closedByUserId", closedByUserId)
+                command.Parameters.AddWithValue("@declaredCash", declaredCash)
+                command.Parameters.AddWithValue("@calculatedCash", calculatedCash)
+                command.Parameters.AddWithValue("@cashVariance", cashVariance)
                 command.Parameters.AddWithValue("@closedAtUtc", closedAtUtc)
                 command.Parameters.AddWithValue("@id", id)
 
                 Dim affectedRows As Integer = Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
                 Return affectedRows = 1
             End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Sums committed SalePayments.Amount by Method for every sale
+        ''' attached to <paramref name="sessionId"/>, one row per
+        ''' <see cref="PaymentMethod"/> name, COALESCEd to 0.0000 for a
+        ''' method with no rows - see this class's header for why this is
+        ''' safe to call outside a transaction, and why it is a DIFFERENT
+        ''' guarantee than the persisted CalculatedCash column.
+        ''' </summary>
+        Public Shared Async Function GetPaymentTotalsAsync(
+            connection As MySqlConnection,
+            sessionId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional transaction As MySqlTransaction = Nothing) As Task(Of IReadOnlyList(Of (Method As String, Amount As Decimal)))
+
+            Dim totals As New Dictionary(Of String, Decimal)(StringComparer.Ordinal)
+            For Each methodName As String In [Enum].GetNames(GetType(PaymentMethod))
+                totals(methodName) = 0D
+            Next
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "SELECT sp.Method, SUM(sp.Amount) " &
+                    "  FROM SalePayments sp " &
+                    "  JOIN Sales s ON s.Id = sp.SaleId " &
+                    " WHERE s.CashierSessionId = @sessionId " &
+                    " GROUP BY sp.Method;"
+                command.Parameters.AddWithValue("@sessionId", sessionId)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        totals(reader.GetString(0)) = reader.GetDecimal(1)
+                    End While
+                End Using
+            End Using
+
+            Return [Enum].GetNames(GetType(PaymentMethod)).
+                Select(Function(methodName) (Method:=methodName, Amount:=totals(methodName))).
+                ToList()
 
         End Function
 

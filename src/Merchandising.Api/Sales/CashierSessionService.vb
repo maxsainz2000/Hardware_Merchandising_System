@@ -17,10 +17,21 @@
 '                "as if it never happened" shape AdjustmentService.RequestAsync's
 '                InsufficientStock rollback uses) and reports AlreadyOpen.
 '   CloseAsync - the row must be locked and Open
-'                (CashierSessionRepository.GetForUpdateAsync). Flips it to
-'                Closed with the closing actor and timestamp - nothing
-'                else. DeclaredCash/CalculatedCash/CashVariance are P5-05's
-'                columns to set, extending this same method.
+'                (CashierSessionRepository.GetForUpdateAsync). Computes
+'                CalculatedCash from committed SalePayments (P5-05, spec
+'                section 10.3's closing paragraph) - NEVER from anything the
+'                client sent (CloseCashierSessionRequest carries no such
+'                field at all - see its own header) - and stores
+'                DeclaredCash/CalculatedCash/CashVariance = Declared -
+'                Calculated in the SAME UPDATE that flips Status to Closed,
+'                once, with the closing actor and timestamp. Those three
+'                values are never recomputed by a later read (ToResponse
+'                reads them back from the row, not by re-querying
+'                SalePayments) - the same "computed once, stored" rule
+'                StockCountService.RecordLineAsync already applies to a
+'                count line's Variance, and for the identical reason:
+'                DeclaredCash is a one-time physical count, not a fact the
+'                database can rederive later.
 '
 ' UNEXPECTED EXCEPTIONS ARE DELIBERATELY NOT CAUGHT (the duplicate-key catch
 ' below is narrowly scoped to ErrorCode = DuplicateKeyEntry, nothing else),
@@ -28,12 +39,15 @@
 ' identical arrangement every other service in this solution uses
 ' (ReceivingService's header explains the mechanism in full).
 
+Imports System.Collections.Generic
 Imports System.Data
+Imports System.Linq
 Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports Merchandising.Contracts.Sales
 Imports Merchandising.Domain
+Imports Merchandising.Domain.Sales
 Imports Merchandising.Infrastructure.Data
 Imports MySqlConnector
 
@@ -124,7 +138,8 @@ Namespace Sales
                 Dim locked = Await CashierSessionRepository.GetByIdAsync(
                     connection, sessionId, cancellationToken, transaction).ConfigureAwait(False)
 
-                Dim response As CashierSessionResponse = ToResponse(locked)
+                Dim response As CashierSessionResponse =
+                    Await ToResponseAsync(connection, transaction, locked, cancellationToken).ConfigureAwait(False)
 
                 Await AuditLogWriter.WriteAsync(
                     connection, openedByUserId, AuditActionOpened, sessionId.ToString(), "Success", correlationId,
@@ -143,13 +158,28 @@ Namespace Sales
 
         End Function
 
-        ''' <summary>Closes an Open session. A Closed session is immutable from here - it may never be closed again.</summary>
+        ''' <summary>
+        ''' Closes an Open session. A Closed session is immutable from here -
+        ''' it may never be closed again. <paramref name="declaredCash"/> must
+        ''' already be at storage scale - the caller's responsibility to
+        ''' refuse a malformed request before reaching this method
+        ''' (ADR-004.1), re-asserted here as a hard precondition.
+        ''' </summary>
         Public Async Function CloseAsync(
             sessionId As Integer,
             closedByUserId As Integer,
+            declaredCash As Decimal,
             correlationId As String,
             idempotencyKey As String,
             Optional cancellationToken As CancellationToken = Nothing) As Task(Of CashierSessionOutcome)
+
+            DecimalScaleGuard.EnsureMoneyScale(declaredCash)
+
+            If declaredCash < 0D Then
+                Throw New ArgumentException(
+                    "Declared cash cannot be negative. The caller is responsible for refusing that with a " &
+                    "field-level validation error before reaching this method.", NameOf(declaredCash))
+            End If
 
             Using connection As MySqlConnection =
                 Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
@@ -182,11 +212,24 @@ Namespace Sales
                     Return CashierSessionOutcome.NotOpen()
                 End If
 
+                ' Computed from committed SalePayments rows ONLY - never from
+                ' anything the client sent (card Done-when box 1;
+                ' CloseCashierSessionRequest carries no CalculatedCash field
+                ' at all - see its own header).
+                Dim paymentTotals =
+                    Await CashierSessionRepository.GetPaymentTotalsAsync(
+                        connection, sessionId, cancellationToken, transaction).ConfigureAwait(False)
+
+                Dim calculatedCash As Decimal =
+                    paymentTotals.First(Function(t) String.Equals(t.Method, NameOf(PaymentMethod.Cash), StringComparison.Ordinal)).Amount
+                Dim cashVariance As Decimal = declaredCash - calculatedCash
+
                 Dim closedAtUtc As DateTime = DateTime.UtcNow
 
                 Dim closed As Boolean =
                     Await CashierSessionRepository.MarkClosedAsync(
-                        connection, transaction, sessionId, closedByUserId, closedAtUtc, cancellationToken).ConfigureAwait(False)
+                        connection, transaction, sessionId, closedByUserId, declaredCash, calculatedCash, cashVariance,
+                        closedAtUtc, cancellationToken).ConfigureAwait(False)
 
                 If Not closed Then
                     Throw New InvalidOperationException(
@@ -197,10 +240,12 @@ Namespace Sales
                 Dim reloaded = Await CashierSessionRepository.GetByIdAsync(
                     connection, sessionId, cancellationToken, transaction).ConfigureAwait(False)
 
-                Dim response As CashierSessionResponse = ToResponse(reloaded)
+                Dim response As CashierSessionResponse =
+                    Await ToResponseAsync(connection, transaction, reloaded, cancellationToken).ConfigureAwait(False)
 
                 Await AuditLogWriter.WriteAsync(
                     connection, closedByUserId, AuditActionClosed, sessionId.ToString(), "Success", correlationId,
+                    detail:=$"DeclaredCash={declaredCash}, CalculatedCash={calculatedCash}, CashVariance={cashVariance}",
                     cancellationToken:=cancellationToken, transaction:=transaction).ConfigureAwait(False)
 
                 Await IdempotencyStore.CompleteAsync(
@@ -226,7 +271,11 @@ Namespace Sales
                 Dim found = Await CashierSessionRepository.GetByIdAsync(
                     connection, sessionId, cancellationToken).ConfigureAwait(False)
 
-                Return If(found.Found, ToResponse(found), Nothing)
+                If Not found.Found Then
+                    Return Nothing
+                End If
+
+                Return Await ToResponseAsync(connection, Nothing, found, cancellationToken).ConfigureAwait(False)
 
             End Using
 
@@ -234,11 +283,36 @@ Namespace Sales
 
         ' ----------------------------------------------------------- helpers
 
-        Private Shared Function ToResponse(
+        ''' <summary>
+        ''' Builds the response for one session row. PaymentTotals is
+        ''' populated by a live query against Sales/SalePayments ONLY when
+        ''' the session is Closed - see this class's header, and
+        ''' CashierSessionResponse's, for why that is safe to recompute on
+        ''' every read while CalculatedCash/CashVariance (read back from the
+        ''' row itself, not requeried here) are not.
+        ''' </summary>
+        Private Shared Async Function ToResponseAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
             row As (Found As Boolean, Id As Integer, OpenedByUserId As Integer, ClosedByUserId As Integer?,
                    OpeningFloat As Decimal, DeclaredCash As Decimal?, CalculatedCash As Decimal?, CashVariance As Decimal?,
                    Status As String, OpenedAtUtc As DateTime, ClosedAtUtc As DateTime?,
-                   RowVersion As Long, CreatedAtUtc As DateTime, UpdatedAtUtc As DateTime)) As CashierSessionResponse
+                   RowVersion As Long, CreatedAtUtc As DateTime, UpdatedAtUtc As DateTime),
+            cancellationToken As CancellationToken) As Task(Of CashierSessionResponse)
+
+            Dim paymentTotals As IReadOnlyList(Of CashierSessionPaymentTotalResponse) = Array.Empty(Of CashierSessionPaymentTotalResponse)()
+
+            If String.Equals(row.Status, "Closed", StringComparison.Ordinal) Then
+
+                Dim totals =
+                    Await CashierSessionRepository.GetPaymentTotalsAsync(
+                        connection, row.Id, cancellationToken, transaction).ConfigureAwait(False)
+
+                paymentTotals =
+                    totals.Select(Function(t) New CashierSessionPaymentTotalResponse With {.Method = t.Method, .Amount = t.Amount}).
+                        ToList()
+
+            End If
 
             Return New CashierSessionResponse With {
                 .Id = row.Id,
@@ -253,7 +327,8 @@ Namespace Sales
                 .ClosedAtUtc = row.ClosedAtUtc,
                 .RowVersion = row.RowVersion,
                 .CreatedAtUtc = row.CreatedAtUtc,
-                .UpdatedAtUtc = row.UpdatedAtUtc
+                .UpdatedAtUtc = row.UpdatedAtUtc,
+                .PaymentTotals = paymentTotals
             }
 
         End Function

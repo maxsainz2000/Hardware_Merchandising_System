@@ -94,7 +94,7 @@ Namespace Controllers
             Dim correlationId As String = HttpContext.GetCorrelationId()
             Dim fieldErrors As New Dictionary(Of String, String())
 
-            ValidateIdempotencyKey(request?.IdempotencyKey, fieldErrors)
+            ValidateCloseRequestShape(request, fieldErrors)
 
             If fieldErrors.Count > 0 Then
                 Return ValidationFailed(fieldErrors, correlationId)
@@ -104,7 +104,8 @@ Namespace Controllers
 
             Dim outcome As CashierSessionOutcome =
                 Await _cashierSessionService.CloseAsync(
-                    id, actorUserId, correlationId, request.IdempotencyKey, cancellationToken:=HttpContext.RequestAborted)
+                    id, actorUserId, request.DeclaredCash, correlationId, request.IdempotencyKey,
+                    cancellationToken:=HttpContext.RequestAborted)
 
             Select Case outcome.Kind
 
@@ -147,6 +148,26 @@ Namespace Controllers
             ElseIf Not DecimalScaleGuard.IsAtMoneyScale(request.OpeningFloat) Then
                 fieldErrors("openingFloat") = {
                     $"Opening float must have no more than {DecimalScaleGuard.MoneyScale} decimal places."}
+            End If
+
+            ValidateIdempotencyKey(request.IdempotencyKey, fieldErrors)
+
+        End Sub
+
+        ''' <summary>P5-05: DeclaredCash is the only cash figure this request carries - see CloseCashierSessionRequest's header for why there is no CalculatedCash field to validate.</summary>
+        Private Shared Sub ValidateCloseRequestShape(
+            request As CloseCashierSessionRequest, fieldErrors As Dictionary(Of String, String()))
+
+            If request Is Nothing Then
+                fieldErrors("request") = {"A request body is required."}
+                Return
+            End If
+
+            If request.DeclaredCash < 0D Then
+                fieldErrors("declaredCash") = {"Declared cash cannot be negative."}
+            ElseIf Not DecimalScaleGuard.IsAtMoneyScale(request.DeclaredCash) Then
+                fieldErrors("declaredCash") = {
+                    $"Declared cash must have no more than {DecimalScaleGuard.MoneyScale} decimal places."}
             End If
 
             ValidateIdempotencyKey(request.IdempotencyKey, fieldErrors)

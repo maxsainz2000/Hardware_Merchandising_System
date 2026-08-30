@@ -177,7 +177,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-04-cashier-sessions.txt`
 
-### ⬜ P5-05 · Daily closing — declared vs. calculated, with variance
+### ✅ P5-05 · Daily closing — declared vs. calculated, with variance
 
 **Spec:** §10.3, §14 · **Files:** `src/Merchandising.Api/Sales/CashierSessionService.vb`, `src/Merchandising.Infrastructure/Data/CashierSessionRepository.vb`
 
@@ -185,11 +185,11 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Calculated cash is computed from committed `SalePayments` rows, never from a client figure — asserted by sending a wrong client total and confirming it is ignored, not merely by not sending one
-- [ ] Variance is stored as declared − calculated **at closing time**, not recomputed later, for the same reason P4-03's count variance is
-- [ ] Totals are broken down by payment method, and card/e-wallet rows are labelled as **recorded, not authorised** (G-24 — the wording is P5-12's to assert, the data shape is this card's)
-- [ ] A session with no sales closes cleanly with zero totals rather than failing
-- [ ] **Matrix suite extended**; integration suite green
+- [x] Calculated cash is computed from committed `SalePayments` rows, never from a client figure — asserted by sending a wrong client total and confirming it is ignored, not merely by not sending one
+- [x] Variance is stored as declared − calculated **at closing time**, not recomputed later, for the same reason P4-03's count variance is
+- [x] Totals are broken down by payment method, and card/e-wallet rows are labelled as **recorded, not authorised** (G-24 — the wording is P5-12's to assert, the data shape is this card's)
+- [x] A session with no sales closes cleanly with zero totals rather than failing
+- [x] **Matrix suite extended**; integration suite green
 
 **Evidence:** `evidence/phase-5/p5-05-daily-closing.txt`
 

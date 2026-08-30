@@ -4,6 +4,31 @@
 ' CashierSessionsController routes, proven against the real pinned MariaDB -
 ' spec section 10.3's "A sale requires an open cashier session."
 '
+' P5-05 (added below, ahead of the box list): daily closing - declared vs.
+' calculated, with variance. Track D's atomic sale (P5-07+) does not exist
+' yet, so every SalePayments row this file needs is seeded directly against
+' the real Sales/SalePayments tables (SeedSaleWithPaymentAsync), the same
+' "seed the schema layer directly, ahead of the writer command" shape
+' PosSchemaTests already uses for the same tables:
+'
+'   P5-05 box 1   CalculatedCash is computed from committed SalePayments
+'                 rows only - never from anything the client sends.
+'                 CloseCashierSessionRequest carries no CalculatedCash field
+'                 at all (see its own header), so this is proven by sending
+'                 a spoofed "calculatedCash" property in a hand-built JSON
+'                 body and confirming the server's own figure wins, not
+'                 merely by never sending one.
+'   P5-05 box 2   CashVariance = Declared - Calculated is stored once, at
+'                 closing time, and never recomputed by a later read - even
+'                 when the underlying SalePayments rows are (synthetically,
+'                 since this session is closed and no real sale could ever
+'                 attach to it again) changed afterward.
+'   P5-05 box 3   PaymentTotals breaks totals down by Cash/Card/EWallet -
+'                 every Merchandising.Domain.Sales.PaymentMethod name is
+'                 present, 0.0000 for one never used.
+'   P5-05 box 4   A session with no sales at all closes cleanly with every
+'                 total at zero, rather than failing.
+'
 ' Role gating (CashierSessions.Manage resolves to the roles PolicyRegistry
 ' says it does) is AuthorizationMatrixTests' job. This file proves the
 ' BEHAVIOUR:
@@ -157,7 +182,7 @@ Public Class CashierSessionTests
         Assert.AreEqual(CashierSessionOutcomeKind.Created, opened.Kind)
 
         Dim closed As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
         Assert.AreEqual(CashierSessionOutcomeKind.Created, closed.Kind)
 
         Dim reopened As CashierSessionOutcome =
@@ -263,7 +288,7 @@ Public Class CashierSessionTests
             Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
 
         Dim closed As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
 
         Assert.AreEqual(CashierSessionOutcomeKind.Created, closed.Kind)
         Assert.AreEqual("Closed", closed.Session.Status)
@@ -283,11 +308,11 @@ Public Class CashierSessionTests
             Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
 
         Dim firstClose As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
         Assert.AreEqual(CashierSessionOutcomeKind.Created, firstClose.Kind)
 
         Dim secondClose As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
         Assert.AreEqual(CashierSessionOutcomeKind.NotOpen, secondClose.Kind)
 
     End Function
@@ -296,7 +321,7 @@ Public Class CashierSessionTests
     Public Async Function CloseAsync_UnknownId_ReturnsNotFound() As Task
 
         Dim outcome As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(999999999, Await CreateFixtureCashierAsync(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(999999999, Await CreateFixtureCashierAsync(), 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
 
         Assert.AreEqual(CashierSessionOutcomeKind.NotFound, outcome.Kind)
 
@@ -311,7 +336,7 @@ Public Class CashierSessionTests
         Dim opened As CashierSessionOutcome =
             Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
         Dim closed As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
 
         Dim read As CashierSessionResponse = Await _cashierSessionService.GetAsync(opened.Session.Id)
 
@@ -352,7 +377,7 @@ Public Class CashierSessionTests
 
         Dim correlationId As String = Guid.NewGuid().ToString()
         Dim closed As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, correlationId, Guid.NewGuid().ToString())
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, correlationId, Guid.NewGuid().ToString())
         Assert.AreEqual(CashierSessionOutcomeKind.Created, closed.Kind)
 
         Assert.AreEqual(1L, Await CountAuditRowsAsync(correlationId, "CashierSessionClosed", cashierUserId))
@@ -391,12 +416,195 @@ Public Class CashierSessionTests
         Dim idempotencyKey As String = Guid.NewGuid().ToString()
 
         Dim first As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), idempotencyKey)
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), idempotencyKey)
         Assert.AreEqual(CashierSessionOutcomeKind.Created, first.Kind)
 
         Dim second As CashierSessionOutcome =
-            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, Guid.NewGuid().ToString(), idempotencyKey)
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 0D, Guid.NewGuid().ToString(), idempotencyKey)
         Assert.AreEqual(CashierSessionOutcomeKind.Replayed, second.Kind)
+
+    End Function
+
+    ' -------------------------------------------------------------- P5-05 (daily closing)
+
+    ''' <summary>P5-05 box 4: a session with no sales closes cleanly with every total at zero.</summary>
+    <TestMethod>
+    Public Async Function CloseAsync_NoSales_ClosesCleanlyWithZeroTotals() As Task
+
+        Dim cashierUserId As Integer = Await CreateFixtureCashierAsync()
+
+        Dim opened As CashierSessionOutcome =
+            Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Dim closed As CashierSessionOutcome =
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual(CashierSessionOutcomeKind.Created, closed.Kind)
+        Assert.AreEqual(0.0000D, closed.Session.CalculatedCash)
+        Assert.AreEqual(500.0000D, closed.Session.CashVariance, "Declared 500, calculated 0 - variance is the whole declared amount.")
+        Assert.HasCount(3, closed.Session.PaymentTotals, "Every PaymentMethod name must be present, even at zero.")
+        For Each total In closed.Session.PaymentTotals
+            Assert.AreEqual(0.0000D, total.Amount, $"{total.Method} must be zero with no sales.")
+        Next
+
+    End Function
+
+    ''' <summary>P5-05 box 1: CalculatedCash is the sum of committed Cash SalePayments for this session, not a client figure.</summary>
+    <TestMethod>
+    Public Async Function CloseAsync_ComputesCalculatedCashFromCommittedCashPayments() As Task
+
+        Dim cashierUserId As Integer = Await CreateFixtureCashierAsync()
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+
+        Dim opened As CashierSessionOutcome =
+            Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Cash", 25.0000D)
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Cash", 15.5000D)
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Card", 40.0000D)
+
+        Dim closed As CashierSessionOutcome =
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 545.5000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Assert.AreEqual(CashierSessionOutcomeKind.Created, closed.Kind)
+        Assert.AreEqual(40.5000D, closed.Session.CalculatedCash, "25.0000 + 15.5000 - Card is not cash.")
+        Assert.AreEqual(505.0000D, closed.Session.CashVariance, "545.5000 declared - 40.5000 calculated.")
+
+    End Function
+
+    ''' <summary>P5-05 box 3: totals are broken down by every payment method, matching what was actually committed.</summary>
+    <TestMethod>
+    Public Async Function CloseAsync_BreaksDownTotalsByPaymentMethod() As Task
+
+        Dim cashierUserId As Integer = Await CreateFixtureCashierAsync()
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+
+        Dim opened As CashierSessionOutcome =
+            Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Cash", 10.0000D)
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Card", 20.0000D)
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Card", 5.0000D)
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "EWallet", 7.2500D)
+
+        Dim closed As CashierSessionOutcome =
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 10.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+
+        Dim totalsByMethod As Dictionary(Of String, Decimal) =
+            closed.Session.PaymentTotals.ToDictionary(Function(t) t.Method, Function(t) t.Amount)
+
+        Assert.HasCount(3, totalsByMethod, "Every Merchandising.Domain.Sales.PaymentMethod name must be present.")
+        Assert.AreEqual(10.0000D, totalsByMethod("Cash"))
+        Assert.AreEqual(25.0000D, totalsByMethod("Card"), "20.0000 + 5.0000.")
+        Assert.AreEqual(7.2500D, totalsByMethod("EWallet"))
+
+    End Function
+
+    ''' <summary>P5-05 box 2: CashVariance/CalculatedCash are stored at closing time and never recomputed - even a (synthetic) later change to the underlying SalePayments rows leaves a re-read unmoved.</summary>
+    <TestMethod>
+    Public Async Function CloseAsync_VarianceIsStoredAtClosingTime_NotRecomputedLater() As Task
+
+        Dim cashierUserId As Integer = Await CreateFixtureCashierAsync()
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+
+        Dim opened As CashierSessionOutcome =
+            Await _cashierSessionService.OpenAsync(cashierUserId, 500.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Cash", 10.0000D)
+
+        Dim closed As CashierSessionOutcome =
+            Await _cashierSessionService.CloseAsync(opened.Session.Id, cashierUserId, 10.0000D, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Assert.AreEqual(10.0000D, closed.Session.CalculatedCash)
+        Assert.AreEqual(0.0000D, closed.Session.CashVariance)
+
+        ' A real sale could never attach to a Closed session (P5-07 enforces
+        ' that a sale requires an Open one) - this insert is deliberately
+        ' synthetic, to falsify "recomputed later" if it were happening.
+        Await SeedSaleWithPaymentAsync(opened.Session.Id, cashierUserId, productId, "Cash", 1000.0000D)
+
+        Dim reread As CashierSessionResponse = Await _cashierSessionService.GetAsync(opened.Session.Id)
+
+        Assert.AreEqual(10.0000D, reread.CalculatedCash, "CalculatedCash must stay the value stored at closing time.")
+        Assert.AreEqual(0.0000D, reread.CashVariance, "CashVariance must stay the value stored at closing time.")
+
+    End Function
+
+    ''' <summary>The spoofed-field proof for P5-05 box 1: a hand-built JSON body carrying a "calculatedCash" property is simply unmapped - the server's own figure wins.</summary>
+    <TestMethod>
+    Public Async Function CloseCashierSession_IgnoresClientSuppliedCalculatedCash() As Task
+
+        Dim username As String = Await CreateFixtureCashierUsernameAsync()
+        Dim productId As Integer = Await CreateFixtureProductAsync()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, username)
+
+            Dim openBody As New OpenCashierSessionRequest With {
+                .OpeningFloat = 500.0000D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+            Dim sessionId As Integer
+            Using openResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token, openBody)
+                Dim opened As CashierSessionResponse = Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()
+                sessionId = opened.Id
+            End Using
+
+            Dim cashierUserId As Integer = Await ResolveUserIdAsync(username)
+            Await SeedSaleWithPaymentAsync(sessionId, cashierUserId, productId, "Cash", 12.0000D)
+
+            Dim spoofedJson As String =
+                "{""declaredCash"":12.0000,""calculatedCash"":999999.9999,""idempotencyKey"":""" & Guid.NewGuid().ToString("d") & """}"
+
+            Dim request As New HttpRequestMessage(HttpMethod.Post, $"/api/v1/cashier-sessions/{sessionId}/close")
+            request.Headers.Authorization = New AuthenticationHeaderValue("Bearer", token)
+            request.Content = New StringContent(spoofedJson, System.Text.Encoding.UTF8, "application/json")
+
+            Using closeResponse As HttpResponseMessage = Await client.SendAsync(request)
+
+                Assert.AreEqual(HttpStatusCode.OK, closeResponse.StatusCode)
+                Dim closed As CashierSessionResponse = Await closeResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()
+
+                Assert.AreEqual(12.0000D, closed.CalculatedCash, "The server's own computed figure must win over the spoofed client value.")
+                Assert.AreEqual(0.0000D, closed.CashVariance)
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>An over-scale DeclaredCash is refused 400 at the HTTP boundary.</summary>
+    <TestMethod>
+    Public Async Function CloseCashierSession_OverScaleDeclaredCash_Refused400() As Task
+
+        Dim username As String = Await CreateFixtureCashierUsernameAsync()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, username)
+
+            Dim openBody As New OpenCashierSessionRequest With {
+                .OpeningFloat = 500.0000D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+            Dim sessionId As Integer
+            Using openResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token, openBody)
+                Dim opened As CashierSessionResponse = Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()
+                sessionId = opened.Id
+            End Using
+
+            Dim closeBody As New CloseCashierSessionRequest With {
+                .DeclaredCash = 500.00001D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+            Using closeResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/cashier-sessions/{sessionId}/close", token, closeBody)
+
+                Assert.AreEqual(HttpStatusCode.BadRequest, closeResponse.StatusCode)
+                Dim errorBody As ApiErrorResponse = Await closeResponse.Content.ReadFromJsonAsync(Of ApiErrorResponse)()
+                Assert.IsTrue(errorBody.Errors.ContainsKey("declaredCash"))
+
+            End Using
+
+        End Using
 
     End Function
 
@@ -452,6 +660,89 @@ Public Class CashierSessionTests
         Dim migratorFactory As New ConnectionFactory(LoadMigratorOptions())
         Await CreateUserCommand.RunAsync(migratorFactory, username, FixturePassword, "Cashier")
         Return username
+
+    End Function
+
+    Private Async Function ResolveUserIdAsync(username As String) As Task(Of Integer)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Dim user = Await UserRepository.FindByUsernameAsync(connection, username)
+            Return user.Id
+        End Using
+
+    End Function
+
+    ''' <summary>A fresh fixture product - Track D's atomic sale does not exist yet, so this file only ever needs a valid ProductId for SaleLines, never a real price/stock effect.</summary>
+    Private Async Function CreateFixtureProductAsync() As Task(Of Integer)
+
+        Dim sku As String = "p5_05_fixture_sku_" & Guid.NewGuid().ToString("N").Substring(0, 16)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "INSERT INTO Products (Sku, Barcode, Name, Price, Cost, IsActive, CreatedAtUtc, UpdatedAtUtc) " &
+                    "VALUES (@sku, NULL, 'P5-05 Fixture Product', 10.0000, 5.0000, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6));"
+                command.Parameters.AddWithValue("@sku", sku)
+                Await command.ExecuteNonQueryAsync()
+                Return CInt(command.LastInsertedId)
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' Seeds one committed Sale (one line, one payment) attached to
+    ''' <paramref name="sessionId"/> - direct SQL as merch_api (the same
+    ''' identity CashierSessionService itself uses; db/grants/0013 already
+    ''' proved merch_api can INSERT Sales/SaleLines/SalePayments), because
+    ''' Track D's atomic sale endpoint (P5-07+) does not exist yet. Cash
+    ''' carries a matching TenderedAmount/ChangeAmount pair
+    ''' (CK_SalePayments_CashTenderPairing); Card/EWallet carry neither.
+    ''' </summary>
+    Private Async Function SeedSaleWithPaymentAsync(
+        sessionId As Integer, cashierUserId As Integer, productId As Integer, method As String, amount As Decimal) As Task(Of Integer)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+
+            Dim saleId As Integer
+            Using saleCommand As MySqlCommand = connection.CreateCommand()
+                saleCommand.CommandText =
+                    "INSERT INTO Sales (CashierSessionId, CashierUserId, Total, Status, CorrelationId, CreatedAtUtc) " &
+                    "VALUES (@sessionId, @cashierUserId, @amount, 'Completed', @correlationId, UTC_TIMESTAMP(6));"
+                saleCommand.Parameters.AddWithValue("@sessionId", sessionId)
+                saleCommand.Parameters.AddWithValue("@cashierUserId", cashierUserId)
+                saleCommand.Parameters.AddWithValue("@amount", amount)
+                saleCommand.Parameters.AddWithValue("@correlationId", Guid.NewGuid().ToString())
+                Await saleCommand.ExecuteNonQueryAsync()
+                saleId = CInt(saleCommand.LastInsertedId)
+            End Using
+
+            Using lineCommand As MySqlCommand = connection.CreateCommand()
+                lineCommand.CommandText =
+                    "INSERT INTO SaleLines (SaleId, ProductId, Quantity, UnitPrice, Cost, LineTotal, CreatedAtUtc) " &
+                    "VALUES (@saleId, @productId, 1.000, @amount, 5.0000, @amount, UTC_TIMESTAMP(6));"
+                lineCommand.Parameters.AddWithValue("@saleId", saleId)
+                lineCommand.Parameters.AddWithValue("@productId", productId)
+                lineCommand.Parameters.AddWithValue("@amount", amount)
+                Await lineCommand.ExecuteNonQueryAsync()
+            End Using
+
+            Using paymentCommand As MySqlCommand = connection.CreateCommand()
+                Dim isCash As Boolean = String.Equals(method, "Cash", StringComparison.Ordinal)
+                paymentCommand.CommandText =
+                    "INSERT INTO SalePayments (SaleId, Method, Amount, TenderedAmount, ChangeAmount, CreatedAtUtc) " &
+                    "VALUES (@saleId, @method, @amount, @tendered, @change, UTC_TIMESTAMP(6));"
+                paymentCommand.Parameters.AddWithValue("@saleId", saleId)
+                paymentCommand.Parameters.AddWithValue("@method", method)
+                paymentCommand.Parameters.AddWithValue("@amount", amount)
+                paymentCommand.Parameters.AddWithValue("@tendered", If(isCash, CType(amount, Object), DBNull.Value))
+                paymentCommand.Parameters.AddWithValue("@change", If(isCash, CType(0D, Object), DBNull.Value))
+                Await paymentCommand.ExecuteNonQueryAsync()
+            End Using
+
+            Return saleId
+
+        End Using
 
     End Function
 

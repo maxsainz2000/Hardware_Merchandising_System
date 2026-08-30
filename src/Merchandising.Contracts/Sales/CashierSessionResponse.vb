@@ -4,9 +4,18 @@
 ' spec section 10.3). DeclaredCash/CalculatedCash/CashVariance already exist
 ' on CashierSessions (0011_pos.sql - migration 0012 declares them ahead of
 ' the card that drives them, the same StockCounts/StockAdjustments
-' precedent) but stay Nothing until P5-05's daily closing sets them; this
-' card's CloseAsync never touches them.
+' precedent); P5-04's OpenAsync leaves them Nothing, P5-05's CloseAsync sets
+' them, once, and never recomputes them on a later read.
+'
+' PaymentTotals IS NOT A STORED COLUMN (P5-05, card Done-when box 3). It is
+' computed live from Sales/SalePayments every time a response is built for
+' a Closed session (CashierSessionService.ToResponse) - safe because no
+' further sale can ever attach to a session once Closed, so the aggregate
+' can never drift after the fact the way a stored running total could
+' (ADR-021). Empty for an Open session - there is nothing final to report
+' yet.
 
+Imports System.Collections.Generic
 Imports System.Text.Json.Serialization
 
 Namespace Sales
@@ -51,6 +60,10 @@ Namespace Sales
 
         <JsonPropertyName("updatedAtUtc")>
         Public Property UpdatedAtUtc As DateTime
+
+        ''' <summary>Committed totals by payment method. Empty while Open.</summary>
+        <JsonPropertyName("paymentTotals")>
+        Public Property PaymentTotals As IReadOnlyList(Of CashierSessionPaymentTotalResponse) = Array.Empty(Of CashierSessionPaymentTotalResponse)()
 
     End Class
 
