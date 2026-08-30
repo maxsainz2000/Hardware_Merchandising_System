@@ -305,6 +305,12 @@ Public Module Program
         ' GetOpenForUpdateByUserAsync); never a client-supplied session id.
         builder.Services.AddScoped(Of SaleService)()
 
+        ' P5-11 / ADR-006 + ADR-007 + ADR-017 section 6: sales returns -
+        ' Record/ApproveExceptional/RejectExceptional, each its own
+        ' transaction. ApproveExceptional's self-approval veto is enforced
+        ' by SalesReturnsController via IAuthorizationService, never here.
+        builder.Services.AddScoped(Of SalesReturnService)()
+
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.
         builder.Services.AddScoped(Of MaintenanceLockRepository)()

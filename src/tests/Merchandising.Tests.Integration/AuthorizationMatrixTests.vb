@@ -97,7 +97,9 @@ Public Class AuthorizationMatrixTests
         "Merchandising.Api.Controllers.AuthController.Logout",
         "Merchandising.Api.Controllers.SystemSettingsController.GetSettings",
         "Merchandising.Api.Controllers.PurchaseOrdersController.ApprovePurchaseOrder",
-        "Merchandising.Api.Controllers.AdjustmentsController.ApproveAdjustment"
+        "Merchandising.Api.Controllers.AdjustmentsController.ApproveAdjustment",
+        "Merchandising.Api.Controllers.SalesReturnsController.ApproveExceptional",
+        "Merchandising.Api.Controllers.SalesReturnsController.RejectExceptional"
     }
 
     Private Shared ReadOnly AllFiveRoles As String() = {
@@ -1167,6 +1169,133 @@ Public Class AuthorizationMatrixTests
     End Function
 
     ''' <summary>
+    ''' P5-11's return-recording endpoint - SalesReturns.Create's first live
+    ''' route, CashierAndAbove (the same role set as Sales.Create). An
+    ''' allowed role attempts a return against a FRESH sale the shared
+    ''' Cashier fixture completes for it (CompleteFixtureSaleAsync) - never
+    ''' the role under test's own sale, since only Cashier/Admin/SuperAdmin
+    ''' can sell at all and this isolates the RETURN policy's own role
+    ''' dimension. A disallowed role is refused 403 before any sale or line
+    ''' lookup ever runs, so it probes against a SaleLineId that does not
+    ''' exist at all - the same "authorization runs before the action body"
+    ''' reasoning AdjustmentsRequest_MatrixMatchesPolicyRegistry's header
+    ''' does not need to spell out because that command has no not-found
+    ''' path this shallow.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SalesReturnsCreate_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Await CloseAnyOpenFixtureCashierSessionsDirectlyAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.SalesReturnsCreate)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim isAllowed As Boolean = allowedRoles.Contains(roleName)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Dim saleId As Integer = 999999
+                Dim saleLineId As Integer = 999999
+
+                If isAllowed Then
+                    Await ResetStockBalanceDirectlyAsync(productId, 50.000D)
+                    Dim sale = Await CompleteFixtureSaleAsync(client, productId, 1.000D)
+                    saleId = sale.SaleId
+                    saleLineId = sale.SaleLineId
+                End If
+
+                Dim returnBody As New CreateSalesReturnRequest With {
+                    .Reason = $"P5-11 matrix probe ({roleName})",
+                    .RefundMethod = "Cash",
+                    .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                    .Lines = New List(Of CreateSalesReturnLineRequest) From {
+                        New CreateSalesReturnLineRequest With {.SaleLineId = saleLineId, .QuantityReturned = 1.000D, .RestocksItem = True}}
+                }
+
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, $"/api/v1/sales/{saleId}/returns", token, returnBody)
+                    Await AssertCellAsync("SalesReturns.Create", roleName, isAllowed, response)
+                End Using
+
+            Next
+
+            Dim anonymousBody As New CreateSalesReturnRequest With {
+                .Reason = "P5-11 anonymous probe",
+                .RefundMethod = "Cash",
+                .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                .Lines = New List(Of CreateSalesReturnLineRequest) From {
+                    New CreateSalesReturnLineRequest With {.SaleLineId = 999999, .QuantityReturned = 1.000D, .RestocksItem = True}}
+            }
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/sales/999999/returns", token:=Nothing, requestBody:=anonymousBody)
+                Await AssertUnauthenticatedAsync("SalesReturns.Create", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P5-11's approve-exceptional endpoint - SalesReturns.ApproveExceptional's
+    ''' first live route. Every probed return is recorded fresh by the
+    ''' shared Cashier fixture (never in SalesReturns.ApproveExceptional's
+    ''' allowed-role set, AdminAndAbove - so a Cashier probe below is
+    ''' refused for a ROLE reason regardless of who requested it) against a
+    ''' threshold this test fixes to a known small value first - the same
+    ''' "asserted rather than assumed" reasoning
+    ''' AdjustmentsApprove_MatrixMatchesPolicyRegistry's header gives.
+    ''' Self-approval itself is out of this test's scope; this isolates the
+    ''' ROLE dimension only.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function SalesReturnsApproveExceptional_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Await CloseAnyOpenFixtureCashierSessionsDirectlyAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+        Await SetSalesReturnThresholdDirectlyAsync(0.01D)
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.SalesReturnsApproveExceptional)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim requesterToken As String = Await LoginAsync(client, RoleNames.Cashier)
+
+            For Each roleName As String In AllFiveRoles
+
+                Await ResetStockBalanceDirectlyAsync(productId, 50.000D)
+                Dim salesReturnId As Integer = Await RequestPendingSalesReturnAsync(client, productId, requesterToken)
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                Using approveResponse As HttpResponseMessage =
+                    Await SendAsync(
+                        client, HttpMethod.Post, $"/api/v1/sales/returns/{salesReturnId}/approve-exceptional", token,
+                        New ApproveExceptionalSalesReturnRequest With {.RefundMethod = "Cash"})
+                    Await AssertCellAsync("SalesReturns.ApproveExceptional", roleName, allowedRoles.Contains(roleName), approveResponse)
+                End Using
+
+            Next
+
+            Await ResetStockBalanceDirectlyAsync(productId, 50.000D)
+            Dim anonymousSalesReturnId As Integer = Await RequestPendingSalesReturnAsync(client, productId, requesterToken)
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(
+                    client, HttpMethod.Post, $"/api/v1/sales/returns/{anonymousSalesReturnId}/approve-exceptional", token:=Nothing,
+                    requestBody:=New ApproveExceptionalSalesReturnRequest With {.RefundMethod = "Cash"})
+                Await AssertUnauthenticatedAsync("SalesReturns.ApproveExceptional", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
     ''' P5-10 box 2/4: "every route that could mutate a completed sale is
     ''' refused... not spot-checked", the matrix half. SalesController
     ''' declares no {id}-scoped route at all for an existing sale - PUT and
@@ -1732,6 +1861,122 @@ Public Class AuthorizationMatrixTests
 
             Dim created As AdjustmentResponse = Await response.Content.ReadFromJsonAsync(Of AdjustmentResponse)()
             Assert.AreEqual("Pending", created.Status, "Fixture adjustment must be Pending - the threshold fix must have taken effect.")
+            Return created.Id
+
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P5-11: fixes the sales-return approval threshold to a known value
+    ''' via SystemSettingsRepository.UpsertAsync directly - the identical
+    ''' SetAdjustmentThresholdDirectlyAsync shape, money scale rather than
+    ''' quantity scale.
+    ''' </summary>
+    Private Async Function SetSalesReturnThresholdDirectlyAsync(threshold As Decimal) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using transaction As MySqlTransaction = Await connection.BeginTransactionAsync()
+
+                Dim actorUserId As Integer
+                Using actorCommand As MySqlCommand = connection.CreateCommand()
+                    actorCommand.Transaction = transaction
+                    actorCommand.CommandText = "SELECT Id FROM Users WHERE Username = @username;"
+                    actorCommand.Parameters.AddWithValue("@username", FixtureUsername(RoleNames.SuperAdmin))
+                    actorUserId = CInt(Await actorCommand.ExecuteScalarAsync())
+                End Using
+
+                Await SystemSettingsRepository.UpsertAsync(
+                    connection, transaction, SystemSettingRegistry.Keys.SalesReturnApprovalThreshold,
+                    threshold.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture), actorUserId)
+
+                Await transaction.CommitAsync()
+
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' Completes a fresh sale over real HTTP via the shared Cashier
+    ''' fixture - opens a session, sells <paramref name="quantity"/> of
+    ''' <paramref name="productId"/> for a large enough cash tender to
+    ''' always cover the total regardless of the fixture product's current
+    ''' price, then closes the session so no fixture user is left holding
+    ''' one (SalesCreate_MatrixMatchesPolicyRegistry's identical reasoning).
+    ''' </summary>
+    Private Async Function CompleteFixtureSaleAsync(
+        client As HttpClient, productId As Integer, quantity As Decimal) As Task(Of (SaleId As Integer, SaleLineId As Integer))
+
+        Dim sellerToken As String = Await LoginAsync(client, RoleNames.Cashier)
+
+        Dim openBody As New OpenCashierSessionRequest With {.OpeningFloat = 0D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+        Dim sessionId As Integer
+
+        Using openResponse As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", sellerToken, openBody)
+            Assert.AreEqual(
+                HttpStatusCode.Created, openResponse.StatusCode,
+                "Fixture cashier session for P5-11 could not be opened. Body: " & Await openResponse.Content.ReadAsStringAsync())
+            sessionId = (Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()).Id
+        End Using
+
+        Dim saleId As Integer
+        Dim saleLineId As Integer
+
+        Dim saleBody As New CreateSaleRequest With {
+            .IdempotencyKey = Guid.NewGuid().ToString("d"),
+            .Lines = New List(Of CreateSaleLineRequest) From {
+                New CreateSaleLineRequest With {.ProductId = productId, .Quantity = quantity}},
+            .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 1000000.0000D}
+        }
+
+        Using saleResponse As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", sellerToken, saleBody)
+            Assert.AreEqual(
+                HttpStatusCode.Created, saleResponse.StatusCode,
+                "Fixture sale for P5-11 could not be completed. Body: " & Await saleResponse.Content.ReadAsStringAsync())
+            Dim sale As SaleResponse = Await saleResponse.Content.ReadFromJsonAsync(Of SaleResponse)()
+            saleId = sale.Id
+            saleLineId = sale.Lines(0).Id
+        End Using
+
+        Using closeResponse As HttpResponseMessage =
+            Await SendAsync(
+                client, HttpMethod.Post, $"/api/v1/cashier-sessions/{sessionId}/close", sellerToken,
+                New CloseCashierSessionRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")})
+            Assert.AreEqual(HttpStatusCode.OK, closeResponse.StatusCode)
+        End Using
+
+        Return (SaleId:=saleId, SaleLineId:=saleLineId)
+
+    End Function
+
+    ''' <summary>A fresh PendingApproval sales return over real HTTP - a quantity large enough that its refund value clears SetSalesReturnThresholdDirectlyAsync's fixed threshold.</summary>
+    Private Async Function RequestPendingSalesReturnAsync(
+        client As HttpClient, productId As Integer, requesterToken As String) As Task(Of Integer)
+
+        Dim sale = Await CompleteFixtureSaleAsync(client, productId, 5.000D)
+
+        Dim returnBody As New CreateSalesReturnRequest With {
+            .Reason = "P5-11 matrix approve-cell fixture",
+            .RefundMethod = "Cash",
+            .IdempotencyKey = Guid.NewGuid().ToString("d"),
+            .Lines = New List(Of CreateSalesReturnLineRequest) From {
+                New CreateSalesReturnLineRequest With {.SaleLineId = sale.SaleLineId, .QuantityReturned = 5.000D, .RestocksItem = True}}
+        }
+
+        Using response As HttpResponseMessage =
+            Await SendAsync(client, HttpMethod.Post, $"/api/v1/sales/{sale.SaleId}/returns", requesterToken, returnBody)
+
+            Assert.AreEqual(
+                HttpStatusCode.Created, response.StatusCode,
+                "Fixture sales return request must succeed. Body: " & Await response.Content.ReadAsStringAsync())
+
+            Dim created As SalesReturnResponse = Await response.Content.ReadFromJsonAsync(Of SalesReturnResponse)()
+            Assert.AreEqual(
+                "PendingApproval", created.Status,
+                "Fixture sales return must be PendingApproval - the threshold fix must have taken effect.")
             Return created.Id
 
         End Using

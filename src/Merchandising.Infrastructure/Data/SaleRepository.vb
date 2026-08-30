@@ -123,6 +123,24 @@ Namespace Data
 
         End Function
 
+        ''' <summary>P5-11: confirms a Sales row exists before validating its return's lines - the same "confirm first, for a clear NotFound before line-level errors" shape ReceiptRepository.ExistsAsync uses for purchase returns.</summary>
+        Public Shared Async Function ExistsAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            saleId As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Boolean)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText = "SELECT 1 FROM Sales WHERE Id = @id;"
+                command.Parameters.AddWithValue("@id", saleId)
+
+                Dim result As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                Return result IsNot Nothing
+            End Using
+
+        End Function
+
     End Class
 
 End Namespace

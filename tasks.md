@@ -289,7 +289,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Runs after Track D. Files overlap with Track D's service, not with Track F or G.*
 
-### ⬜ P5-11 · Sale returns bounded by sold-minus-prior-returns, with the stock-eligibility flag
+### ✅ P5-11 · Sale returns bounded by sold-minus-prior-returns, with the stock-eligibility flag
 
 **Spec:** §10.3, §11 · **Files:** `src/Merchandising.Api/Controllers/SalesReturnsController.vb`, `src/Merchandising.Api/Sales/SalesReturnService.vb`, `src/Merchandising.Infrastructure/Data/SalesReturnRepository.vb`
 
@@ -297,14 +297,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The bound is computed **server-side** from committed rows, never from a client figure — the P4-08 rule, which also means the request contract carries no product or price field at all
-- [ ] Returning more than sold-minus-prior-returns is refused with a stable code, including when two prior partial returns together exhaust the bound
-- [ ] `RestocksItem = True` writes a stock-in movement and moves the balance; `False` writes **no movement at all** and the bound still accounts for it — both asserted, the P4-08 `RemovesStock` shape
-- [ ] Concurrent returns against the same sale line cannot exceed the bound — proven under real concurrent load, not by two sequential calls
-- [ ] The payment-reversal record says **recorded, not reversed at a bank** (G-24)
-- [ ] `SalesReturns.ApproveExceptional` is a genuinely separate path with a second actor, reusing ADR-017 §6's `IOwnershipResource` mechanism, **not a new check** (the P3-04 / P4-10 precedent is binding)
-- [ ] The P4-01 reconciliation passes after every return
-- [ ] **Matrix suite extended** — `SalesReturns.Create` and `SalesReturns.ApproveExceptional`; integration suite green
+- [x] The bound is computed **server-side** from committed rows, never from a client figure — the P4-08 rule, which also means the request contract carries no product or price field at all
+- [x] Returning more than sold-minus-prior-returns is refused with a stable code, including when two prior partial returns together exhaust the bound
+- [x] `RestocksItem = True` writes a stock-in movement and moves the balance; `False` writes **no movement at all** and the bound still accounts for it — both asserted, the P4-08 `RemovesStock` shape
+- [x] Concurrent returns against the same sale line cannot exceed the bound — proven under real concurrent load, not by two sequential calls
+- [x] The payment-reversal record says **recorded, not reversed at a bank** (G-24)
+- [x] `SalesReturns.ApproveExceptional` is a genuinely separate path with a second actor, reusing ADR-017 §6's `IOwnershipResource` mechanism, **not a new check** (the P3-04 / P4-10 precedent is binding)
+- [x] The P4-01 reconciliation passes after every return
+- [x] **Matrix suite extended** — `SalesReturns.Create` and `SalesReturns.ApproveExceptional`; integration suite green
 
 **Evidence:** `evidence/phase-5/p5-11-sale-returns.txt`
 

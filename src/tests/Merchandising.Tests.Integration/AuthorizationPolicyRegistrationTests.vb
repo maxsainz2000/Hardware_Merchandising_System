@@ -74,12 +74,16 @@ Public Class AuthorizationPolicyRegistrationTests
 
     End Sub
 
-    ''' <summary>PurchaseOrders.Approve and Adjustments.Approve carry SelfApprovalRequirement; nothing else does.</summary>
+    ''' <summary>PurchaseOrders.Approve, Adjustments.Approve and SalesReturns.ApproveExceptional carry SelfApprovalRequirement; nothing else does (P5-11 added the third).</summary>
     <TestMethod>
-    Public Sub OnlyTheTwoApprovalPolicies_CarrySelfApprovalRequirement()
+    Public Sub OnlyTheThreeApprovalPolicies_CarrySelfApprovalRequirement()
 
         Dim options As AuthorizationOptions = BuildOptions()
-        Dim guarded As String() = {PolicyRegistry.Names.PurchaseOrdersApprove, PolicyRegistry.Names.AdjustmentsApprove}
+        Dim guarded As String() = {
+            PolicyRegistry.Names.PurchaseOrdersApprove,
+            PolicyRegistry.Names.AdjustmentsApprove,
+            PolicyRegistry.Names.SalesReturnsApproveExceptional
+        }
 
         For Each definition As PolicyDefinition In PolicyRegistry.Definitions
 

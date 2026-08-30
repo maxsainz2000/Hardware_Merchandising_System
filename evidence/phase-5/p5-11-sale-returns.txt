@@ -1,0 +1,178 @@
+P5-11 - Sale returns bounded by sold-minus-prior-returns, with the
+stock-eligibility flag.
+Spec section 10.3: "A completed-sale return must identify the original sale
+line, cannot exceed the quantity sold minus prior returns, and records
+whether the returned item is eligible to re-enter stock. Payment reversal is
+recorded operationally; no bank or terminal reversal is performed by the
+MVP." Spec section 11's atomic-result row for "Sale returned" (return, return
+lines, operational payment-reversal record, eligible stock-in movement,
+balance change, audit event).
+
+Captured 2026-08-30 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0).
+
+===============================================================================
+0. The design decision this card required, confirmed before writing code
+===============================================================================
+
+Spec section 9 names "returns above a threshold" as a policy-gated operation
+but never states the threshold's UNIT. The only precedent (AdjustmentApprovalThreshold,
+P4-10) is a quantity. Confirmed with the user rather than decided silently
+(the same ADR-017 P3-05 addendum precedent CLAUDE.md section 7 item 4
+requires): the threshold is measured against the return's total REFUND VALUE
+(money, DECIMAL(19,4)), not the returned quantity. Recorded as
+Merchandising.Domain.Sales.SalesReturnThresholdPolicy and a new SystemSettings
+key, sales.returnApprovalThreshold (default 5000.0000).
+
+===============================================================================
+1. Box 1 - the bound is computed server-side, including two prior partials
+===============================================================================
+
+SalesReturnRepository.GetSaleLineForUpdateAsync locks the SaleLines row
+(SELECT ... FOR UPDATE - SaleLines has no UPDATE grant, only SELECT, the same
+ReceiptLines/PurchaseReturnRepository precedent); GetPriorReturnedQuantityAsync
+sums every non-Rejected sibling SalesReturnLines row for that line.
+
+  Passed RecordAsync_OverReturned_Refused [65 ms]
+  Passed RecordAsync_TwoPriorPartialReturnsExhaustBound_ThirdRefused [116 ms]
+  Passed RecordAsync_SaleLineBelongsToDifferentSale_Refused [61 ms]
+
+===============================================================================
+2. Box 2 - RestocksItem=True writes a movement; False writes none, bound still counts it
+===============================================================================
+
+  Passed RecordAsync_RestocksItemTrue_WritesMovementAndUpdatesBalance [78 ms]
+  Passed RecordAsync_RestocksItemFalse_WritesNoMovementButBoundStillAccounts [91 ms]
+
+RecordAsync_RestocksItemFalse_WritesNoMovementButBoundStillAccounts proves
+both halves in one test: a False-flagged return of 3.000 leaves the balance
+and StockMovements untouched, then a further return of 2.001 against the
+same line (only 2.000 remains: 5.000 sold - 3.000 already returned) is
+refused OverReturned, and exactly 2.000 succeeds.
+
+===============================================================================
+3. Box 3 - concurrent returns against the same line cannot exceed the bound
+===============================================================================
+
+Five simultaneous 2.000-quantity returns against a sale line holding exactly
+5.000 sold (the P1-13/P4-08 "launch every task, then await" shape):
+
+  P5-11 concurrency distribution -> created:2 overReturned:3
+  Passed RecordAsync_ConcurrentReturnsAgainstSameLine_CannotExceedBound [388 ms]
+
+Exactly 2 commit (4.000 total, the most that fits under 5.000 at 2.000 per
+attempt); the other 3 are refused OverReturned; none throws an unexpected
+exception. Total committed quantity asserted <= 5.000 and reconciled against
+the append-only ledger.
+
+===============================================================================
+4. Box 4 - the refund record never claims an external reversal (G-24)
+===============================================================================
+
+  Passed RecordAsync_RefundRecord_NeverClaimsExternalReversal [42 ms]
+
+Asserts the serialized SalesReturnResponse contains none of "Reversed",
+"Bank", "Terminal", "Authorized"/"Authorised" - the fields are named
+RefundMethod/RefundAmount, recorded operationally, never a claim of external
+settlement. (Wording verification in the UI and reports themselves is P5-12's
+job, per tasks.md; this is the API contract's own half.)
+
+===============================================================================
+5. Box 5 - threshold routing: Completed immediately, or PendingApproval with no effects
+===============================================================================
+
+  Passed RecordAsync_BelowThreshold_CompletesImmediately [38 ms]
+  Passed RecordAsync_AtOrAboveThreshold_LandsPendingApprovalWithNoStockOrRefundEffect [50 ms]
+
+Below threshold: Status=Completed, RefundMethod/RefundAmount set, no
+approver, stock effect applied in the same transaction. At/above: Status=
+PendingApproval, RefundMethod/RefundAmount BOTH Nothing, no approver, and
+NEITHER the balance NOR StockMovements changed at all - CLAUDE.md section 5's
+atomicity rule applied to the deferred half (0012's own migration comment:
+these two columns stay null until Completed, whichever path reaches it).
+
+===============================================================================
+6. Box 6 - SalesReturns.ApproveExceptional reuses ADR-017 section 6, not a new check
+===============================================================================
+
+Two real defects were found and fixed while proving this box - both recorded
+in docs/adr.md's P5-11 addendum to ADR-017, not just here:
+
+  (a) AuthorizationPolicyRegistration.vb's own header, written at P2-02
+      before SalesReturns existed, asserted "SalesReturns.ApproveExceptional
+      has no self-approval rule" - false once P5-02's actual role sets are
+      checked (CashierAndAbove and AdminAndAbove both include Admin/
+      SuperAdmin). Fixed: SalesReturns.ApproveExceptional now carries
+      SelfApprovalRequirement, SalesReturn implements IOwnershipResource on
+      ReturnedByUserId, and SalesReturnsController.ApproveExceptional
+      follows AdjustmentsController.ApproveAdjustment's exact imperative
+      shape (role check, then IAuthorizationService.AuthorizeAsync with the
+      loaded resource).
+
+  (b) SalesReturnsController.RejectExceptional was first written with the
+      SAME declarative <Authorize(Policy:=...)> shape
+      AdjustmentsController.RejectAdjustment already uses in production.
+      Once the policy carried SelfApprovalRequirement, that shape refused
+      EVERY caller 403 regardless of role - ASP.NET Core never supplies an
+      IOwnershipResource to a declarative attribute's policy evaluation, so
+      the resource-typed handler never runs and the requirement is never
+      satisfied. RejectExceptional_PendingReturn_RejectsWithNoStockOrRefundEffect
+      caught this immediately (an Admin fixture, unambiguously allowed, got
+      403). Fixed the same way as (a)'s controller action: plain
+      <Authorize>, role check only, no AuthorizeAsync call (no veto wanted
+      for reject). AdjustmentsController.RejectAdjustment almost certainly
+      carries the identical latent defect - no test in this codebase drives
+      it over real HTTP with an allowed role expecting success - but fixing
+      it is out of this card's file list and is recorded in the ADR
+      addendum for a future card or standalone fix, not silently patched
+      here.
+
+  Passed OnlyTheThreeApprovalPolicies_CarrySelfApprovalRequirement [< 1 ms]
+  Passed ApproveExceptional_SameUserAsRequester_Refused403AndAudited [289 ms]
+  Passed ApproveExceptional_DifferentAuthorizedUser_SucceedsAndAppliesDeferredStockEffect [363 ms]
+  Passed ApproveExceptional_RoleNotAllowed_StillRefused403 [301 ms]
+  Passed RejectExceptional_PendingReturn_RejectsWithNoStockOrRefundEffect [294 ms]
+  Passed EveryDefinition_ResolvesToExactlyOneRegisteredPolicy [3 ms]
+  Passed RestorePolicy_DoesNotGrantAdmin [< 1 ms]
+  Passed RestorePolicy_IsNotTheSamePolicyObjectAsConfigurationManage [< 1 ms]
+  Passed EveryControllerAction_DeclaresAllowAnonymousOrARegisteredPolicy [566 ms]
+
+===============================================================================
+7. Matrix suite extended - SalesReturns.Create and SalesReturns.ApproveExceptional
+===============================================================================
+
+  Passed SalesReturnsCreate_MatrixMatchesPolicyRegistry [2 s]
+  Passed SalesReturnsApproveExceptional_MatrixMatchesPolicyRegistry [1 s]
+
+Both walk all five roles plus an anonymous caller against real HTTP,
+resolving expected access from PolicyRegistry.Definitions itself rather than
+a hard-coded second copy - the same shape every other *_MatrixMatchesPolicyRegistry
+test in that file uses.
+
+===============================================================================
+8. P4-01 reconciliation passes after every return
+===============================================================================
+
+Every RecordAsync/ApproveExceptional/box test above that moves stock calls
+AssertLedgerReconcilesAsync (LedgerReconciliation.FindDiscrepanciesAsync)
+immediately afterward - no discrepancy found for any product this file
+touches.
+
+===============================================================================
+9. Full suite, clean build
+===============================================================================
+
+pwsh ./scripts/check-no-csharp.ps1
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+dotnet build
+  0 Warning(s)
+  0 Error(s)
+
+pwsh ./scripts/run-tests.ps1
+  Passed!  - Failed: 0, Passed: 61,  Skipped: 0, Total: 61  - Merchandising.Tests.Unit.dll (net10.0)
+  Passed!  - Failed: 0, Passed: 465, Skipped: 0, Total: 465 - Merchandising.Tests.Integration.dll (net10.0)

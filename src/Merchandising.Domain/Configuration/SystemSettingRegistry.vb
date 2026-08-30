@@ -65,6 +65,7 @@ Namespace Configuration
             Public Const CurrencyCode As String = "currency.code"
             Public Const CurrencyRoundingPolicy As String = "currency.roundingPolicy"
             Public Const AdjustmentApprovalThreshold As String = "inventory.adjustmentThreshold"
+            Public Const SalesReturnApprovalThreshold As String = "sales.returnApprovalThreshold"
         End Class
 
         ''' <summary>The two rounding policy names this system recognizes - the two <see cref="MidpointRounding"/> members .NET actually offers.</summary>
@@ -101,6 +102,12 @@ Namespace Configuration
                 "10.000",
                 AddressOf ValidateAdjustmentApprovalThreshold,
                 "A non-negative quantity, DECIMAL(19,3) scale. A stock adjustment whose |variance| is at or above this value requires a second person's approval."))
+
+            collected.Add(New SystemSettingDefinition(
+                Keys.SalesReturnApprovalThreshold,
+                "5000.0000",
+                AddressOf ValidateSalesReturnApprovalThreshold,
+                "A non-negative money amount, DECIMAL(19,4) scale. A sales return whose total refund value is at or above this value requires SalesReturns.ApproveExceptional (P5-11)."))
 
             Return collected.AsReadOnly()
 
@@ -148,6 +155,27 @@ Namespace Configuration
 
             If Not DecimalScaleGuard.IsAtQuantityScale(parsed) Then
                 Return $"The adjustment approval threshold must have no more than {DecimalScaleGuard.QuantityScale} decimal places."
+            End If
+
+            Return Nothing
+
+        End Function
+
+        ''' <summary>ADR-004.1: a stored setting value is text, so its own scale must be validated the same way an API-boundary money amount is - never trusted just because it parses.</summary>
+        Private Shared Function ValidateSalesReturnApprovalThreshold(value As String) As String
+
+            Dim parsed As Decimal
+
+            If Not Decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, parsed) Then
+                Return "The sales-return approval threshold must be a decimal number."
+            End If
+
+            If parsed < 0D Then
+                Return "The sales-return approval threshold cannot be negative."
+            End If
+
+            If Not DecimalScaleGuard.IsAtMoneyScale(parsed) Then
+                Return $"The sales-return approval threshold must have no more than {DecimalScaleGuard.MoneyScale} decimal places."
             End If
 
             Return Nothing
