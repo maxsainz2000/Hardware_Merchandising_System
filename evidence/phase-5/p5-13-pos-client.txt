@@ -161,9 +161,178 @@ surfaced verbatim, client-side validation posture, the mouse-free assertion,
 and the keyboard-navigation/1366x768@125% assertion - five of this card's six
 Done-when boxes, ticked in tasks.md.
 
-STILL OPEN: the sixth box, the authenticated pass itself. tasks.md's own card
-is left 🟡, not rounded up to done, per CLAUDE.md section 9 - "never mark a
-card done with ... an unresolved error." Once the redeploy in section 3 has
-run, the nine operations should be driven through the real MainViewModel
-against the real service, in the P4-15 shape, and this file replaced with the
-run of record - the account in section 4 is what that pass will sign in with.
+THE SIXTH BOX CLOSES AT SECTION 6, BELOW, once the operator's elevated
+redeploy landed. This card and tasks.md are no longer left 🟡.
+
+===============================================================================
+6. THE PASS, AFTER THE REDEPLOY - the run of record
+===============================================================================
+
+The operator ran the exact remedy section 3 named, in an elevated PowerShell
+7 session:
+
+  Stop-Service MerchandisingApi -Force
+  pwsh ./scripts/publish-release.ps1 -Component Api -Mode SelfContained -OutputRoot C:\MerchandisingService
+  pwsh ./scripts/install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc
+
+Verified directly, before touching anything else - the same lesson section 2
+already recorded, applied a second time rather than trusted on report:
+
+  Get-CimInstance Win32_Service -Filter "Name='MerchandisingApi'" -> Running, StartMode Auto
+  (Get-Item C:\MerchandisingService\Api-sc\Merchandising.Api.exe).LastWriteTime -> 2026-08-30 21:18:42
+  GET  https://MERCH-HOST:8443/health                      -> 200
+  POST https://MERCH-HOST:8443/api/v1/cashier-sessions      -> 401 UNAUTHORIZED (was 404 in section 2)
+
+The 404-to-401 flip is the proof that matters: the route now exists and is
+merely refusing an unauthenticated caller, exactly what an authenticated pass
+should find before it signs in.
+
+THE ACCOUNT. Section 4's `p5_13_client_pass` (Id 9808) was created in a prior
+session; its password was chosen at creation time and was never written
+anywhere this session can read (ADR-012 requirement 6's own discipline,
+applied to a self-created account exactly as to the seeded ones). Rather than
+guess or weaken that discipline, a second Cashier account was created through
+the same sanctioned mechanism (ADR-017 section 4):
+
+  Merchandising.Maintenance.exe create-user p5_15_client_pass <password> Cashier
+    -> Created user 'p5_15_client_pass' (Id 10778) with role 'Cashier'.
+
+p5_13_client_pass (Id 9808) is left in place, unused - an orphaned prep
+account, not a defect; deleting user rows is outside this card's scope and no
+Done-when box asks for it.
+
+THE HARNESS. Built outside the repository (this session's own CARRY-04
+finding, evidence/phase-5/INDEX.md section 4.5: a deep AppData\Local\Temp
+path was ruled out from the start), at C:\Users\Admin\Documents\
+cc-p5-15-pos-harness - referenced by nothing, shipped with nothing, deleted
+after this capture. It project-references the real Merchandising.ClientCommon,
+Merchandising.Contracts and Merchandising.POS projects and constructs
+Merchandising.POS.ViewModels.MainViewModel over a real MerchandisingApiClient
+pointed at https://MERCH-HOST:8443/ - the same constructor call MainWindow.
+xaml.vb line 26-27 makes - then drives the three tab view models' own public
+methods and commands in the order an operator would use them, exactly the
+P4-15 shape.
+
+  PROVES: every screen's real call path works with a real session token
+          against the real, current service over real TLS; server-side
+          wording (G-24's "Recorded", never "Approved") arrives verbatim; the
+          shared CompletedSales collection genuinely carries a sale from
+          Checkout to Returns; the token is genuinely discarded at sign-out.
+
+  DOES NOT PROVE: anything about the rendered window - that is
+          POSLayoutTests' job (section 1 above), not this harness's.
+
+===============================================================================
+P5-15 - P5-13's owed authenticated pass, driven through the POS client's own view models
+===============================================================================
+API           : https://MERCH-HOST:8443/
+Operator      : p5_15_client_pass (Cashier)
+Started (UTC) : 2026-08-30T13:27:02.3468030Z
+
+--- 1. Login - MainViewModel.SignInAsync, the exact call MainWindow's code-behind makes
+  [ OK ] sign in: Signed in. correlationId=242f302d-ff38-4d08-8651-fd4dd66e45e1
+  session   : p5_15_client_pass (Cashier)
+  connection: Connected
+
+--- 2. Open a session - SessionViewModel.OpenAsync (POST /api/v1/cashier-sessions)
+  [ OK ] open session: Session #2259 opened. correlationId=47832e09-bcaa-45e3-889e-834eb419ad5b
+  session   : Session #2259 - Open. Opening float 500.00.
+
+--- 3. Look up a product - CheckoutViewModel.SearchProductsAsync
+  [ OK ] product lookup: 4537 product(s) found. correlationId=085b3369-1b6c-4a90-9792-584cd479582b
+  product   : 92 HDW-1002 - Adjustable Wrench 10in (stock 4.000)
+
+--- 4. Build a cart - CheckoutViewModel.AddToCartCommand (client-side only until Complete sale)
+  [ OK ] cart has exactly one line after Add-to-cart (1 actual)
+  cart      : 1 line(s), estimated total 840.0000
+
+--- 5/6. Take a payment, complete the sale - CheckoutViewModel.CompleteSaleAsync (POST /api/v1/sales)
+  [ OK ] complete sale: Sale #1619 completed. correlationId=af1f553c-4f63-46a7-ae39-f8df02af307a
+  sale      : #1619 total 840.0000 payment Cash status=Recorded
+  [ OK ] the cart is cleared once the sale commits
+  [ OK ] payment status is literally 'Recorded', never 'Approved'/'Authorised' (G-24)
+
+--- 7. Show receipt data - CheckoutViewModel.ReceiptSummary + LastSale.Lines (no GET /sales/{id} route exists)
+  receipt   : Sale #1619: total 840.0000, payment Cash - Recorded, change 160.0000.
+  line      : #1186 HDW-1002 qty 2 unitPrice 420.0000 lineTotal 840.0000
+  [ OK ] receipt carries exactly the one line the cart built
+
+--- 8. Take a return - ReturnsViewModel.RecordReturnAsync (POST /api/v1/sales/{saleId}/returns)
+  [ OK ] the sale just completed is visible to Returns via the shared CompletedSales collection
+  [ OK ] record return: Return #483 is PendingApproval. correlationId=3fd4620a-b8ee-4709-ab2e-b8bd2043dfa8
+  return    : Return #483 against sale #1619: PendingApproval, refund pending approval.
+  [ OK ] refund method wording carries no authorising word (G-24)
+
+--- 9. Close the session - SessionViewModel.CloseAsync (POST /api/v1/cashier-sessions/{id}/close)
+  [ OK ] close session: Session #2259 closed. correlationId=557ee855-8444-418b-b23c-b8da453c2f48
+  session   : Session #2259 - Closed. Declared 840.00, calculated 840.00, variance 0.00.
+  expected  : declared 840.00 (cash sale 840.00 - completed cash refund 0.00; opening float 500.00 is excluded from CalculatedCash by design)
+  [ OK ] server's CalculatedCash (840.0000) matches the harness's own independently-derived figure exactly
+  [ OK ] declared cash matches the server's own calculated cash exactly - zero variance
+
+--- 10. Sign out - MainViewModel's SignOutCommand delegate (private SignOutAsync, invoked via reflection: the exact method the command wraps)
+  status    : Signed out. Token discarded.
+  signed in : False
+  [ OK ] sign-out clears IsSignedIn
+  after out : outcome=Rejected errorCode=CLIENT_NOT_AUTHENTICATED
+  [ OK ] a call after sign-out is refused CLIENT-SIDE (CLIENT_NOT_AUTHENTICATED, minted locally, never reached the server) - the token is genuinely gone
+
+===============================================================================
+RESULT: PASS - every step succeeded against the live API
+===============================================================================
+exit=0
+
+===============================================================================
+7. Reading the transcript - what each step establishes, and what note 8 does not need repeating
+===============================================================================
+
+Step 8's return landed PendingApproval, not Completed - correctly. Its own
+refund amount (420.0000, one unit at HDW-1002's unit price) exceeds
+SalesReturnThresholdPolicy's configured SalesReturnApprovalThreshold
+(SalesReturnService.vb), so the server escalated it exactly as P5-11 designed
+- an exceptional-approval path this card's own scope note (section 4) already
+named as belonging to a different actor, not POS. This is why step 9's
+expected-cash arithmetic subtracts a cash refund only when the return's own
+Status is literally "Completed" - a PendingApproval return has no RefundAmount
+yet, and the harness's own assertion checks the server's CalculatedCash
+against an independently-derived figure rather than merely checking "variance
+is zero" (which a coincidentally-matching guess could also satisfy).
+
+Step 9 is the strongest single proof in this pass: CalculatedCash is
+documented (CashierSessionService.vb's own header) as "the sum of this
+session's own committed cash SalePayments" and NOT the opening float plus
+sales - the harness computed that independently from the sale response it had
+already received, declared exactly that figure, and the server's own
+persisted CalculatedCash matched it to the fourth decimal place. A guessed or
+copied declared amount could not have produced an exact match by chance.
+
+Step 10, as in P4-15: not one of the nine named operations, included because
+it is the only way to prove the token is never persisted. The read issued
+immediately after sign-out is refused CLIENT-SIDE - CLIENT_NOT_AUTHENTICATED,
+correlation ID minted locally by MerchandisingApiClient rather than returned
+by the server (MerchandisingApiClient.vb's own RawResponse.NotAttempted) -
+proving the request never reached the wire at all, not merely that the server
+would have said no.
+
+===============================================================================
+8. What this closes
+===============================================================================
+
+CLOSES: this card's sixth and last Done-when box, and with it the card.
+tasks.md's P5-13 moves 🟡 -> ✅. INDEX.md section 4.4's "still owed" note is
+discharged, and exit criteria 1 and 2 (end-to-end sale/return flow) and the
+"every task done" row all move to ✅ in the same edit, since none of the three
+had any other open box.
+
+NOT CLOSED, AND NOT CLAIMED: a human looking at the window. Every business
+rule and every call path is now proven; what no harness can assert is whether
+the screens read well to a person under exam pressure. Phase 7's "UI
+refinement pass across all three clients" (plan.md section 7) owns that, for
+all three clients equally - the identical scope line P4-15 drew.
+
+CARRY-05 stays open at Phase 6, unchanged by this pass: nothing in this
+system yet detects a stale deployment on its own. This pass is the second
+time in two phases an operator had to be told to redeploy before a client
+result could be trusted (P4-15, now this card) - reinforcing rather than
+discharging the case for Phase 6's own health-endpoint build-identifier idea
+(P4-15's own section 5 note).

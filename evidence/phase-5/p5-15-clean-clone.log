@@ -1,0 +1,181 @@
+===============================================================================
+P5-15 - CLEAN CLONE BUILDS AND BOTH TEST SUITES GREEN FROM SCRATCH
+Captured 2026-08-30 on LAPTOP-3HH6OHHE
+Card: tasks.md P5-15  |  Gate: Phase 5 exit criterion "Clean-clone build and
+both test suites green"  |  plan.md section 7 (Phase 5 Exit), section 9
+(Phase definition of done)
+===============================================================================
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT.
+
+Proven: a fresh 'git clone' of this repository, with no build artefacts, no
+bin/ or obj/, and no local edits, restores its own packages, builds all
+eleven projects at zero warnings, and passes the guardrails and BOTH test
+suites - including the integration suite, which runs against the real pinned
+MariaDB 10.4.32 (ADR-002) and never a substitute.
+
+NOT proven, and deliberately not claimed: a clean MACHINE. This run reuses
+this host's %ProgramData%\MerchandisingSystem\config\*.json, its XAMPP
+MariaDB instance, and its installed .NET SDK. Same wording as P1-20, P2-13,
+P3-09, P4-14 and P4-15, deliberately: the claim has not grown.
+
+ALSO NOT PROVEN BY THIS LOG: a clean clone proves the SOURCE builds and
+passes. It says nothing about what is DEPLOYED - see section 4 below, which
+is exactly the CARRY-05 distinction P4-15 drew and this card is required to
+close separately.
+
+Source commit    : a6d3b6a872ed0f23a0df73d22618c921fe6aee3c
+                   (a6d3b6a) "P5-14: docs/ui-specification.md written,
+                   verified against the running clients"
+Clone target     : C:\Users\Admin\Documents\cc-p5-15-test\repo  (outside the
+                   repository, deleted after capture)
+bin/obj at clone : 0 directories - verified by enumeration before building
+dotnet SDK       : 10.0.301
+MariaDB          : 10.4.32-MariaDB (XAMPP 8.2.12-0)
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+Exit code        : 0
+Captured         : 2026-08-30 19:35 (local)
+
+===============================================================================
+1. GUARDRAILS
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+(Repeated identically inside the dotnet build step - both runs pass.)
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+
+===============================================================================
+2. BUILD - eleven projects, zero warnings, first attempt at this location
+===============================================================================
+
+  Merchandising.Domain            -> ...\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts         -> ...\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon      -> ...\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure    -> ...\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Maintenance       -> ...\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Procurement       -> ...\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Inventory         -> ...\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.POS               -> ...\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Api               -> ...\net10.0\Merchandising.Api.dll
+  Merchandising.Tests.Unit        -> ...\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Tests.Integration -> ...\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+===============================================================================
+3. TEST SUITES - both green, nothing skipped
+===============================================================================
+
+Passed!  - Failed: 0, Passed:  79, Skipped: 0, Total:  79, Duration:  2 s
+           Merchandising.Tests.Unit.dll (net10.0)
+
+Passed!  - Failed: 0, Passed: 465, Skipped: 0, Total: 465, Duration: 1 m 28 s
+           Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+Cross-checked against every Phase 5 card's own cited suite-state line, in
+file order, as this INDEX's own "quantitative claims must check out" rule
+requires (tasks.md P5-15 Done-when box 4):
+
+  Phase 4 gate (76aaa7d)     47 unit | 348 integration | 395
+  P5-01  (Domain only)       61      | 348             | 409   (+14 / +0)
+  P5-02  (migration/grants)  61      | 376             | 437   (+0  / +28)
+  P5-03  (migration/grants)  61      | 396             | 457   (+0  / +20)
+  P5-04  (cashier sessions)  61      | 413             | 474   (+0  / +17)
+  P5-05  (daily closing)     61      | 419             | 480   (+0  / +6)
+  P5-06  (product lookup)    61      | 425             | 486   (+0  / +6)
+  P5-07  (atomic sale)       61      | 440             | 501   (+0  / +15)
+  P5-08  (sale concurrency)  61      | 443             | 504   (+0  / +3)
+  P5-09  (idempotent sale)   61      | 446             | 507   (+0  / +3)
+  P5-10  (sale immutability) 61      | 450             | 511   (+0  / +4)
+  P5-11  (sale returns)      61      | 465             | 526   (+0  / +15)
+  P5-12  (payment wording)   66      | 465             | 531   (+5  / +0)
+  P5-13  (POS client)        74      | 465             | 539   (+8  / +0)
+  P5-14  (ui-specification)  79      | 465             | 544   (+5  / +0)
+  This capture (P5-15)       79      | 465             | 544   MATCHES
+
+Every intermediate figure above was read directly from that card's own
+evidence file (grep for "Passed!" / "Total:"), not recomputed or assumed.
+The chain sums to exactly this capture's own count with no gap and no
+double-count - the Phase 4 gate's own lesson (two gates running found a
+number that did not match what it claimed) does not recur here.
+
+===============================================================================
+4. A finding this capture made, in the course of just trying to build:
+   CARRY-04 recurred, and its own mechanism is narrower than "a rare race"
+===============================================================================
+
+CARRY-04's own tasks.md entry read, going into this card: "Observed once at
+the Phase 3 gate, and not reproduced since across eleven further clean-clone
+builds... Raise a card only on a second sighting."
+
+This capture's FIRST clone target was this session's own scratchpad
+directory, several levels deep under
+C:\Users\Admin\AppData\Local\Temp\claude\...\scratchpad. Building there hit
+MSB3030 - "Could not copy... runtimeconfig.json... because it was not found"
+- for Merchandising.Procurement, Merchandising.Inventory and
+Merchandising.Maintenance's outputs, referenced by the two test projects.
+This is CARRY-04's own named mechanism, exactly.
+
+What is NEW here, and narrows the entry rather than just repeating it:
+
+  - It did not fail once. It failed on EVERY attempt at that location - two
+    full fresh clones, a sequential (-maxCpuCount:1) build, a
+    -p:BuildInParallel=false build, and five successive full rebuilds: 9/9
+    failures, always the identical file/target shape.
+  - The referenced project's own runtimeconfig.json was confirmed PRESENT
+    on disk, moments after the "file not found" error, every time it was
+    checked. This rules out "the generating target had not run yet" as the
+    mechanism for this location - the file existed; something about copying
+    it from under that path transiently failed anyway.
+  - Building each of the nine non-test projects individually, then the two
+    test projects, in strict dependency order with --no-restore, produced
+    the identical failure on the SAME already-built, already-verified-present
+    files. This rules out ordering/parallelism as this location's cause.
+  - The same source tree, at the same commit, cloned instead to
+    C:\Users\Admin\Documents\cc-p5-15-test\repo - outside the repository,
+    but NOT under AppData\Local\Temp - built clean on the FIRST attempt,
+    zero warnings, zero errors, both suites green. This is section 2/3
+    above.
+
+CONCLUSION, stated no more broadly than what was actually tested: something
+about building under this session's deeply-nested AppData\Local\Temp\claude
+scratchpad path - most plausibly Windows Defender real-time scanning of a
+Temp directory, though this was not directly instrumented and the claim does
+not go further than "correlated and repeatable" - turns CARRY-04's
+occasional copy-race into a deterministic failure. Building anywhere else
+tested made it disappear on the first try. This is a second sighting by
+CARRY-04's own stated threshold, and narrows rather than only confirms it:
+the prior theory ("a parallel build can list the file before the generating
+task has run") does not fit a file confirmed present at the moment the copy
+was attempted. A dedicated card is this closure pack's to name, not to
+resolve - the practical mitigation (do not clean-clone-build under a deep
+AppData\Local\Temp scratchpad path; use a plain outside-the-repo directory
+instead, as every prior clean-clone log already did) is recorded here so the
+next person does not lose the same hour this one did.
+
+===============================================================================
+5. No other CARRY-04-shaped recurrence in the run that produced this log
+===============================================================================
+
+The capture in sections 1-3 above - taken at C:\Users\Admin\Documents\
+cc-p5-15-test\repo - hit zero MSB3030 errors, on the first attempt, with the
+default (parallel) build. Section 4's finding is additional evidence
+gathered in the course of diagnosing the first location's failures, not a
+second defect in the tree itself.

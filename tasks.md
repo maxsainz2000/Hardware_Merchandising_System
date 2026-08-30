@@ -266,7 +266,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 - [x] Two simultaneous requests carrying the same key: exactly one commits, the other replays, neither errors
 - [x] Integration suite green
 
-**Evidence:** `evidence/phase-5/p5-09-sale-idempotency.txt`
+**Evidence:** `evidence/phase-5/p5-09-idempotent-sale.txt`
 
 ### ✅ P5-10 · Completed sales are immutable; cancellation only before completion
 
@@ -314,7 +314,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Files disjoint from every other track. Can run in parallel with Track E or G.*
 
-### 🟡 P5-12 · Payment-method wording verified non-authorising, in UI and in reports — **the gap-register box closes at P5-15**
+### ✅ P5-12 · Payment-method wording verified non-authorising, in UI and in reports
 
 **Spec:** §10.3, §23 · **Closes:** G-24 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.Contracts/Sales/`, `src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb`
 
@@ -326,7 +326,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 - [x] **Proven falsifiable**: the denylist test is watched fail against a deliberately introduced "Payment approved" label before being trusted. A wording test that has never fired is exactly as decorative as any other
 - [x] The affirmative wording exists too — the UI and the response both state that card/e-wallet is **recorded** and not authorised, asserted rather than assumed absent
 - [x] The exclusion is stated where a user reads it, not only in the spec: no terminal, bank, cash drawer, scale, customer display or receipt printer integration
-- [ ] **G-24 recorded closed** in the gap register at P5-15 — that edit belongs to P5-15, not this card
+- [x] **G-24 recorded closed** in the gap register at P5-15 — `evidence/phase-5/INDEX.md` §3
 - [x] Unit suite green
 
 **Evidence:** `evidence/phase-5/p5-12-payment-wording.txt`
@@ -335,7 +335,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track G — The POS client
 
-### 🟡 P5-13 · POS WPF client reaches usable state, mouse-free — **the authenticated pass is owed once the service is redeployed**
+### ✅ P5-13 · POS WPF client reaches usable state, mouse-free
 
 **Spec:** §10.3, §16 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.ClientCommon/`
 
@@ -343,7 +343,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] All nine operations work against the **running, redeployed** API — an authenticated pass, in the P4-15 shape (`evidence/phase-4/p4-15-authenticated-client-pass.txt`). ⚠ **Redeploy the service first and record the deployed build's identity in the evidence.** CARRY-05: a green suite says nothing about what is deployed, and the Phase 4 gate found exactly that — **BLOCKED: the deployed service is stale (confirmed by a live 404 probe against `POST /api/v1/cashier-sessions`), and the redeploy needs an elevated shell this session does not have. See the card's own note in the evidence file for the exact commands to run.**
+- [x] All nine operations work against the **running, redeployed** API — an authenticated pass, in the P4-15 shape (`evidence/phase-4/p4-15-authenticated-client-pass.txt`). The operator redeployed the service in an elevated shell (`Stop-Service` → `publish-release.ps1` → `install-service.ps1`); the deployed binary's `LastWriteTime` moved from the stale 2026-08-29 21:01:06 to 2026-08-30 21:18:42, and the same route that 404'd now correctly answers 401 (auth required). All nine operations then passed against the live, current service — `evidence/phase-5/p5-13-pos-client.txt` §6
 - [x] **Guardrail G-B holds:** no reference to `Infrastructure`, MySqlConnector, or any database package. No connection string anywhere in the project
 - [x] Server-side refusals (insufficient stock 409, tendered-below-total, closed session, over-return) surface as the API's message and error code — the client never invents its own wording or hides the correlation ID
 - [x] Client-side validation is for usability only; every rule is re-checked server-side
@@ -376,7 +376,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-14-ui-specification.txt`
 
-### ⬜ P5-15 · Phase 5 closure pack
+### ✅ P5-15 · Phase 5 closure pack
 
 **Spec:** §20 · **Files:** `evidence/phase-5/`
 
@@ -384,13 +384,13 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p5-15-clean-clone.log`
-- [ ] `evidence/phase-5/INDEX.md` maps every Phase 5 exit criterion and every card to an artifact, continuing `phase-4/INDEX.md`'s register
-- [ ] **G-24 recorded closed** in that register, and **G-12's sale component** recorded closed — the one Phase 4 explicitly left open and named as this phase's
-- [ ] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites.** Two gates running have found a real defect behind a box that was reasoned about rather than exercised; assume this one has a third
-- [ ] Every ADR this phase owed (ADR-022, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`, not assumed
-- [ ] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number
-- [ ] **The deployed service is current**, and the evidence records its build identity (CARRY-05). A closure pack that certifies source nobody is running certifies nothing a classmate will see
+- [x] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p5-15-clean-clone.log`
+- [x] `evidence/phase-5/INDEX.md` maps every Phase 5 exit criterion and every card to an artifact, continuing `phase-4/INDEX.md`'s register
+- [x] **G-24 recorded closed** in that register, and **G-12's sale component** recorded closed — the one Phase 4 explicitly left open and named as this phase's
+- [x] Any claim narrower than its wording is marked ⚠ and explained, never rounded up — **and every quantitative claim is checked against the number it cites.** Two gates running have found a real defect behind a box that was reasoned about rather than exercised; assume this one has a third
+- [x] Every ADR this phase owed (ADR-022, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`, not assumed
+- [x] New ADRs appended **before** the *Template for new entries* section, not inside its fence — verified by line number
+- [x] **The deployed service is current**, and the evidence records its build identity (CARRY-05). A closure pack that certifies source nobody is running certifies nothing a classmate will see — redeployed at 2026-08-30 21:18:42, confirmed by the 404→401 route probe and the authenticated pass, `p5-13-pos-client.txt` §6
 
 **Evidence:** `evidence/phase-5/p5-15-clean-clone.log`, `evidence/phase-5/INDEX.md`
 
@@ -400,16 +400,16 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-5/` — a file someone else could read.
 
-- [ ] End-to-end sale flow passes (P5-07, P5-13)
-- [ ] End-to-end return flow passes (P5-11, P5-13)
-- [ ] Negative stock impossible under concurrent load (P5-08)
-- [ ] Idempotent retry returns the original result rather than a second sale (P5-09)
-- [ ] Completed sales immutable (P5-10)
-- [ ] Change calculation exact to the stored precision (P5-01, P5-07)
-- [ ] Payment-method wording verified as non-authorising in both UI and reports (P5-12)
+- [x] End-to-end sale flow passes (P5-07, P5-13)
+- [x] End-to-end return flow passes (P5-11, P5-13)
+- [x] Negative stock impossible under concurrent load (P5-08)
+- [x] Idempotent retry returns the original result rather than a second sale (P5-09)
+- [x] Completed sales immutable (P5-10)
+- [x] Change calculation exact to the stored precision (P5-01, P5-07)
+- [x] Payment-method wording verified as non-authorising in both UI and reports (P5-12)
 - [x] `docs/ui-specification.md` written (P5-14)
-- [ ] G-24 closed, and G-12's sale component closed, in the gap register (P5-15)
-- [ ] Clean-clone build and both test suites green (P5-15)
-- [ ] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
+- [x] G-24 closed, and G-12's sale component closed, in the gap register (P5-15)
+- [x] Clean-clone build and both test suites green (P5-15)
+- [x] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
 
-**Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7** — but one of its documents, `ui-specification.md`, *is* owed here as P5-14. CARRY-02 belongs to **Phase 6** (ADR-019). CARRY-04 is a watch item and becomes a card only on a second sighting. **CARRY-01 has now been carried through three phases without an owner and must be placed when Phase 6 planning opens.** **CARRY-05 is new** and belongs to Phase 6's health monitoring — but its consequence binds *this* phase at P5-13 and P5-15: redeploy before believing any client-side result.
+**Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7** — but one of its documents, `ui-specification.md`, *is* owed here as P5-14. CARRY-02 belongs to **Phase 6** (ADR-019). CARRY-04 is a watch item, and its own threshold ("raise a card only on a second sighting") has now been met — see `evidence/phase-5/INDEX.md` §4.5 and §7; naming the card is Phase 6 planning's to do. **CARRY-01 has now been carried through four phases without an owner and must be placed when Phase 6 planning opens.** **CARRY-05** — the deployed service was found stale at both the Phase 4 and Phase 5 gates — belongs to Phase 6's health monitoring; this phase's own narrower obligation (confirm currency before believing a client-side result) is discharged at P5-13/P5-15.
