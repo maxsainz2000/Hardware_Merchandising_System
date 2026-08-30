@@ -1,23 +1,22 @@
 # Database Design
 
-**Status: finalised through Phase 4 (P4-13), extended at P5-02.** Covers every table through
-migration `0011_pos.sql` — 32 tables, all applied and grant-verified against the real pinned
-MariaDB instance, its exact declared types read live from `information_schema` rather than
-transcribed from the migration files (CLAUDE.md section 6.3: a migration is what was asked for,
-not necessarily what the server is running). First drafted at P2-12 (22 tables through `0006`),
-extended at P3-02 (`0008`), finalised at P4-13 with the four Procurement tables
+**Status: finalised through Phase 4 (P4-13), extended at P5-02 and P5-03.** Covers every table
+through migration `0012_sales-returns.sql` — 35 tables, all applied and grant-verified against the
+real pinned MariaDB instance, its exact declared types read live from `information_schema` rather
+than transcribed from the migration files (CLAUDE.md section 6.3: a migration is what was asked
+for, not necessarily what the server is running). First drafted at P2-12 (22 tables through
+`0006`), extended at P3-02 (`0008`), finalised at P4-13 with the four Procurement tables
 `0009_receiving.sql` and the three Inventory tables `0010_counts-and-adjustments.sql` added, and
-extended again at P5-02 with the four POS tables `0011_pos.sql` adds. Every fact this document
-states about the schema is checked on every test run by `DatabaseDesignDocumentationTests` — a
-drift check in the P2-12/P3-08 shape, so this document cannot silently fall out of date with the
-server the way a sentence in an evidence file can (`plan.md`'s Phase 3 lesson, `tasks.md` line
-20). **This closes G-21** (spec section 23's gap register: "Data model lacked invariants and
-precision").
+extended again at P5-02 (the four POS tables `0011_pos.sql` adds) and P5-03 (the two sales-return
+tables `0012_sales-returns.sql` adds). Every fact this document states about the schema is checked
+on every test run by `DatabaseDesignDocumentationTests` — a drift check in the P2-12/P3-08 shape,
+so this document cannot silently fall out of date with the server the way a sentence in an
+evidence file can (`plan.md`'s Phase 3 lesson, `tasks.md` line 20). **This closes G-21** (spec
+section 23's gap register: "Data model lacked invariants and precision").
 
-The `SalesReturns`, `SalesReturnItems` and `CashierClosings` tables spec section 12's POS entity
-group names are still Phase 5 work not yet landed (`SalesReturns`/`SalesReturnLines` are P5-03;
-closing data lives on `CashierSessions` itself rather than a separate `CashierClosings` table —
-see §3.6) — called out here so their absence reads as "not built", not "forgotten".
+The `CashierClosings` table spec section 12's POS entity group names does not exist as a separate
+table — closing data lives on `CashierSessions` itself (see §3.6) — called out here so its absence
+reads as "not built this way", not "forgotten".
 
 **Scope note.** This system is an **academic prototype**. MariaDB is supplied through XAMPP
 because the course requires it (ADR-000), and XAMPP is documented by Apache Friends as intended
@@ -46,8 +45,7 @@ These hold for every table below; they are stated once here rather than repeated
 
 ## 2. Entity-relationship diagram
 
-Every table that exists through `0011_pos.sql`. `SalesReturns`/`SalesReturnLines` (P5-03) are
-Phase 5 work not yet landed and are not shown.
+Every table that exists through `0012_sales-returns.sql`.
 
 ```mermaid
 erDiagram
@@ -99,6 +97,12 @@ erDiagram
     Sales ||--o{ SaleLines : "has lines"
     Products ||--o{ SaleLines : "sold as"
     Sales ||--o{ SalePayments : "paid by"
+
+    Sales ||--o{ SalesReturns : "returned from"
+    Users ||--o{ SalesReturns : "returns/approves"
+    SalesReturns ||--o{ SalesReturnLines : "has lines"
+    SaleLines ||--o{ SalesReturnLines : "returns against"
+    Products ||--o{ SalesReturnLines : "returned as"
 
     Users {
         int Id PK
@@ -338,6 +342,25 @@ erDiagram
         decimal TenderedAmount
         decimal ChangeAmount
     }
+    SalesReturns {
+        int Id PK
+        int SaleId FK
+        int ReturnedByUserId FK
+        int ApprovedByUserId FK
+        varchar Status
+        tinyint ExceedsThreshold
+        varchar RefundMethod
+        decimal RefundAmount
+        bigint RowVersion
+    }
+    SalesReturnLines {
+        int Id PK
+        int SalesReturnId FK
+        int SaleLineId FK
+        int ProductId FK
+        decimal QuantityReturned
+        tinyint RestocksItem
+    }
 ```
 
 `Suppliers` gained its first consumer at `0008`: `PurchaseOrders.SupplierId`, an unadorned
@@ -420,14 +443,14 @@ for `PurchaseOrderLines`. Settled here as `Receipts`/`ReceiptLines`/`PurchaseRet
 | `SaleLines` | `0011` → `0013` (**INSERT only**) | PK `Id`; FK `SaleId` → `Sales`, `ProductId` → `Products`; `CHECK (Quantity > 0)`, `CHECK (UnitPrice >= 0)`, `CHECK (Cost >= 0)`, `CHECK (LineTotal >= 0)` | `UnitPrice`/`Cost` are the **captured, effective** values at sale time — never a join to `Products.Price`/`Cost` (spec section 10.3: "so future price changes do not alter historical sales analysis" — `plan.md` section 7 names this the phase's key design call). `LineTotal` is likewise captured, not derived by a later `SELECT` (ADR-004.1: totals are derived from already-rounded components, never rounded independently of them) — the API computes and rounds it once, at construction (`Merchandising.Domain.Sales.SaleLine`, P5-01). |
 | `SalePayments` | `0011` → `0013` (**INSERT only**) | PK `Id`; FK `SaleId` → `Sales`; `CHECK (Method IN ('Cash','Card','EWallet'))`, `CHECK (Amount >= 0)`, `CHECK` pairing `TenderedAmount`/`ChangeAmount` to `Method = 'Cash'` | `Method` carries `COLLATE utf8mb4_bin`, the same defect class `PurchaseOrders`/`PurchaseReturns`/`StockCounts`/`StockAdjustments`' `Status` columns already guard against — under the table's case-insensitive collation the `CHECK` would accept `'cash'` and store it verbatim. `TenderedAmount`/`ChangeAmount` are nullable and **cash only** — required and consistent (`TenderedAmount >= Amount`, `ChangeAmount = TenderedAmount - Amount`) when `Method = 'Cash'`, `NULL` otherwise — preserving what the customer handed over and got back for a reprinted receipt, mirroring the `CashTenderResult` shape P5-01 already built in `Domain`. Card/e-wallet rows are **recorded**, never claimed as externally authorized (G-24). |
 
-`SalesReturns`/`SalesReturnLines` (Phase 5's remaining POS tables, P5-03) do not exist in the
-schema yet. Listed here so this document's absence of them reads as "not built", not "forgotten".
+| `SalesReturns` | `0012` → `0014` (INSERT, UPDATE — `Status`/`ApprovedByUserId`/`ApprovedAtUtc`/`RefundMethod`/`RefundAmount`/`RowVersion`/`UpdatedAtUtc`) | PK `Id`; FK `SaleId` → `Sales`, `ReturnedByUserId`/`ApprovedByUserId` → `Users`; IX `Status`, `ReturnedAtUtc`; `CHECK (Status IN ('PendingApproval','Completed','Rejected'))` | Mutable, the same in-place-status shape `PurchaseOrders`/`PurchaseReturns`/`StockCounts`/`StockAdjustments` use — a return within a cashier's permitted scope completes at creation (`Status = Completed`, no approver), one above the configured threshold (`ExceedsThreshold`, captured at request time, the identical `StockAdjustments` argument) is created `PendingApproval` with no stock or refund effect committed yet, and only reaches its terminal state through a later, distinct `UPDATE` by `SalesReturns.ApproveExceptional` (ADR-017 §6's self-approval veto, which needs `ReturnedByUserId`/`ApprovedByUserId` as two genuinely separate columns). Only **three** status names, not four — unlike `StockAdjustmentStatus`'s `Approved`/`Applied` split, `evidence/phase-4/p4-10-adjustments.txt` §0.3 recorded that intermediate state is never actually persisted in practice, so this enum does not name one nothing will ever be observed in. `RefundMethod`/`RefundAmount` are the "operational payment-reversal record" (spec §11) — one per return event, not per line, nullable until the return actually reaches `Completed`, paired by `CHECK` (both present or both absent) the same way `SalePayments`' cash columns are. |
+| `SalesReturnLines` | `0012` → `0014` (**INSERT only**) | PK `Id`; FK `SalesReturnId` → `SalesReturns`, `SaleLineId` → `SaleLines`, `ProductId` → `Products`; `CHECK (QuantityReturned > 0)` | `RestocksItem` (`TINYINT(1)`, default `1`) is spec section 10.3's "eligible to re-enter stock" — the sales-return mirror of `PurchaseReturnLines.RemovesStock`, named the other direction and matching the name P5-11's own card text uses. No captured `UnitPrice`, unlike `ReceiptLines`/`PurchaseOrderLines` — `SaleLines` is itself immutable (`0011`), so a line's refund value is safely computed by joining `SaleLineId` rather than re-capturing a value that can never disagree with its source. No database `CHECK` bounds `QuantityReturned` against "quantity sold minus prior returns" — that bound is an aggregate over every prior sibling row, which a MariaDB `CHECK` (evaluated one row at a time) cannot express; enforced at the API (P5-11), computed from committed rows. |
 
 ### 3.7 Foreign keys and delete behaviour
 
-Every foreign key in this schema is an **unadorned** `FOREIGN KEY` — no migration through `0011`
+Every foreign key in this schema is an **unadorned** `FOREIGN KEY` — no migration through `0012`
 has ever written an `ON DELETE`/`ON UPDATE` clause — so MariaDB's default applies uniformly:
-**`RESTRICT` on both delete and update, on every one of the 47 foreign keys this schema carries**,
+**`RESTRICT` on both delete and update, on every one of the 53 foreign keys this schema carries**,
 confirmed live against `information_schema.REFERENTIAL_CONSTRAINTS` (`DatabaseDesignDocumentationTests.
 EveryForeignKey_IsRestrictOnDeleteAndUpdate`, re-run on every suite pass — not a one-time count).
 This is spec section 12's requirement stated as a database fact: *"Foreign-key behavior must
@@ -459,6 +482,8 @@ audit events."*
 | `Sales` | `CashierSessionId`, `CashierUserId` | `CashierSessions`, `Users` |
 | `SaleLines` | `SaleId`, `ProductId` | `Sales`, `Products` |
 | `SalePayments` | `SaleId` | `Sales` |
+| `SalesReturns` | `SaleId`, `ReturnedByUserId`, `ApprovedByUserId` | `Sales`, `Users`, `Users` |
+| `SalesReturnLines` | `SalesReturnId`, `SaleLineId`, `ProductId` | `SalesReturns`, `SaleLines`, `Products` |
 
 ---
 
@@ -502,7 +527,8 @@ denied), not a subtle bug — that is the point.
 | `stockcounts` | INSERT, UPDATE | `stockcountlines` | INSERT only |
 | `stockadjustments` | INSERT, UPDATE | `cashiersessions` | INSERT, UPDATE |
 | `sales` | INSERT only | `salelines` | INSERT only |
-| `salepayments` | INSERT only | | |
+| `salepayments` | INSERT only | `salesreturns` | INSERT, UPDATE |
+| `salesreturnlines` | INSERT only | | |
 
 Two absences carry the whole guarantee: `stockmovements` and `auditlogs` are the **only** tables
 that receive `INSERT` and nothing else, at any scope, to anyone but `merch_migrator` — the two
@@ -511,16 +537,16 @@ CLAUDE.md section 5 names as **permanently** excluded from ever gaining a write-
 correction to any of these four is a new row — a compensating movement, a new audit entry —
 never an edit to an old one.
 
-`receipts`, `receiptlines`, `purchasereturnlines`, `stockcountlines`, `sales`, `salelines` and
-`salepayments` are INSERT-only too, but for a narrower reason argued in their own grants files
-(`0011`, `0012`, `0013`), not the permanent CLAUDE.md exclusion: each records something that
-**happened** and no card in this phase (or any later one named so far) edits it after it is
-written — the argument is "nothing needs the write yet," not "this table must never be
-writable." Spec section 10.3 makes `sales`/`salelines`/`salepayments`'s case explicitly: "Completed
-sales are never edited or deleted." `purchaseorders`, `purchasereturns`, `stockcounts` and
-`cashiersessions` are the opposite shape — a status that changes in place — the same reasoning
-`0010_purchase-order-grants.sql` gives `purchaseorders` and `0011`/`0012`/`0013` repeat for each
-new in-place-status table.
+`receipts`, `receiptlines`, `purchasereturnlines`, `stockcountlines`, `sales`, `salelines`,
+`salepayments` and `salesreturnlines` are INSERT-only too, but for a narrower reason argued in
+their own grants files (`0011`, `0012`, `0013`, `0014`), not the permanent CLAUDE.md exclusion:
+each records something that **happened** and no card in this phase (or any later one named so
+far) edits it after it is written — the argument is "nothing needs the write yet," not "this
+table must never be writable." Spec section 10.3 makes `sales`/`salelines`/`salepayments`'s case
+explicitly: "Completed sales are never edited or deleted." `purchaseorders`, `purchasereturns`,
+`stockcounts`, `cashiersessions` and `salesreturns` are the opposite shape — a status that
+changes in place — the same reasoning `0010_purchase-order-grants.sql` gives `purchaseorders`
+and `0011`/`0012`/`0013`/`0014` repeat for each new in-place-status table.
 
 Proven, not asserted: `evidence/phase-1/p1-04a-grant-model-proof.txt` (the original two-table
 proof), every phase-2/3/4 card's own evidence (`p2-06-schema.txt`, `p2-08-atomicity.txt`,
@@ -554,6 +580,7 @@ exist yet (`ERROR 1146`).
 | 9 | `0009_receiving.sql` | `0011_receiving-grants.sql` | `Receipts`, `ReceiptLines`, `PurchaseReturns`, `PurchaseReturnLines` |
 | 10 | `0010_counts-and-adjustments.sql` | `0012_counts-and-adjustments-grants.sql` | `StockCounts`, `StockCountLines`, `StockAdjustments` |
 | 11 | `0011_pos.sql` | `0013_pos-grants.sql` | `CashierSessions`, `Sales`, `SaleLines`, `SalePayments` |
+| 12 | `0012_sales-returns.sql` | `0014_sales-returns-grants.sql` | `SalesReturns`, `SalesReturnLines` |
 
 `db/grants/` and `db/migrations/` are two independent numbering sequences, not a matched pair —
 `db/grants/0006_restore-grants.sql` grants `merch_migrator` `LOCK TABLES` (a privilege fix
@@ -561,7 +588,7 @@ discovered while proving restore against the real production identity, unrelated
 migration), which is why the table above pairs migration 5 with grants file `0007`, migration 6
 with `0008`, and migration 7 with `0009` rather than matching numbers straight across. From
 migration 8 onward the numbering happens to run in step (`0008`→`0010`, `0009`→`0011`,
-`0010`→`0012`, `0011`→`0013`) — coincidence of no further `LOCK TABLES`-style fixes since, not a rule.
+`0010`→`0012`, `0011`→`0013`, `0012`→`0014`) — coincidence of no further `LOCK TABLES`-style fixes since, not a rule.
 
 ---
 

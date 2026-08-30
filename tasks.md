@@ -137,7 +137,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-02-pos-schema.txt`, `evidence/phase-5/p5-02-pos-grants.txt`
 
-### ⬜ P5-03 · Migration 0012 — `SalesReturns`, `SalesReturnLines`, and grants 0014
+### ✅ P5-03 · Migration 0012 — `SalesReturns`, `SalesReturnLines`, and grants 0014
 
 **Spec:** §10.3, §11, §12 · **Files:** `db/migrations/0012_sales-returns.sql`, `db/grants/0014_sales-returns-grants.sql`
 
@@ -145,12 +145,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] The stock-eligibility flag is a real column, not inferred — a returned item may be damaged and must not re-enter stock, and spec §10.3 requires that recorded per line
-- [ ] `ReturnedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — `SalesReturns.ApproveExceptional` is a distinct policy from `SalesReturns.Create` and cannot be compared if they are one field. Asserted from `information_schema`
-- [ ] A return line's FK to `SaleLines` prevents deleting a sale line, proven with `ERROR 1451`
-- [ ] Applies clean as `merch_migrator` on a database carrying `0001`–`0011`; applied exactly once
-- [ ] `db/grants/0014` applied after, lowercase, justified per table in its own header
-- [ ] Integration suite green
+- [x] The stock-eligibility flag is a real column, not inferred — a returned item may be damaged and must not re-enter stock, and spec §10.3 requires that recorded per line
+- [x] `ReturnedByUserId` and `ApprovedByUserId` are separate columns with separate FKs, approver nullable — `SalesReturns.ApproveExceptional` is a distinct policy from `SalesReturns.Create` and cannot be compared if they are one field. Asserted from `information_schema`
+- [x] A return line's FK to `SaleLines` prevents deleting a sale line, proven with `ERROR 1451`
+- [x] Applies clean as `merch_migrator` on a database carrying `0001`–`0011`; applied exactly once
+- [x] `db/grants/0014` applied after, lowercase, justified per table in its own header
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-5/p5-03-returns-schema.txt`, `evidence/phase-5/p5-03-returns-grants.txt`
 

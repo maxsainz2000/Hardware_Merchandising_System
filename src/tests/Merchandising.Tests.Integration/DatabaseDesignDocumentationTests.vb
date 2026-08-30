@@ -104,7 +104,8 @@ Public Class DatabaseDesignDocumentationTests
             {"stockcounts", "StockCounts"}, {"stockcountlines", "StockCountLines"},
             {"stockadjustments", "StockAdjustments"},
             {"cashiersessions", "CashierSessions"}, {"sales", "Sales"},
-            {"salelines", "SaleLines"}, {"salepayments", "SalePayments"}
+            {"salelines", "SaleLines"}, {"salepayments", "SalePayments"},
+            {"salesreturns", "SalesReturns"}, {"salesreturnlines", "SalesReturnLines"}
         }
     End Function
 
@@ -340,7 +341,9 @@ Public Class DatabaseDesignDocumentationTests
             {"cashiersessions", New HashSet(Of String) From {"INSERT", "UPDATE"}},
             {"sales", New HashSet(Of String) From {"INSERT"}},
             {"salelines", New HashSet(Of String) From {"INSERT"}},
-            {"salepayments", New HashSet(Of String) From {"INSERT"}}
+            {"salepayments", New HashSet(Of String) From {"INSERT"}},
+            {"salesreturns", New HashSet(Of String) From {"INSERT", "UPDATE"}},
+            {"salesreturnlines", New HashSet(Of String) From {"INSERT"}}
         }
     End Function
 

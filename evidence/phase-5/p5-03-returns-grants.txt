@@ -1,0 +1,90 @@
+P5-03 - db/grants/0014_sales-returns-grants.sql - grants evidence
+Captured 2026-08-30, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Schema evidence is a separate file: p5-03-returns-schema.txt.
+
+merch_api's password is not known to this shell (it lives in
+%ProgramData%\MerchandisingSystem\config\database.json, ADR-013), so the
+manual mysql-CLI verification this file would otherwise run directly is
+performed instead through ConnectionFactory/DatabaseOptionsLoader, which
+reads that same config - exactly the identity the running API uses. That is
+SalesReturnSchemaTests, and its relevant console output is reproduced below
+rather than a second, credential-guessing transcript.
+
+
+===============================================================================
+1. Apply 0014_sales-returns-grants.sql as root, after migration 0012
+===============================================================================
+
+$ mysql -u root merchandising < db/grants/0014_sales-returns-grants.sql
+(no output - clean apply)
+
+$ mysql -u root -e "SHOW GRANTS FOR 'merch_api'@'localhost';" | grep -E "salesreturn"
+GRANT INSERT, UPDATE ON `merchandising`.`salesreturns` TO `merch_api`@`localhost`
+GRANT INSERT ON `merchandising`.`salesreturnlines` TO `merch_api`@`localhost`
+
+  [PASS] table names lowercase (@@lower_case_table_names = 1, ADR-003.1).
+  [PASS] salesreturns: INSERT, UPDATE - the header, its approval state
+         (Status/ApprovedByUserId/ApprovedAtUtc/RefundMethod/RefundAmount/
+         RowVersion) changes in place via SalesReturns.ApproveExceptional.
+  [PASS] salesreturnlines: INSERT only - written once at request time, its
+         bound (quantity sold minus prior returns) enforced by the API
+         reading committed rows, not by editing a line afterward.
+  [PASS] nothing added for stockmovements or auditlogs - unaffected by this
+         file, ADR-013 untouched.
+
+
+===============================================================================
+2. Behaviour - the grant boundary, proven as merch_api (SalesReturnSchemaTests)
+===============================================================================
+
+$ dotnet test ... --filter "FullyQualifiedName~SalesReturnSchemaTests"
+
+  Passed MerchApi_CanInsertAndUpdateHeader_AndInsertOnlyLines [32 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnEitherTable [30 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnSalesReturnLines [30 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [35 ms]
+
+  [PASS] merch_api, using the API's own configured credential, can INSERT a
+         sales return and a return line, then UPDATE the return's Status to
+         Completed with ApprovedByUserId/RefundMethod/RefundAmount/
+         ApprovedAtUtc/RowVersion all set in the same statement - proving
+         the grant is sufficient for the collapsed approve-and-complete
+         shape P5-11 will need (the same P4-10 precedent recorded in
+         p5-03-returns-schema.txt).
+
+  [PASS] merch_api is refused DELETE on both tables (ERROR 1142) -
+         SalesReturns, SalesReturnLines.
+
+  [PASS] merch_api is refused UPDATE on SalesReturnLines - the one table
+         this file does not grant it on, ERROR 1142.
+
+  [PASS] merch_api holds no DDL on either table tried (ALTER on
+         SalesReturns, DROP on SalesReturnLines) - both ERROR 1142.
+         ADR-013's split is not weakened by adding two tables to it.
+
+
+===============================================================================
+3. What is deliberately not granted, and why (from the file's own header)
+===============================================================================
+
+DELETE, on either table, to anyone - spec section 12: "Transactional
+records are never physically deleted."
+
+UPDATE on salesreturnlines - nothing in this phase's cards edits a return
+line after it is written. If a later card needs one, that grant is argued
+in a new numbered file, not added here by assumption.
+
+
+===============================================================================
+4. Carried-forward check - MerchApiGrants_MatchTheDocumentedPostureForEveryTable
+===============================================================================
+
+docs/database-design.md section 4's grant table and
+DatabaseDesignDocumentationTests.ExpectedGrants both now list:
+  salesreturns      -> INSERT, UPDATE
+  salesreturnlines  -> INSERT
+checked directly against information_schema.TABLE_PRIVILEGES, not assumed
+from the grants file that was merely run. Passed - see
+p5-03-returns-schema.txt section 4.

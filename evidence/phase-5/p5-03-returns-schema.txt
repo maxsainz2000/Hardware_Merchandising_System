@@ -1,0 +1,163 @@
+P5-03 - db/migrations/0012_sales-returns.sql - schema evidence
+Captured 2026-08-30, against the real pinned MariaDB instance (ADR-002:
+10.4.32-MariaDB via XAMPP 8.2.12-0).
+
+Grants evidence is a separate file: p5-03-returns-grants.txt.
+
+Design decisions confirmed with the user before implementation:
+  - SalesReturns is mutable (INSERT, UPDATE), the same in-place-status
+    shape PurchaseOrders/PurchaseReturns/StockCounts/StockAdjustments use -
+    not the immutable Sales/SalePayments shape. Inferred from ADR-017
+    section 6's self-approval veto, which requires a genuinely distinct
+    requester (ReturnedByUserId) and approver (ApprovedByUserId): a return
+    within a cashier's permitted scope completes at creation (Status =
+    Completed, no approver); one above the configured threshold
+    (ExceedsThreshold, captured at request time) is created PendingApproval
+    with no stock or refund effect committed yet, and only reaches its
+    terminal state through a later, distinct UPDATE by
+    SalesReturns.ApproveExceptional.
+  - Only three status names (PendingApproval, Completed, Rejected), not
+    four. evidence/phase-4/p4-10-adjustments.txt SS0.3 recorded that
+    StockAdjustmentStatus's "Approved, not yet Applied" state is never
+    actually persisted in practice - ApproveAsync writes the terminal
+    status directly, in the same UPDATE that sets the approver. Known
+    going in here, so SalesReturnStatus does not name a state nothing will
+    ever be observed in.
+  - RefundMethod/RefundAmount ("the operational payment-reversal record",
+    spec section 11) live on the SalesReturns header, one per return event,
+    not per SalesReturnLines row - spec section 11 lists it as one singular
+    item alongside "return" and "return lines". Both nullable, filled in
+    only once the return reaches Completed, paired by a CHECK the same way
+    SalePayments' cash columns are (0011).
+  - RestocksItem, not RemovesStock - the sales-return mirror of
+    PurchaseReturnLines.RemovesStock, named the other direction and
+    matching the name P5-11's own card text already uses.
+  - SalesReturnLines does not capture UnitPrice, unlike ReceiptLines/
+    PurchaseOrderLines. SaleLines is itself immutable (0011), so a line's
+    refund value is safely computed by joining SaleLineId rather than
+    re-capturing a value that can never disagree with its source.
+  - New Domain enum this card: Merchandising.Domain.Sales.SalesReturnStatus.
+
+===============================================================================
+1. Apply 0012_sales-returns.sql as merch_migrator, after 0001-0011
+===============================================================================
+
+$ dotnet run --project src/Merchandising.Maintenance --configuration Debug -- migrate --config "C:\ProgramData\MerchandisingSystem\config\database.migrator.json"
+
+Applying migrations from '...\db\migrations' as 'merch_migrator'...
+  [OK]   0012_sales-returns
+
+===============================================================================
+2. Full verification pass - scripts/run-tests.ps1
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 61, Skipped: 0, Total: 61
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed: 0, Passed: 396, Skipped: 0, Total: 396, Duration: 53 s
+
+All checks passed.
+
+(396 = 376 carried from the P5-02 gate + 20 new SalesReturnSchemaTests.)
+
+===============================================================================
+3. SalesReturnSchemaTests in detail (20/20)
+===============================================================================
+
+$ dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --no-build --filter "FullyQualifiedName~SalesReturnSchemaTests" --logger "console;verbosity=detailed"
+
+  Passed Migration0012_IsRecordedExactlyOnce_AfterMigrations0001To0011 [294 ms]
+
+  Passed SalesReturns_SaleIdIsAForeignKeyToSales [52 ms]
+    P5-03 sale delete (return and sale line both exist) -> ERROR 1451:
+    Cannot delete or update a parent row: a foreign key constraint fails
+    (`merchandising`.`salelines`, CONSTRAINT `FK_SaleLines_Sales` FOREIGN
+    KEY (`SaleId`) REFERENCES `sales` (`Id`))
+    -- checked structurally against information_schema too: a return can
+       never exist without a sale line on its sale, so FK_SaleLines_Sales
+       (0011) always fires first on a raw DELETE regardless of whether
+       FK_SalesReturns_Sales exists - the behavioural proof every other FK
+       test in this file uses cannot isolate this one on its own.
+
+  Passed DeletingAUserReferencedAsReturnedBy_IsRefusedWith1451 [33 ms]
+  Passed DeletingAUserReferencedAsApprovedBy_IsRefusedWith1451 [30 ms]
+  Passed DeletingASalesReturnReferencedByALine_IsRefusedWith1451 [40 ms]
+  Passed DeletingASaleLineReferencedByAReturnLine_IsRefusedWith1451 [41 ms]
+    P5-03 sale line delete (return line exists) -> ERROR 1451: Cannot
+    delete or update a parent row: a foreign key constraint fails
+    (`merchandising`.`salesreturnlines`, CONSTRAINT
+    `FK_SalesReturnLines_SaleLines` FOREIGN KEY (`SaleLineId`) REFERENCES
+    `salelines` (`Id`))
+  Passed DeletingAProductReferencedByAReturnLine_IsRefusedWith1451 [29 ms]
+
+  Passed RestocksItem_IsARealNonNullableColumn_AndBothValuesRoundTrip [53 ms]
+    - both True and False round-trip distinctly (1 and 0), not defaulted
+      or collapsed away.
+
+  Passed ReturnedByAndApprovedBy_AreTwoDistinctUserColumns [29 ms]
+
+  Passed StatusColumn_AcceptsEveryDomainStatusName [72 ms]
+  Passed StatusColumn_RefusesAnOrdinalAndAnUnknownName [29 ms]
+    P5-03 return status '1' -> ERROR 4025
+    P5-03 return status 'completedd' -> ERROR 4025
+    P5-03 return status 'completed' -> ERROR 4025
+    P5-03 return status '' -> ERROR 4025
+
+  Passed RefundMethodWithoutRefundAmount_IsRefused [23 ms]
+  Passed RefundAmountWithoutRefundMethod_IsRefused [22 ms]
+  Passed UnknownRefundMethod_IsRefused [21 ms]
+
+  Passed DecimalColumns_RoundTripBoundaryValuesExactly [31 ms]
+    - 0.001 through SalesReturnLines.QuantityReturned;
+      12345678901234.5678 through SalesReturns.RefundAmount - both exact.
+  Passed MoneyAndQuantityColumns_AreDeclaredAtTheRequiredPrecision [91 ms]
+
+  Passed MerchApi_CanInsertAndUpdateHeader_AndInsertOnlyLines [32 ms]
+  Passed MerchApi_HasNoDeleteGrant_OnEitherTable [30 ms]
+  Passed MerchApi_HasNoUpdateGrant_OnSalesReturnLines [30 ms]
+  Passed MerchApi_CannotAlterOrDropTheNewTables [35 ms]
+
+Test Run Successful.
+Total tests: 20
+     Passed: 20
+
+===============================================================================
+4. Carried-forward drift check - DatabaseDesignDocumentationTests (7/7)
+===============================================================================
+
+docs/database-design.md section 3.6 (POS), the ER diagram, the foreign-keys
+table (53 FKs, up from 47), the append-only grant table, and the migrations
+table are updated for the two new tables; DatabaseDesignDocumentationTests.
+vb's CanonicalTables/ExpectedGrants extended to match (P4-13's drift check,
+extended again at P5-02 for the same reason).
+
+$ dotnet test ... --filter "FullyQualifiedName~DatabaseDesignDocumentationTests"
+
+  Passed LiveSchema_MatchesTheCanonicalTableList [163 ms]
+  Passed EveryCanonicalTable_IsNamedInTheDocument [1 ms]
+  Passed AllDecimalColumns_AreDeclaredAtOneOfTheTwoPinnedScales [21 ms]
+  Passed AllDatetimeColumns_AreDeclaredWithMicrosecondPrecision [12 ms]
+  Passed EveryTable_UsesUtf8mb4UnicodeCiCollation [5 ms]
+  Passed EveryForeignKey_IsRestrictOnDeleteAndUpdate [4 ms]
+  Passed MerchApiGrants_MatchTheDocumentedPostureForEveryTable [5 ms]
+
+Test Run Successful.
+Total tests: 7
+     Passed: 7
+
+35 tables total in the live schema (information_schema.TABLES), 53 foreign
+keys (information_schema.REFERENTIAL_CONSTRAINTS) - both counted directly,
+not assumed, and both now match docs/database-design.md's stated numbers.

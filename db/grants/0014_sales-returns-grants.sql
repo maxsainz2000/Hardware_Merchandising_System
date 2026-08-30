@@ -1,0 +1,65 @@
+-- =============================================================================
+-- 0014_sales-returns-grants.sql
+--
+-- Run as root, AFTER migration 0012_sales-returns.sql has created
+-- SalesReturns and SalesReturnLines. Same table-must-exist-first ordering
+-- constraint as every prior migration -> grants pair (ADR-013, ERROR 1146
+-- if reversed).
+--
+-- Re-runnable: GRANT is idempotent.
+--
+-- Table names are lowercase because @@lower_case_table_names = 1 on Windows
+-- (ADR-003.1): `SalesReturns` in the migration is stored as `salesreturns`.
+--
+-- -----------------------------------------------------------------------------
+-- ONE OF THE TWO IS MUTABLE; THE OTHER IS NOT - AND THAT SPLIT IS ARGUED, NOT
+-- ASSUMED, ON THE ADR-013 PRINCIPLE THAT A NEW TABLE STARTS SELECT-ONLY UNTIL
+-- A WRITE GRANT IS ARGUED FOR IT HERE.
+--
+-- salesreturns records something that is DECIDED, and sometimes decided
+-- twice - a return within a cashier's permitted scope completes at
+-- creation, but one above the configured threshold is created
+-- PendingApproval and only reaches its terminal state
+-- (Completed/Rejected) through a later, distinct UPDATE by
+-- SalesReturns.ApproveExceptional (0012's header, and ADR-017 section 6's
+-- self-approval veto) - the identical in-place-status shape 0008/0009/0010
+-- argue for purchaseorders/purchasereturns/stockcounts/stockadjustments.
+-- UPDATE is granted for that transition.
+--
+-- salesreturnlines records something that HAPPENED and is never revisited -
+-- a return line is written once, at request time, and its bound
+-- (quantity sold minus prior returns) is enforced by the API reading
+-- committed rows, not by editing a line after the fact. INSERT only, the
+-- same shape 0009/0011 give receiptlines/salelines.
+--
+--   salesreturns      INSERT, UPDATE (Status, ApprovedByUserId,
+--                     ApprovedAtUtc, RefundMethod, RefundAmount,
+--                     RowVersion, UpdatedAtUtc) - P5-11.
+--   salesreturnlines   INSERT only - P5-11.
+-- -----------------------------------------------------------------------------
+-- WHAT IS DELIBERATELY NOT GRANTED
+--
+-- DELETE, on either table, to anyone. Spec section 12: "Transactional
+-- records are never physically deleted." A sales return and its lines are
+-- transactional records from the moment they exist, the same as a purchase
+-- return (0011's identical argument).
+--
+-- UPDATE on salesreturnlines. Nothing in this phase's cards edits a return
+-- line after it is written - if a later card needs one, that grant is
+-- argued in a new numbered file, not added here by assumption.
+-- =============================================================================
+
+GRANT INSERT, UPDATE ON `merchandising`.`salesreturns`      TO `merch_api`@`localhost`;
+GRANT INSERT          ON `merchandising`.`salesreturnlines` TO `merch_api`@`localhost`;
+
+FLUSH PRIVILEGES;
+
+-- =============================================================================
+-- VERIFY AFTER RUNNING. All of these must fail with ERROR 1142:
+--
+--   mysql -u merch_api -p merchandising -e "DELETE FROM salesreturns;"
+--   mysql -u merch_api -p merchandising -e "DELETE FROM salesreturnlines;"
+--   mysql -u merch_api -p merchandising -e "UPDATE salesreturnlines SET QuantityReturned = 1;"
+--
+-- Asserted continuously by SalesReturnSchemaTests, not only here.
+-- =============================================================================
