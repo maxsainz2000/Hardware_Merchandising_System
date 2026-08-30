@@ -1,0 +1,103 @@
+===============================================================================
+P5-16 - CLEAN CLONE BUILDS AND BOTH SUITES GREEN, AFTER THE GATE REMEDIATION
+Captured 2026-08-30 on LAPTOP-3HH6OHHE
+Card: tasks.md P5-16, last Done-when box
+===============================================================================
+
+WHY THIS FILE EXISTS AND p5-15-clean-clone.log DOES NOT COVER IT.
+
+p5-15-clean-clone.log captured commit a6d3b6a. P5-16 changed test source -
+three new assertions in POSLayoutTests and UiSpecificationDocumentationTests -
+so that log no longer describes the tree the gate is being asked to close.
+A clean-clone claim that predates the last source change is not a clean-clone
+claim about this tree, and rounding it up would be precisely the class of
+thing the exit review failed this phase for.
+
+Same wording as P1-20, P2-13, P3-09, P4-14, P4-15 and P5-15 on what is NOT
+proven, deliberately, because the claim has not grown: this is a clean CLONE,
+not a clean MACHINE. It reuses this host's
+%ProgramData%\MerchandisingSystem\config\*.json, its XAMPP MariaDB instance,
+and its installed .NET SDK.
+
+Source commit    : f910e32387c372a8606bab9458e4f10bba81c777
+                   (f910e32) "P5-16: the Phase 5 exit review's two findings,
+                   closed"
+Clone target     : C:\Users\Admin\Documents\cc-p5-16-test\repo  (outside the
+                   repository, deleted after capture)
+bin/obj at clone : 0 directories - verified by enumeration before building
+dotnet SDK       : 10.0.301
+MariaDB          : 10.4.32-MariaDB (XAMPP 8.2.12-0)
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+Exit code        : 0
+
+===============================================================================
+1. GUARDRAILS
+===============================================================================
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+
+===============================================================================
+2. BUILD - eleven projects
+===============================================================================
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:16.96
+
+No MSB3030 recurrence. This clone was made at a plain path outside the
+repository rather than under the deep AppData\Local\Temp\claude\... path that
+INDEX.md section 4.5 records as reproducing CARRY-04's copy race
+deterministically - the practical mitigation that section recorded, applied.
+
+===============================================================================
+3. TEST SUITES - both green, nothing skipped
+===============================================================================
+
+Passed!  - Failed: 0, Passed:  82, Skipped: 0, Total:  82   (unit)
+Passed!  - Failed: 0, Passed: 465, Skipped: 0, Total: 465   (integration)
+
+All checks passed.
+
+Chain from the closure pack, continued:
+
+  P5-15 closure pack (a6d3b6a)   79 unit | 465 integration | 544
+  P5-16 this capture (f910e32)   82      | 465             | 547   (+3 / +0)
+
+The three are P5-16's own regression protection for the two findings:
+NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory,
+NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention, and
+EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor.
+Integration is unchanged because this card touches no database, no API and no
+schema.
+
+Worth noting about the third: it resolves evidence paths relative to the
+repository root it finds by walking up for CLAUDE.md, so in this clone it
+read the CLONE's own evidence/ directory. It passing here proves the three
+traversal transcripts are actually committed and reachable from a fresh
+checkout - not merely present in the working tree where they were written.
+
+===============================================================================
+4. THE DEPLOYED SERVICE IS STILL CURRENT
+===============================================================================
+
+P5-15's own last box (CARRY-05) requires that the closure pack not certify
+source nobody is running. P5-16 changed only test source, documentation and
+evidence - nothing under src/Merchandising.Api, src/Merchandising.Domain,
+src/Merchandising.Contracts or src/Merchandising.Infrastructure - so the
+binary redeployed at 2026-08-30 21:18:42 remains current with respect to
+every source file it is built from. Verified at the exit review by direct
+inspection rather than assumed:
+
+  Get-CimInstance Win32_Service -Filter "Name='MerchandisingApi'"  -> Running
+  (Get-Item C:\MerchandisingService\Api-sc\Merchandising.Api.exe).LastWriteTime
+                                                                   -> 2026-08-30 21:18:42
+
+which is later than a62e041 (P5-13, 19:04), the last commit to touch any
+source the service is built from.
