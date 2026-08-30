@@ -376,13 +376,28 @@ Public Class LowStockAndStockReviewTests
 
     End Function
 
-    ''' <summary>Walks pages of the low-stock list, up to a generous cap, looking for one SKU - other integration test files leave permanent fixture products behind (no DELETE grant), so this list is never scoped to only this file's own fixtures.</summary>
+    ''' <summary>
+    ''' Scans every low-stock page until <c>TotalCount</c> is exhausted,
+    ''' never a fixed page cap. Products are permanent - merch_api holds no
+    ''' DELETE grant (this file's own header, ADR-013) - so every prior run's
+    ''' fixtures (many with ReorderLevel 0.000 and no balance row, which
+    ''' COALESCE(b.Quantity, 0)&lt;=0 always matches) stay low-stock forever.
+    ''' A hard-coded "20 pages is enough" cap here is exactly the kind of
+    ''' assumption that quietly stops being true as this suite keeps running
+    ''' against the one long-lived database - confirmed 2026-08-30, when the
+    ''' real count first exceeded a 20-page/100-row-per-page (2000 row) cap
+    ''' this helper used to have, and this test started failing for a
+    ''' newly-created product that was correctly low-stock but sorted past
+    ''' row 2000. Bounding the loop by the response's own TotalCount removes
+    ''' the assumption instead of raising the number and deferring the same
+    ''' failure to whenever the count next doubles.
+    ''' </summary>
     Private Async Function LowStockContainsSkuAsync(client As HttpClient, token As String, sku As String) As Task(Of Boolean)
 
         Const pageSize As Integer = 100
-        Const maxPagesToScan As Integer = 20
+        Dim page As Integer = 1
 
-        For page As Integer = 1 To maxPagesToScan
+        Do
 
             Dim result As LowStockSearchResponse = Await GetLowStockAsync(client, token, $"?page={page}&pageSize={pageSize}")
 
@@ -390,13 +405,13 @@ Public Class LowStockAndStockReviewTests
                 Return True
             End If
 
-            If result.Items.Count < pageSize Then
+            If page * pageSize >= result.TotalCount Then
                 Return False
             End If
 
-        Next
+            page += 1
 
-        Return False
+        Loop
 
     End Function
 

@@ -1,0 +1,180 @@
+P6-01 — docs/report-specification.md and the reconciliation harness
+=====================================================================
+
+Card: P6-01 (Track A). Closes G-22 (definition half). Decides ADR-023.
+Captured 2026-08-30.
+
+This file is cited by docs/report-specification.md section 9 and is
+resolved against disk, and checked for this content, by
+Merchandising.Tests.Unit.ReportSpecificationDocumentationTests
+.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+(the P5-14/P5-16 drift-check shape).
+
+---------------------------------------------------------------------
+1. GUARDRAIL RUN
+---------------------------------------------------------------------
+
+Command: pwsh ./scripts/check-no-csharp.ps1
+
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+---------------------------------------------------------------------
+2. WATCHED FAIL — the reconciliation harness proven falsifiable
+---------------------------------------------------------------------
+
+Per P6-01's own acceptance criterion: "the harness is watched fail
+against a deliberately off-by-one date boundary and a deliberately
+current-cost join, before any real report uses it." No real report
+exists yet (Track B starts at P6-02), so
+Merchandising.Tests.Integration.ReportReconciliationHarnessTests proves
+the mechanism itself with two synthetic scenarios built from real
+StoreTimeZone/decimal arithmetic (docs/report-specification.md section
+7 explains both scenarios' numbers in full).
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj --filter "FullyQualifiedName~ReportReconciliationHarnessTests"
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+Test run for Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed: 0, Passed: 6, Skipped: 0, Total: 6, Duration: 314 ms - Merchandising.Tests.Integration.dll (net10.0)
+
+The six tests, and what each proves:
+  Reconciles_IsTrue_WhenReportAndDetailTotalsAgree               - control case, passes
+  AssertReconciles_PassesSilently_WhenTotalsAgree                - control case, passes
+  Reconciles_IsFalse_ForADeliberatelyOffByOneDateBoundary         - WATCHED FAIL scenario 1: Reconciles() correctly
+                                                                     returns False for a naive UTC-calendar-date
+                                                                     report total (200.0000) against the correct
+                                                                     store-local detail total (350.0000)
+  AssertReconciles_Throws_ForTheOffByOneDateBoundaryScenario      - WATCHED FAIL scenario 1, the assertion itself:
+                                                                     AssertReconciles throws AssertFailedException
+                                                                     when fed the mismatched pair - proven by
+                                                                     Assert.ThrowsExactly(Of AssertFailedException)
+  Reconciles_IsFalse_ForADeliberatelyCurrentCostJoin              - WATCHED FAIL scenario 2: Reconciles() correctly
+                                                                     returns False for a current-cost report total
+                                                                     (600.0000) against the captured-cost detail
+                                                                     total (500.0000)
+  AssertReconciles_Throws_ForTheCurrentCostJoinScenario           - WATCHED FAIL scenario 2, the assertion itself:
+                                                                     AssertReconciles throws AssertFailedException
+
+This is the same "prove the detector, not merely its existence"
+discipline PaymentWordingTests.Denylist_FiresOnTheExactBadPhrase_And
+PassesOnTheCorrectedOne (P5-12) already established in this codebase:
+Reconciles_IsFalse_For... asserts the pure predicate itself catches
+each defect, and AssertReconciles_Throws_For... asserts the assertion
+wrapper actually fails loudly rather than passing silently - both
+halves proven, not just the passing control case.
+
+---------------------------------------------------------------------
+3. THE STORE-LOCAL DAY BOUNDARY — proven with real timestamps
+---------------------------------------------------------------------
+
+Command: dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj --filter "FullyQualifiedName~StoreTimeZoneBoundaryTests|FullyQualifiedName~ReportSpecificationDocumentationTests"
+
+Merchandising.Domain.StoreTimeZone.StartOfDayUtc/EndOfDayUtcExclusive
+for store-local 2026-08-30 were asserted against the exact worked
+numbers docs/report-specification.md section 2 states:
+
+  StartOfDayUtc(2026-08-30)         = 2026-08-29 16:00:00 UTC
+  EndOfDayUtcExclusive(2026-08-30)  = 2026-08-30 16:00:00 UTC
+  2026-08-30 23:59:59 Asia/Manila   = 2026-08-30 15:59:59 UTC  (inside its own day's window)
+  2026-08-30 02:00:00 Asia/Manila   = 2026-08-29 18:00:00 UTC  (the actual cross-midnight divergence case)
+
+StoreTimeZoneBoundaryTests.ASaleAt235959StoreLocal_LandsInsideItsOwnDaysWindow_NotTheNext
+proves the 23:59:59 case lands inside [2026-08-29T16:00:00Z,
+2026-08-30T16:00:00Z) and not inside the next day's window.
+
+StoreTimeZoneBoundaryTests.A235959LocalSale_HappensToShareItsUtcCalendarDate_UnlikeAnEarlyMorningOne
+proves, and documents, that 23:59:59 local does NOT diverge from a
+naive UTC-calendar-date reading in this UTC+8, no-DST zone, while an
+early-morning local sale (02:00) does - the actual failure mode
+plan.md section 7 point 2 warns about ("a day boundary converted in the
+wrong direction moves a sale between reports").
+
+Result at the time evidence for this run was first captured (before this
+file existed, so its own drift-check test necessarily failed):
+
+  Failed EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor [39 ms]
+   (docs/report-specification.md cites evidence/phase-6/p6-01-report-definitions.txt,
+    which did not yet exist on disk - expected and resolved by this file's own creation)
+  Failed!  - Failed: 1, Passed: 9, Skipped: 0, Total: 10
+
+---------------------------------------------------------------------
+4. A PRE-EXISTING, UNRELATED FAILURE FOUND AND FIXED ALONG THE WAY
+---------------------------------------------------------------------
+
+The first full pwsh ./scripts/run-tests.ps1 pass after this file first
+existed came back 470/471 on the integration suite - one failure,
+unrelated to anything this card touches:
+
+  Failed GetLowStock_IncludesAtOrBelowReorderLevel_ExcludesAboveAndInactive
+  Assert.IsTrue failed. 'condition' expression:
+  'Await LowStockContainsSkuAsync(client, token, belowSku)'.
+  A product at or below its own reorder level must be listed.
+
+Confirmed pre-existing, not caused by this card: `git stash -u` back to
+the unmodified tip (75b9d22, before any P6-01 file existed) reproduced
+the identical failure running that one test alone.
+
+Root cause, found by direct query against the real database
+(merch_api): `Products` rows are permanent (no DELETE grant - ADR-013),
+and this project has been run repeatedly since Phase 3/4. The number of
+rows matching the real query's own WHERE clause -
+`p.IsActive = 1 AND COALESCE(b.Quantity, 0.000) <= p.ReorderLevel` -
+had grown to 2074 (most of them ReorderLevel-0.000 fixtures from other
+files with no balance row at all, which the COALESCE always makes
+low-stock). The test's own polling helper, LowStockContainsSkuAsync,
+capped its scan at a hard-coded 20 pages x 100 rows = 2000 and gave up
+after that - a limit that was never wrong when it was written, and had
+just been exceeded by ordinary accumulation. The newly-created fixture
+product in this run had Quantity 5.000, sorting (ORDER BY Quantity ASC)
+after the 2036 rows below it - past row 2000, past the helper's own cap,
+never reached.
+
+Fix: src/tests/Merchandising.Tests.Integration/LowStockAndStockReviewTests.vb,
+LowStockContainsSkuAsync - the fixed page cap is replaced with a loop
+bounded by the response's own TotalCount, so the helper is correct for
+any database size rather than "correct until the count doubles again."
+Confirmed by re-running the isolated test (now passing) and the whole
+file (8/8 passing) after the fix, before the final full-suite run below.
+
+---------------------------------------------------------------------
+5. FULL GUARDRAILS + BOTH SUITES, GENUINELY GREEN
+---------------------------------------------------------------------
+
+Command: pwsh ./scripts/run-tests.ps1
+Exit code: 0
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 92, Skipped: 0, Total: 92, Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB 10.4.32) ===
+Passed!  - Failed: 0, Passed: 471, Skipped: 0, Total: 471, Duration: 1 m 26 s - Merchandising.Tests.Integration.dll (net10.0)
+
+This is the run tasks.md's Done-when boxes are ticked against, and the
+run this file's own drift-check test (ReportSpecificationDocumentation
+Tests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCited
+For, included in the 92 Unit tests above) passed against.
+

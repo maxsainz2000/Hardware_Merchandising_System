@@ -81,20 +81,20 @@ Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 con
 
 *Nothing in Track B may start before this lands: every report cites these definitions rather than restating them.*
 
-### ⬜ P6-01 · `docs/report-specification.md` and the reconciliation harness 🎯
+### ✅ P6-01 · `docs/report-specification.md` and the reconciliation harness 🎯
 **Spec:** §14, §23 (G-22) · **Closes:** G-22 (definition half) · **Decides:** ADR-023
 **Files:** `docs/report-specification.md`, `src/Merchandising.Domain/Reporting/`, `src/Merchandising.Contracts/Reporting/`, `src/tests/Merchandising.Tests.Integration/ReportReconciliationHarness.vb`
 
 **Do:** Define, once and in writing, what every report below means: the store-local day boundary and its UTC conversion, returns/cancellation treatment per report, cost basis (captured, never current), rounding, filter semantics inherited from P3-03, and the permission each report requires. Then build the harness that every Track B card plugs into — the reconciliation assertion `plan.md` §7 makes this phase's key design call.
 
 **Done when:**
-- [ ] Every one of spec §14's twelve reports has a row stating its returns treatment, its date-boundary rule, and its cost basis — no report may define these for itself later
-- [ ] The store-local → UTC day boundary is stated **as an example with real timestamps**, not as a sentence, and a test asserts a sale at 23:59:59 Asia/Manila lands in the day a cashier would expect and not the UTC one
-- [ ] The reconciliation harness compares the report total against **the existing detail endpoint's** sum for the same filter — two independent code paths, asserted, never the report's own query run twice
-- [ ] **Proven falsifiable:** the harness is watched fail against a deliberately off-by-one date boundary and a deliberately current-cost join, before any real report uses it
-- [ ] ADR-023 records the day-boundary rule and the two-independent-paths requirement, and why a self-comparing reconciliation test is worthless
-- [ ] Document verified by a drift check in the P5-14/P5-16 shape — **every evidence path it cites is resolved against disk and required to contain what it is cited for** (the Phase 5 gate's finding 2, not repeated)
-- [ ] States the academic-prototype framing required by `plan.md` §5
+- [x] Every one of spec §14's twelve reports has a row stating its returns treatment, its date-boundary rule, and its cost basis — no report may define these for itself later
+- [x] The store-local → UTC day boundary is stated **as an example with real timestamps**, not as a sentence, and a test asserts a sale at 23:59:59 Asia/Manila lands in the day a cashier would expect and not the UTC one — checked against the actual offset arithmetic rather than assumed: 23:59:59 proves the window's inclusive upper bound; the real early-morning divergence (`plan.md` §7 point 2's actual risk) is proven separately with a 02:00:00 example, both stated in `docs/report-specification.md` §2 and ADR-023 point 2
+- [x] The reconciliation harness compares the report total against **the existing detail endpoint's** sum for the same filter — two independent code paths, asserted, never the report's own query run twice
+- [x] **Proven falsifiable:** the harness is watched fail against a deliberately off-by-one date boundary and a deliberately current-cost join, before any real report uses it
+- [x] ADR-023 records the day-boundary rule and the two-independent-paths requirement, and why a self-comparing reconciliation test is worthless
+- [x] Document verified by a drift check in the P5-14/P5-16 shape — **every evidence path it cites is resolved against disk and required to contain what it is cited for** (the Phase 5 gate's finding 2, not repeated)
+- [x] States the academic-prototype framing required by `plan.md` §5
 
 **Evidence:** `evidence/phase-6/p6-01-report-definitions.txt`
 
