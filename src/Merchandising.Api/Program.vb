@@ -17,6 +17,7 @@ Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Procurement
 Imports Merchandising.Api.Receiving
+Imports Merchandising.Api.Sales
 Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Infrastructure.Security
@@ -291,6 +292,12 @@ Public Module Program
         ' vetoed by AdjustmentsController via IAuthorizationService, the
         ' P3-04 mechanism - never a new check here).
         builder.Services.AddScoped(Of AdjustmentService)()
+
+        ' P5-04 / ADR-006 + ADR-007 + ADR-018: cashier sessions - Open/Close,
+        ' each its own transaction. Open catches the ADR-018 unique-index
+        ' violation from a concurrent double-open and turns it into a
+        ' controlled AlreadyOpen outcome rather than an unhandled exception.
+        builder.Services.AddScoped(Of CashierSessionService)()
 
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.

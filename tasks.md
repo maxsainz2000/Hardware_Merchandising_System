@@ -160,7 +160,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Sequential. Runs after Track B. A sale cannot exist without an open session, so this precedes Track D.*
 
-### ⬜ P5-04 · Open and close a cashier session; a sale requires an open one
+### ✅ P5-04 · Open and close a cashier session; a sale requires an open one
 
 **Spec:** §10.3 · **Files:** `src/Merchandising.Api/Controllers/CashierSessionsController.vb`, `src/Merchandising.Api/Sales/CashierSessionService.vb`, `src/Merchandising.Infrastructure/Data/CashierSessionRepository.vb`, `src/Merchandising.Contracts/Sales/`
 
@@ -168,12 +168,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] One cashier cannot hold two open sessions at once — enforced by a **unique index**, proven by a concurrent double-open that bypasses any API check (the P2-07 / P3-02 / P4-02 shape), `success | ERROR 1062`
-- [ ] Opening float is validated for scale at the API boundary before binding (ADR-004.1)
-- [ ] A closed session is immutable and remains fully readable
-- [ ] Open and close each write an audit row with the actor and correlation ID
-- [ ] **Matrix suite extended** for every route added — `CashierSessions.Manage` positive and negative cells, 403 not 401/404
-- [ ] Integration suite green
+- [x] One cashier cannot hold two open sessions at once — enforced by a **unique index**, proven by a concurrent double-open that bypasses any API check (the P2-07 / P3-02 / P4-02 shape), `success | ERROR 1062`
+- [x] Opening float is validated for scale at the API boundary before binding (ADR-004.1)
+- [x] A closed session is immutable and remains fully readable
+- [x] Open and close each write an audit row with the actor and correlation ID
+- [x] **Matrix suite extended** for every route added — `CashierSessions.Manage` positive and negative cells, 403 not 401/404
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-5/p5-04-cashier-sessions.txt`
 

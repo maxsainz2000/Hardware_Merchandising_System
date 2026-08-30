@@ -46,6 +46,7 @@ Imports Merchandising.Contracts.Maintenance
 Imports Merchandising.Contracts.Procurement
 Imports Merchandising.Contracts.Products
 Imports Merchandising.Contracts.Receiving
+Imports Merchandising.Contracts.Sales
 Imports Merchandising.Contracts.Settings
 Imports Merchandising.Domain.Configuration
 Imports Merchandising.Domain.Security
@@ -986,6 +987,70 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P5-04's cashier-session endpoints - CashierSessions.Manage's first
+    ''' live routes. ONE test covers both (Open/Close), the same
+    ''' "one policy, several related actions, one method" shape
+    ''' StockCountsPerform_MatrixMatchesPolicyRegistry uses above: a
+    ''' disallowed role is refused 403 at Open (there is nothing to close if
+    ''' Open itself is refused); an allowed role's probe opens for real, then
+    ''' closes it again immediately - both so Close's own gate is genuinely
+    ''' exercised, and so this test leaves no fixture user holding an Open
+    ''' session behind for a rerun to collide with under the ADR-018 unique
+    ''' index (CloseAnyOpenFixtureCashierSessionsDirectlyAsync clears any
+    ''' left over from an earlier interrupted run first, the same
+    ''' "force-clear a shared singleton resource before probing it" shape
+    ''' ReleaseAnyActiveLockDirectlyAsync already uses for MaintenanceLocks).
+    ''' </summary>
+    <TestMethod>
+    Public Async Function CashierSessionsManage_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Await CloseAnyOpenFixtureCashierSessionsDirectlyAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.CashierSessionsManage)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+                Dim isAllowed As Boolean = allowedRoles.Contains(roleName)
+
+                Dim openBody As New OpenCashierSessionRequest With {
+                    .OpeningFloat = 100.0000D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+                Using openResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token, openBody)
+                    Await AssertCellAsync("CashierSessions.Manage (open)", roleName, isAllowed, openResponse)
+
+                    If Not isAllowed Then
+                        Continue For
+                    End If
+
+                    Dim opened As CashierSessionResponse = Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()
+
+                    Dim closeBody As New CloseCashierSessionRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+                    Using closeResponse As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Post, $"/api/v1/cashier-sessions/{opened.Id}/close", token, closeBody)
+                        Await AssertCellAsync("CashierSessions.Manage (close)", roleName, isAllowed:=True, closeResponse)
+                    End Using
+
+                End Using
+
+            Next
+
+            Using anonymousResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", token:=Nothing,
+                                 requestBody:=New OpenCashierSessionRequest With {.OpeningFloat = 100.0000D, .IdempotencyKey = Guid.NewGuid().ToString("d")})
+                Await AssertUnauthenticatedAsync("CashierSessions.Manage (open)", anonymousResponse)
+            End Using
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)
@@ -1499,6 +1564,34 @@ Public Class AuthorizationMatrixTests
                     "SET ReleasedAtUtc = UTC_TIMESTAMP(6), VerificationPassed = 1, " &
                     "    Detail = CONCAT(COALESCE(Detail,''), ' [released by P2-03 test cleanup]') " &
                     "WHERE ReleasedAtUtc IS NULL;"
+                Await command.ExecuteNonQueryAsync()
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' Force-closes any Open session left behind by this test's own fixture
+    ''' users (SuperAdmin/Admin/Cashier - the only three CashierSessions.Manage
+    ''' allows) from an earlier interrupted run, via UPDATE as merch_api
+    ''' (db/grants/0013 - the same identity CashierSessionService itself
+    ''' writes through). Without this, a rerun's Open probe for an allowed
+    ''' role could find its fixture user still holding an Open session and
+    ''' get a controlled 409 instead of the 201 this test expects - the
+    ''' ADR-018 unique index doing exactly what it is meant to do, just
+    ''' against stale state this test itself left behind, not against a
+    ''' concurrent caller.
+    ''' </summary>
+    Private Async Function CloseAnyOpenFixtureCashierSessionsDirectlyAsync() As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "UPDATE CashierSessions " &
+                    "   SET Status = 'Closed', ClosedByUserId = OpenedByUserId, ClosedAtUtc = UTC_TIMESTAMP(6), " &
+                    "       RowVersion = RowVersion + 1, UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Status = 'Open' AND OpenedByUserId IN " &
+                    "   (SELECT Id FROM (SELECT Id FROM Users WHERE Username LIKE 'p2_03_fixture_%') AS u);"
                 Await command.ExecuteNonQueryAsync()
             End Using
         End Using

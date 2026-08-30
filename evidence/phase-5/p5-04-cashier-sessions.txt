@@ -1,0 +1,78 @@
+=== P5-04: Open and close a cashier session; a sale requires an open one ===
+Captured 2026-08-30T05:17:25Z
+
+--- Guardrails (scripts/check-no-csharp.ps1) ---
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+--- Full build ---
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Merchandising.Domain -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Inventory -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.POS -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Procurement -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Maintenance -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Tests.Unit -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Api -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Integration -> C:\Users\Admin\Documents\Hardware_Merchandising_System\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:06.18
+
+--- P5-04 test run: CashierSessionTests + CashierSessionsManage matrix (detailed) ---
+  Passed CashierSessionsManage_MatrixMatchesPolicyRegistry [1 s]
+ CashierSessions.Manage (open) | SuperAdmin | expected 2xx | got 201 Created
+ CashierSessions.Manage (close) | SuperAdmin | expected 2xx | got 200 OK
+ CashierSessions.Manage (open) | Admin | expected 2xx | got 201 Created
+ CashierSessions.Manage (close) | Admin | expected 2xx | got 200 OK
+ CashierSessions.Manage (open) | ProcurementOfficer | expected 403 | got 403 Forbidden
+ CashierSessions.Manage (open) | InventoryClerk | expected 403 | got 403 Forbidden
+ CashierSessions.Manage (open) | Cashier | expected 2xx | got 201 Created
+ CashierSessions.Manage (close) | Cashier | expected 2xx | got 200 OK
+ CashierSessions.Manage (open) | (anonymous) | expected 401 | got 401 Unauthorized
+  Passed OpenAsync_FreshCashier_CreatesOpenSession [103 ms]
+  Passed OpenAsync_CashierAlreadyHasOpenSession_ReturnsAlreadyOpen [91 ms]
+  Passed TwoConcurrentOpens_SameCashier_ExactlyOneSucceeds [78 ms]
+ P5-04 concurrent open -> Created | AlreadyOpen
+  Passed OpenAsync_AfterPriorSessionCloses_Succeeds [114 ms]
+  Passed OpenAsync_OverScaleOpeningFloat_Throws [81 ms]
+  Passed OpenAsync_NegativeOpeningFloat_Throws [75 ms]
+  Passed OpenCashierSession_OverScaleOpeningFloat_Refused400 [254 ms]
+  Passed OpenCashierSession_AlreadyOpen_Refused409 [220 ms]
+  Passed CloseAsync_OpenSession_ClosesAndRecordsActor [81 ms]
+  Passed CloseAsync_AlreadyClosed_ReturnsNotOpen [85 ms]
+  Passed CloseAsync_UnknownId_ReturnsNotFound [75 ms]
+  Passed CloseAsync_ClosedSession_RemainsFullyReadable [87 ms]
+  Passed OpenAsync_WritesAuditRow [80 ms]
+  Passed CloseAsync_WritesAuditRow [81 ms]
+  Passed OpenAsync_RepeatedIdempotencyKey_ReplaysOriginal [87 ms]
+  Passed CloseAsync_RepeatedIdempotencyKey_ReplaysOriginal [81 ms]
+Test Run Successful.
+Total tests: 17
+     Passed: 17
+
+--- Full suite (unit + integration) ---
+=== Guardrails ===
+=== Build ===
+=== Unit tests ===
+Passed!  - Failed:     0, Passed:    61, Skipped:     0, Total:    61, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed:     0, Passed:   413, Skipped:     0, Total:   413, Duration: 56 s - Merchandising.Tests.Integration.dll (net10.0)
+All checks passed.
