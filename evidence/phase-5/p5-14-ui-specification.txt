@@ -1,0 +1,135 @@
+P5-14 - docs/ui-specification.md, all three clients.
+
+Captured 2026-08-30 on this workstation. This file records what is proven and
+what is still owed - honestly, not rounded up (CLAUDE.md section 9).
+
+===============================================================================
+0. What this card built
+===============================================================================
+
+docs/ui-specification.md, documenting the settled visual system across
+Merchandising.Procurement, Merchandising.Inventory, and Merchandising.POS as
+they stand at Phase 5 close: screen inventory, the three-row window chrome
+(top bar / workspace / status bar), the 1366x768 @ 125% constraint stated as
+a number (1092.8 x 576.0 DIP), TabIndex/focus conventions, error and
+refusal presentation (ApiFailurePresenter's three outcomes), connection and
+session states, typography, and data presentation. Nine sections plus a
+conformance section naming the drift-check suite.
+
+src/tests/Merchandising.Tests.Unit/UiSpecificationDocumentationTests.vb (5
+tests) - the P2-12/P3-08/P4-13 drift-check shape applied to this document:
+constructs each of the three MainWindow types on an STA thread (the same
+posture ProcurementLayoutTests/InventoryLayoutTests/POSLayoutTests already
+use) to read live Width/Height/MinWidth/MinHeight, recomputes the 1092.8 x
+576.0 DIP work area from the 1366x768 @ 125% arithmetic rather than copying
+it, reads all three MainWindow.xaml files and ApiFailurePresenter.vb as raw
+source text for the conventions that are not CLR properties, and cross-checks
+every one of those live facts against the committed document.
+
+===============================================================================
+1. What is proven, by an automated suite that ran on this machine
+===============================================================================
+
+  pwsh ./scripts/check-no-csharp.ps1   -> All guardrails passed (G-A..G-D).
+  pwsh ./scripts/run-tests.ps1         -> Build: 0 warnings, 0 errors.
+                                           Unit tests:        79 passed, 0 failed.
+                                           Integration tests: 465 passed, 0 skipped.
+
+UiSpecificationDocumentationTests - 5 tests, new this card, inside the 79
+above:
+  - AllThreeClients_DeclareTheSameGeometry_MatchingSection3Table: constructs
+    Procurement/Inventory/POS's MainWindow on an STA thread, reads
+    Width/Height/MinWidth/MinHeight, and asserts all three agree with each
+    other and with the numbers docs/ui-specification.md section 3's table
+    states (1024/560/960/520).
+  - WorkAreaFigures_MatchTheDocumentedArithmetic: recomputes 1366/1.25 and
+    (768-48)/1.25 in the test itself (not copied from the document) and
+    asserts the result is 1092.8 x 576.0, and that the document states both
+    numbers.
+  - EveryClientWindow_SourceMatchesTheDocumentedConventions: reads all three
+    MainWindow.xaml files as source text and asserts the sign-in TabIndex
+    triplet (0/1/2), TabIndex="99" on SignOutButton, and every status-bar
+    binding marker (StatusMessage, ResultText, HasCorrelationId,
+    CorrelationId, IsInMaintenance, MaintenanceMessage, #FFF3CD) are present
+    in all three files and mentioned in the document.
+  - ApiFailurePresenter_MatchesSection5sQuotedWording: reads
+    ApiFailurePresenter.vb as source text, extracts the MaintenanceErrorCode
+    constant's literal value by regex (not by referencing the Const directly
+    - a direct reference folds to a compile-time literal and makes the
+    assertion trivially true, MSTEST0032), and asserts both client-authored
+    sentences and the constant's value appear verbatim in the document.
+  - Document_StatesTheAcademicPrototypeFraming: asserts the document states
+    the academic-prototype framing and explains XAMPP is a course
+    requirement (plan.md section 5).
+
+===============================================================================
+2. Proven falsifiable
+===============================================================================
+
+Per this repo's own standard (P5-12: "a wording test that has never fired is
+exactly as decorative as any other"), the geometry drift-check was watched
+fail before being trusted. docs/ui-specification.md's section 3 table was
+deliberately edited from:
+
+    | `Width` | 1024 | 1092.8 | yes |
+
+to:
+
+    | `Width` | 1025 | 1092.8 | yes |
+
+Running only UiSpecificationDocumentationTests against the corrupted document:
+
+    Failed AllThreeClients_DeclareTheSameGeometry_MatchingSection3Table [638 ms]
+    Error Message:
+       Assert.AreEqual failed. Expected a difference no greater than <0.001>
+       between expected value <1025> and actual value <1024>. 'expected'
+       expression: 'documentedWidth', 'actual' expression: 'g.Width'.
+       Procurement's MainWindow.Width is 1024, but docs/ui-specification.md's
+       section 3 table declares 1025.
+    Failed!  - Failed: 1, Passed: 4, Skipped: 0, Total: 5
+
+The edit was then reverted and the suite re-run clean (5/5 passed) before
+this evidence file was written.
+
+===============================================================================
+3. Done-when boxes - status
+===============================================================================
+
+  [x] Every convention stated as a rule a fourth screen could be built from,
+      not a description of what three screens happen to do - section 2's
+      window-chrome rule, section 3's resize-and-recompute rule, section 4's
+      TabIndex numbering scheme, and section 5's "call ApiFailurePresenter,
+      never hand-construct" rule are each written as an instruction, not a
+      transcript.
+  [x] The 1366x768 @ 125% work area is stated as a number (1092.8 x 576.0
+      DIP), with the MinWidth/MinHeight-must-fit rule, and the Phase 3
+      regression is named so it cannot recur by forgetting - section 3.
+  [x] Error and refusal presentation documented: the API's ErrorCode/Message
+      verbatim for a Rejected outcome, the correlation ID always visible when
+      one exists, and the two places wording is NOT the API's own (the
+      Unavailable and Maintenance client-authored sentences) named as such
+      rather than left to look like API wording - section 5.
+  [x] Verified against the running clients rather than transcribed by hand,
+      in the P2-12/P3-08/P4-13 shape - UiSpecificationDocumentationTests,
+      proven falsifiable in section 2 above.
+  [x] States the academic-prototype framing required by plan.md section 5 -
+      the document's own Scope note, asserted by
+      Document_StatesTheAcademicPrototypeFraming.
+  [x] One of P0-07's remaining documents struck from its list - tasks.md
+      line 45 updated: ui-specification.md marked written.
+
+===============================================================================
+4. What this document does NOT claim - stated honestly, not smoothed over
+===============================================================================
+
+Section 0 of docs/ui-specification.md records, rather than hides, that spec
+section 16's "shared visual system" is currently a convention independently
+reproduced three times (no shared ResourceDictionary/Styles.xaml exists
+anywhere in Merchandising.ClientCommon or any client's Application.xaml) -
+proven identical by this card's drift check, but not enforced by one shared
+resource a fourth client would automatically inherit. Section 6 records that
+no loading indicator or empty-state control exists in any client as of
+Phase 5, contrary to spec section 16's requirement, and names plan.md
+section 7's Phase 7 UI refinement pass as where both gaps are owed. Neither
+is a Phase 5 exit criterion; both are stated so they cannot be forgotten by
+the document's own silence.

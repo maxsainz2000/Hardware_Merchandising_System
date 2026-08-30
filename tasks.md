@@ -42,7 +42,7 @@ Two of its boxes need nobody but you and can still invalidate ADR-015: whether M
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; ~~`database-design.md` finalised → P4-13~~ **written**; `ui-specification.md` → **P5-14, this phase**; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
+Three `docs/*.md` remain: ~~`api-specification.md` → P3-08~~ **written**; ~~`database-design.md` finalised → P4-13~~ **written**; ~~`ui-specification.md` → P5-14~~ **written**; `backup-restore-guide.md` + `user-guide.md` → Phase 6; `test-plan.md` → Phase 7.
 
 ### ⬜ CARRY-01 · Account recovery has no implementation and no card — **place it before Phase 6 planning closes**
 
@@ -359,7 +359,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 ## Track H — Documents and closure
 
-### ⬜ P5-14 · `docs/ui-specification.md` — all three clients
+### ✅ P5-14 · `docs/ui-specification.md` — all three clients
 
 **Spec:** §16, §20 · **Files:** `docs/ui-specification.md`
 
@@ -367,12 +367,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Every convention is stated as a rule a fourth screen could be built from, not as a description of what three screens happen to do
-- [ ] The 1366×768 @ 125% work area is stated **as a number** (1092.8 × 576.0 DIP), with the rule that a window's `MinWidth`/`MinHeight` must fit inside it — the Phase 3 gate's defect, written down so it cannot recur by forgetting
-- [ ] Error and refusal presentation documented: the API's wording verbatim, the correlation ID always visible, never a client-invented message
-- [ ] Verified against the running clients rather than transcribed by hand, in the P2-12 / P3-08 / P4-13 shape — a drift check that fails when the XAML moves
-- [ ] States the academic-prototype framing required by `plan.md` §5
-- [ ] One of P0-07's remaining documents struck from its list
+- [x] Every convention is stated as a rule a fourth screen could be built from, not as a description of what three screens happen to do
+- [x] The 1366×768 @ 125% work area is stated **as a number** (1092.8 × 576.0 DIP), with the rule that a window's `MinWidth`/`MinHeight` must fit inside it — the Phase 3 gate's defect, written down so it cannot recur by forgetting
+- [x] Error and refusal presentation documented: the API's wording verbatim, the correlation ID always visible, never a client-invented message
+- [x] Verified against the running clients rather than transcribed by hand, in the P2-12 / P3-08 / P4-13 shape — a drift check that fails when the XAML moves, **proven falsifiable**: watched fail against a deliberately corrupted window-width figure before being trusted
+- [x] States the academic-prototype framing required by `plan.md` §5
+- [x] One of P0-07's remaining documents struck from its list
 
 **Evidence:** `evidence/phase-5/p5-14-ui-specification.txt`
 
@@ -407,7 +407,7 @@ From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-5/` 
 - [ ] Completed sales immutable (P5-10)
 - [ ] Change calculation exact to the stored precision (P5-01, P5-07)
 - [ ] Payment-method wording verified as non-authorising in both UI and reports (P5-12)
-- [ ] `docs/ui-specification.md` written (P5-14)
+- [x] `docs/ui-specification.md` written (P5-14)
 - [ ] G-24 closed, and G-12's sale component closed, in the gap register (P5-15)
 - [ ] Clean-clone build and both test suites green (P5-15)
 - [ ] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
