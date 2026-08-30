@@ -314,7 +314,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Files disjoint from every other track. Can run in parallel with Track E or G.*
 
-### ⬜ P5-12 · Payment-method wording verified non-authorising, in UI and in reports
+### 🟡 P5-12 · Payment-method wording verified non-authorising, in UI and in reports — **the gap-register box closes at P5-15**
 
 **Spec:** §10.3, §23 · **Closes:** G-24 · **Files:** `src/Merchandising.POS/`, `src/Merchandising.Contracts/Sales/`, `src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb`
 
@@ -322,12 +322,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] A test scans the POS client's XAML and the sales/report contracts for a denylist of authorising words — *approved, authorised/authorized, accepted, cleared, settled, charged* — applied to card/e-wallet contexts, and **fails** if one appears
-- [ ] **Proven falsifiable**: the denylist test is watched fail against a deliberately introduced "Payment approved" label before being trusted. A wording test that has never fired is exactly as decorative as any other
-- [ ] The affirmative wording exists too — the UI and the response both state that card/e-wallet is **recorded** and not authorised, asserted rather than assumed absent
-- [ ] The exclusion is stated where a user reads it, not only in the spec: no terminal, bank, cash drawer, scale, customer display or receipt printer integration
-- [ ] **G-24 recorded closed** in the gap register at P5-15
-- [ ] Unit suite green
+- [x] A test scans the POS client's XAML and the sales/report contracts for a denylist of authorising words — *approved, authorised/authorized, accepted, cleared, settled, charged* — applied to card/e-wallet contexts, and **fails** if one appears
+- [x] **Proven falsifiable**: the denylist test is watched fail against a deliberately introduced "Payment approved" label before being trusted. A wording test that has never fired is exactly as decorative as any other
+- [x] The affirmative wording exists too — the UI and the response both state that card/e-wallet is **recorded** and not authorised, asserted rather than assumed absent
+- [x] The exclusion is stated where a user reads it, not only in the spec: no terminal, bank, cash drawer, scale, customer display or receipt printer integration
+- [ ] **G-24 recorded closed** in the gap register at P5-15 — that edit belongs to P5-15, not this card
+- [x] Unit suite green
 
 **Evidence:** `evidence/phase-5/p5-12-payment-wording.txt`
 

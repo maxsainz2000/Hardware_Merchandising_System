@@ -1,0 +1,24 @@
+<!--
+  Merchandising.POS.Resources.PaymentWording
+
+  G-24's mitigation, as strings a screen can bind to rather than as a
+  sentence in the spec: "label card/e-wallet as operational recording only;
+  exclude terminal/bank integration." SalePaymentResponse.RecordedStatus
+  (Merchandising.Contracts) already carries this discipline in the data;
+  these two resources are its UI-facing counterpart, built ahead of the
+  screens that will show them (P5-13) the same way P5-01 built the
+  arithmetic type P5-07 later consumed.
+
+  PaymentWordingTests.vb (P5-12) source-scans this file for the denylist of
+  authorising words and asserts both strings below are present verbatim.
+  Do not edit the wording without re-reading that test.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:system="clr-namespace:System;assembly=mscorlib">
+
+    <system:String x:Key="CardEWalletRecordedNotice">Card and e-wallet payments shown here are recorded for this sale only, not authorised. This system does not contact any card network, e-wallet provider, or bank.</system:String>
+
+    <system:String x:Key="CardEWalletIntegrationExclusionNotice">No integration exists with a payment terminal, a bank, the cash drawer, a weighing scale, a customer display, or a receipt printer.</system:String>
+
+</ResourceDictionary>

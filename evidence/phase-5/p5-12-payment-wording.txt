@@ -1,0 +1,166 @@
+P5-12 - G-24 closed for its POS/wording component: "payment recording could
+be mistaken for payment authorization." Card/e-wallet is asserted as
+recorded-not-authorised in both the UI-facing resource and the API response,
+and the exclusion list is stated where a cashier reads it - proven by a test
+that is itself proven falsifiable, not merely written.
+
+Captured 2026-08-30 on this workstation.
+
+===============================================================================
+0. Why this file exists
+===============================================================================
+
+Track G (P5-13, the real POS screens) has not been built yet - MainWindow.xaml
+is still the empty Phase 1 shell. Track F is independent of Track G by design,
+so this card could not wait for a payment screen to exist. Instead it adds the
+UI-facing wording primitive P5-13 will bind to later (the same relationship
+P5-01's arithmetic type has to P5-07):
+
+  File:  src/Merchandising.POS/Resources/PaymentWording.xaml
+  File:  src/Merchandising.POS/Application.xaml (merges the dictionary above)
+  File:  src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb
+  Tests: 5, unit only - no database, no running service
+
+===============================================================================
+1. The denylist test, and what it actually caught
+===============================================================================
+
+Two rounds of real friction before the suite was trustworthy, both left in
+this file because a wording test that never fired on real content is exactly
+as decorative as one that has never fired at all.
+
+ROUND 1 - a VB gotcha, not a design defect. The resource-file helper methods
+each declared "Dim path As String = Path.Combine(...)" - VB is case-insensitive,
+so the local "path" shadows the System.IO.Path TYPE from the point of its own
+declaration, including inside its own initializer. The compiler caught this
+immediately and correctly:
+
+  error BC30456: 'Combine' is not a member of 'String'.
+  error BC42104: Variable 'path' is used before it has been assigned a value.
+
+Fixed by renaming the locals to "resourcePath" - never shadow a type name the
+same method body still needs.
+
+ROUND 2 - the denylist, run for real against the actual committed contract
+files, immediately found four matches before any deliberate sabotage:
+
+  SalePaymentResponse.vb: 'Approved' (unnegated) near position 137
+  SalePaymentResponse.vb: 'Authorised' (unnegated) near position 149
+  SalePaymentResponse.vb: 'Accepted' (unnegated) near position 166
+  SalePaymentResponse.vb: 'approved' (unnegated) near position 853
+
+All four are inside that file's own DOC COMMENTS explaining the G-24 rule -
+"Status is ALWAYS the literal 'Recorded' - never 'Approved', 'Authorised', or
+'Accepted'" - not a string literal a report or a client would ever emit. A
+comment describing a banned word necessarily contains it, the same way this
+evidence file and the test's own header do. Scanning raw file text without
+distinguishing commentary from content would make every doc comment about
+G-24 a permanent test failure, which is not what "applied to card/e-wallet
+contexts" means.
+
+Fix: PaymentWordingTests.StripCommentary strips whole-line VB comments
+(leading ' or ''') and XML/XAML comment blocks (<!-- ... -->) before the
+denylist regex runs, so only text a report or a UI actually shows is
+scanned. After the fix the real-content scan is clean - see section 3.
+
+===============================================================================
+2. Proven falsifiable (Done-when box 2)
+===============================================================================
+
+With the suite green, PaymentWording.xaml's CardEWalletRecordedNotice string
+was replaced with the literal bad label named on the card - "Payment
+approved." - and the suite run again, unrebuilt, against the source tree
+directly (the test reads the file from disk, not from a compiled resource):
+
+  dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj --no-build --filter "FullyQualifiedName~PaymentWordingTests"
+
+  Failed PosPaymentWordingResource_StatesRecordedNotAuthorised [33 ms]
+    StringAssert.Contains failed... does not contain string 'recorded'.
+  Failed PaymentWordingFiles_ContainNoUnnegatedAuthorisingWords [33 ms]
+    Assert.IsEmpty failed. Expected collection of size 0. Actual: 1.
+    PaymentWording.xaml: 'approved' (unnegated) near position 301
+
+  Failed!  - Failed: 2, Passed: 3, Skipped: 0, Total: 5, Duration: 58 ms
+
+Both the denylist scan and the affirmative-wording assertion fired, for the
+right reason, on the exact phrase the card names. The label was then reverted
+verbatim and the suite re-run:
+
+  dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj --no-build --filter "FullyQualifiedName~PaymentWordingTests"
+
+  Passed!  - Failed: 0, Passed: 5, Skipped: 0, Total: 5, Duration: 42 ms
+
+The corrected text now committed:
+
+  CardEWalletRecordedNotice =
+    "Card and e-wallet payments shown here are recorded for this sale only,
+     not authorised. This system does not contact any card network,
+     e-wallet provider, or bank."
+
+  CardEWalletIntegrationExclusionNotice =
+    "No integration exists with a payment terminal, a bank, the cash
+     drawer, a weighing scale, a customer display, or a receipt printer."
+
+Round-trip proves three things at once: the denylist fires on an unnegated
+occurrence, the corrected wording (which deliberately contains "authorised"
+in its negated form) does NOT self-trip the same regex, and the suite
+returns clean once the real text is restored. This round-trip is also baked
+into the suite itself (Denylist_FiresOnTheExactBadPhrase_AndPassesOnTheCorrectedOne)
+so it stays proven on every future run, not just this one.
+
+===============================================================================
+3. Guardrails, build, and the full unit suite, clean
+===============================================================================
+
+pwsh ./scripts/check-no-csharp.ps1
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+
+pwsh ./scripts/run-tests.ps1 -SkipIntegration
+
+  === Guardrails ===
+  ... (all four pass, as above)
+
+  === Build ===
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Test run for ...Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+  A total of 1 test files matched the specified pattern.
+
+  Passed!  - Failed: 0, Passed: 66, Skipped: 0, Total: 66, Duration: 1 s
+
+  Skipping integration tests (-SkipIntegration).
+  Do not mark a task done on this result alone.
+
+  All checks passed.
+
+Integration tests are not run for this card: it touches no database, no API,
+and no schema - a source-and-resource-only change, unit coverage only.
+
+===============================================================================
+4. What this file does NOT claim
+===============================================================================
+
+DOES NOT CLAIM: that P5-13's actual payment screen binds to these two
+resource keys yet - it cannot, because P5-13 has not built the screen. This
+card proves the WORDING is correct and provably tested; wiring it into a
+visible cart/checkout view is P5-13's to do, and P5-13's own evidence should
+show the resource keys actually bound (not re-typed) in the XAML it adds.
+
+DOES NOT CLAIM: G-24 recorded closed in the gap register - tasks.md assigns
+that edit to P5-15 explicitly ("G-24 recorded closed in the gap register at
+P5-15"), so the corresponding box on this card's own Done-when list is left
+unchecked here on purpose.
+
+DOES NOT CLAIM: coverage of every current or future file under
+src/Merchandising.Contracts/Sales or src/Merchandising.POS is exhaustively
+free of every conceivable authorising phrasing - only that the denylist,
+proven to fire on the exact phrase named on the card, finds none today.
