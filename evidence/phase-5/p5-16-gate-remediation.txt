@@ -1,0 +1,233 @@
+===============================================================================
+P5-16 - THE PHASE 5 EXIT REVIEW'S TWO FINDINGS, CLOSED
+Captured 2026-08-30 on LAPTOP-3HH6OHHE
+Card: tasks.md P5-16  |  Gate: Phase 5 exit review, first sitting = FAIL
+===============================================================================
+
+WHAT THE GATE FOUND, AND WHY IT MATTERED.
+
+The Phase 5 exit review returned FAIL with zero missing artifacts. Every one
+of the 21 evidence files existed and was non-empty; every ADR was ACCEPTED;
+the deployed service was genuinely current; the build and both suites
+reproduced independently at 0 warnings, 79/79 unit and 465/465 integration.
+It failed on two defects sitting behind ticked boxes, both on the same fault
+line - the keyboard/mouse-free claim - and this is the THIRD gate running to
+find a real defect behind a box that was reasoned about rather than exercised.
+evidence/phase-5/INDEX.md section 4's own preamble predicted it in writing
+("assume this one has a third") and then did not catch it.
+
+  FINDING 1  P5-13's Done-when box 5 reads "the whole sale workflow is
+             completable without a mouse, asserted by a test over TabIndex
+             AND ACCESS KEYS per screen, not by a sentence." POSLayoutTests
+             implemented the TabIndex half only. No test anywhere asserted
+             access keys, and p5-13-pos-client.txt quoted the box with an
+             ellipsis that removed exactly the two words it could not prove.
+             INDEX.md section 4 - whose own rule 3 exists to record narrower
+             claims - did not record it.
+
+  FINDING 2  docs/ui-specification.md section 4 stated that live Tab
+             traversal "is confirmed once by hand per client and recorded in
+             that client's own evidence file (POS:
+             evidence/phase-5/p5-13-pos-client.txt section 2)". Section 2 of
+             that file is "THE FINDING - the deployed service is stale". The
+             file contains no mention of a Tab keypress at all. The "per
+             client" half was untrue for Inventory as well: only Procurement
+             (p3-07-focus-order.txt) ever had such a capture. This is the
+             same defect class as the Phase 4 gate's own first failure - a
+             criterion resting on a citation that never fired - and it
+             survived because nothing checked citations.
+
+Neither finding was a design defect. Mouse-free POS genuinely works, and no
+access key exists in any of the three clients by deliberate convention. Both
+were CLAIMS that outran their evidence, which is the only kind of defect a
+gate can catch and the only kind this repository treats as fatal.
+
+===============================================================================
+1. FINDING 1 CLOSED - the access-key half now exists, and was watched fail
+===============================================================================
+
+Two assertions, at the two levels the claim is made at.
+
+POSLayoutTests.NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory
+  Walks the POS window's LIVE LOGICAL TREE, per screen, for all five
+  mechanisms WPF recognises as an access key - not just the obvious one,
+  because checking only Button.Content would pass a window whose tab strip or
+  labels carried mnemonics:
+    1. an underscore mnemonic in a ContentControl's Content
+    2. an underscore mnemonic in a HeaderedContentControl's Header (TabItem,
+       GroupBox)
+    3. a Label with a Target (an access key that forwards focus, even when
+       its own text carries no underscore)
+    4. an explicit AccessText element
+    5. any InputBinding - a KeyBinding gesture such as Ctrl+S is a keyboard
+       shortcut under another name
+  A doubled underscore is WPF's escape for a literal underscore and is
+  deliberately NOT read as a mnemonic.
+
+UiSpecificationDocumentationTests.NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention
+  Scans all three MainWindow.xaml files as source text for the same five
+  mechanisms. This is the level docs/ui-specification.md section 4 makes the
+  claim at - "not used anywhere in any of the three clients" - so it is
+  asserted at that level rather than inferred from the POS one.
+
+WATCHED FAIL (both, before being trusted).
+
+  Sabotage A - two mnemonics in POS MainWindow.xaml: Content="_Sign in" on
+  the sign-in button, and Header="C_heckout" on the tab strip.
+
+    Failed NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory
+    Assert.IsEmpty failed. Expected collection of size 0. Actual: 2.
+    [Sign in] Button.Content = "_Sign in" declares Alt+S.
+    [C_heckout] TabItem.Header = "C_heckout" declares Alt+h.
+
+  Both mechanisms fired, each naming the screen to open and the exact
+  Alt+letter - a failure message a reader can act on without opening the
+  XAML. Reverted; suite green.
+
+  Sabotage B - one mnemonic in Inventory MainWindow.xaml line 97:
+  Content="_Search".
+
+    Failed NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention
+    src\Merchandising.Inventory\MainWindow.xaml: Content="_Search"
+
+  The cross-client scan caught a client the POS test cannot see. Reverted;
+  suite green.
+
+WHAT THIS ASSERTS, STATED NARROWLY. It asserts the CONVENTION, which is that
+no client authors an Alt+letter mnemonic and every control is reached by
+Tab/Shift+Tab and activated by Enter/Space. It does not assert that mnemonics
+exist - none do, in any of the three clients, and section 4 has always said
+so. That convention is what makes the TabIndex assertion a complete account
+of the keyboard story rather than half of one; if a future screen adds a
+mnemonic, both tests turn red and section 4 gets rewritten, which is the
+intended signal rather than a false alarm.
+
+===============================================================================
+2. FINDING 2 CLOSED - two live traversals captured, the citation repointed
+===============================================================================
+
+The honest fix was to make the sentence true rather than to narrow it, so the
+two missing captures were made, in the exact P3-07 shape:
+
+  evidence/phase-5/p5-16-pos-focus-order.txt         (3 screens)
+  evidence/phase-5/p5-16-inventory-focus-order.txt   (5 screens)
+
+Each shows the client's real MainWindow - real view model, stubbed transport
+only - at the origin, sized to the 1366x768 @ 125% work area, shown and
+activated, then walked per tab with
+
+  MoveFocus(New TraversalRequest(FocusNavigationDirection.Next))
+
+the identical traversal the Tab key performs, until focus returns to a
+control already visited. Result in both, on every screen:
+
+  - window shown at 1093.0 x 576.0 DIP against 1092.8 x 576.0 requested (the
+    0.2 DIP is WPF rounding to a whole device pixel - the same figure P3-07
+    recorded for Procurement, so all three now agree)
+  - every focused control INSIDE the window bounds; not one line reads OFF
+    SCREEN
+  - focus ascending in TabIndex order, Sign out (99) last before the cycle
+    wraps to the tab strip - so the numbers POSLayoutTests asserts statically
+    are the order a cashier actually gets
+  - every authored control either visited, or skipped for a NAMED WPF reason
+    (a disabled command, or an empty grid with no focusable cell). No line
+    reads "NO REASON FOUND".
+
+The harness is not committed - it shows and activates a window, which needs
+an interactive desktop session, and /orchestrate dispatches this suite to
+box3. Same division P3-07 made, for the same reason.
+
+docs/ui-specification.md section 4 now carries a three-row table naming one
+transcript per client, replacing the single broken citation.
+
+AND THE CITATION ITSELF IS NOW CHECKED, which is the part that stops this
+recurring:
+
+UiSpecificationDocumentationTests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+  Extracts every evidence/... path the document names, resolves each against
+  disk, and additionally requires the three traversal transcripts to CONTAIN
+  a traversal - the markers "LIVE FOCUS TRAVERSAL" and "MoveFocus".
+
+WATCHED FAIL, and deliberately against the gate's own original defect rather
+than an invented one. The broken citation was restored verbatim - section 4's
+POS row pointed back at evidence/phase-5/p5-13-pos-client.txt section 2, the
+file that exists and does not contain a traversal:
+
+    Failed EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+    ... does not contain string 'LIVE FOCUS TRAVERSAL'.
+    'evidence/phase-5/p5-13-pos-client.txt' is cited by section 4 as a live
+    focus-traversal capture but contains no such section.
+
+That is the exact defect the exit review found, now caught by a test in 70
+milliseconds. Existence alone was never the bar: the finding was a file that
+existed and did not contain what it was cited for, so the assertion is on
+content, not on File.Exists. Reverted; suite green.
+
+===============================================================================
+3. GUARDRAILS, BUILD, AND BOTH SUITES
+===============================================================================
+
+pwsh ./scripts/run-tests.ps1
+
+  === Guardrails ===
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+
+  All guardrails passed.
+
+  === Build ===
+  Build succeeded.
+      0 Warning(s)
+      0 Error(s)
+
+  === Unit tests ===
+  Passed!  - Failed: 0, Passed: 82, Skipped: 0, Total: 82
+
+  === Integration tests (real MariaDB) ===
+  Passed!  - Failed: 0, Passed: 465, Skipped: 0, Total: 465
+
+  All checks passed.
+
+Unit grew 79 -> 82: the three assertions this card adds (one in
+POSLayoutTests, two in UiSpecificationDocumentationTests). Integration
+unchanged at 465 - this card touches no database, no API and no schema. Suite
+totals 547.
+
+One MSTEST0037 analyzer warning appeared while writing these tests
+(Assert.IsTrue over a collection membership, where Assert.Contains is the
+intended API) and was fixed rather than suppressed - the build below is 0
+warnings, and a card that closes a gate finding by leaving a new warning
+behind would be a poor trade.
+
+===============================================================================
+4. WHAT THIS CARD DOES NOT CLAIM
+===============================================================================
+
+DOES NOT CLAIM that the two findings were the only things wrong with Phase 5.
+They are what the exit review found on its second sitting. The review's own
+verdict recorded that everything else it checked - artifacts, ADR status,
+grants, deployment currency, the P5-08 compensating-movement SQL, the
+test-count chain, and a hand re-run of P5-12's denylist across the whole of
+src/ - reproduced as claimed.
+
+DOES NOT CLAIM that mouse-free POS is proven for a populated screen. Every
+grid was empty in the traversal fixture, so six disabled buttons and seven
+empty grids on the POS screens were skipped by WPF for the reasons named
+rather than walked. Their TabIndex position among their siblings is asserted
+statically; a DataGrid's internal cell navigation is DataGrid's behaviour,
+not this window's authoring. Same limit P3-07 recorded for Procurement,
+restated here rather than quietly inherited.
+
+DOES NOT CLAIM anything about rendering fidelity or focus visuals at a real
+125% DPI. Phase 7's UI pass owns both, unchanged by this card.
+
+DOES NOT CLOSE the forward risk the review raised about G-24's denylist scope
+- see INDEX.md section 4.8. P5-12's scan covers src/Merchandising.POS/**/*.xaml
+and src/Merchandising.Contracts/Sales/*.vb, which is every report-shaped
+surface that exists at Phase 5 close, but spec section 14's twelve reports
+are Phase 6 and will land outside it. That is recorded as a Phase 6
+obligation, not fixed here: widening a scan to directories that do not exist
+yet asserts nothing today and would quietly pass the moment they appear
+empty.

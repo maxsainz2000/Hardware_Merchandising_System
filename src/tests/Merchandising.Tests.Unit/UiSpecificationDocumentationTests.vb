@@ -277,6 +277,136 @@ Public NotInheritable Class UiSpecificationDocumentationTests
     End Sub
 
     ''' <summary>
+    ''' P5-16. §4 states, as a rule a fourth screen would be built from, that
+    ''' access keys are not used anywhere in any of the three clients. The Phase 5
+    ''' gate found that sentence true but unasserted - it would have survived a
+    ''' screen that added a mnemonic tomorrow. POSLayoutTests asserts it over the
+    ''' POS window's live logical tree; this asserts it over all three windows as
+    ''' source text, which is the level the document makes the claim at.
+    ''' </summary>
+    <TestMethod>
+    Public Sub NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention()
+
+        Dim document As String = ReadDocument()
+
+        StringAssert.Contains(document, "Access keys (Alt+letter mnemonics)",
+            "docs/ui-specification.md §4 no longer states the access-key convention this test exists to hold it to.")
+
+        ' A single underscore before a letter or digit inside a Content= or Header=
+        ' attribute value declares a WPF access key. A doubled underscore is WPF's
+        ' escape for a literal underscore and is deliberately not matched.
+        Dim mnemonicAttribute As New Regex("(Content|Header)\s*=\s*""[^""]*(?<!_)_[A-Za-z0-9][^""]*""")
+
+        Dim otherMechanisms As New Dictionary(Of String, Regex) From {
+            {"a Label with a Target (an access key that forwards focus)", New Regex("<Label\b[^>]*\bTarget\s*=")},
+            {"an explicit AccessText element", New Regex("<AccessText\b")},
+            {"a KeyBinding gesture", New Regex("<KeyBinding\b|\.InputBindings>")}
+        }
+
+        Dim windowPaths As String() = {
+            Path.Combine("src", "Merchandising.Procurement", "MainWindow.xaml"),
+            Path.Combine("src", "Merchandising.Inventory", "MainWindow.xaml"),
+            Path.Combine("src", "Merchandising.POS", "MainWindow.xaml")
+        }
+
+        Dim violations As New List(Of String)()
+
+        For Each relativePath As String In windowPaths
+
+            Dim source As String = ReadRepoFile(relativePath)
+
+            For Each m As Match In mnemonicAttribute.Matches(source)
+                violations.Add($"{relativePath}: {m.Value}")
+            Next
+
+            For Each mechanism As KeyValuePair(Of String, Regex) In otherMechanisms
+
+                If mechanism.Value.IsMatch(source) Then
+                    violations.Add($"{relativePath}: declares {mechanism.Key}.")
+                End If
+
+            Next
+
+        Next
+
+        Assert.IsEmpty(violations,
+            "docs/ui-specification.md §4 states access keys are not used anywhere in any of the three clients. " &
+            "These declare one, so either the XAML or that paragraph is now wrong:" & Environment.NewLine &
+            String.Join(Environment.NewLine, violations))
+
+    End Sub
+
+    ''' <summary>
+    ''' P5-16, and the reason this test exists is worth stating plainly. The
+    ''' Phase 5 gate found §4 citing "evidence/phase-5/p5-13-pos-client.txt §2"
+    ''' for a by-hand focus traversal; §2 of that file is a finding about a stale
+    ''' Windows Service, and no traversal was recorded in it at all. A document
+    ''' whose whole purpose is that a fourth screen could be built from it cannot
+    ''' carry citations nobody checks, so every evidence path it names is now
+    ''' resolved against disk, and the traversal transcripts are additionally
+    ''' required to contain a traversal.
+    ''' </summary>
+    <TestMethod>
+    Public Sub EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor()
+
+        Dim document As String = ReadDocument()
+        Dim root As String = FindRepositoryRoot().FullName
+
+        Dim citedPaths As New List(Of String)()
+
+        For Each m As Match In Regex.Matches(document, "evidence/[A-Za-z0-9._/-]+")
+
+            Dim cited As String = m.Value.TrimEnd("."c, ","c, ")"c)
+
+            If Not citedPaths.Contains(cited) Then
+                citedPaths.Add(cited)
+            End If
+
+        Next
+
+        Assert.IsNotEmpty(citedPaths,
+            "docs/ui-specification.md cites no evidence file at all - §4's traversal claim is supposed to name one.")
+
+        Dim missing As New List(Of String)()
+
+        For Each cited As String In citedPaths
+
+            If Not File.Exists(Path.Combine(root, cited.Replace("/"c, Path.DirectorySeparatorChar))) Then
+                missing.Add(cited)
+            End If
+
+        Next
+
+        Assert.IsEmpty(missing,
+            "docs/ui-specification.md cites evidence files that do not exist on disk:" & Environment.NewLine &
+            String.Join(Environment.NewLine, missing))
+
+        ' Existing is not enough - the Phase 5 gate's finding was a file that
+        ' existed and did not contain what it was cited for.
+        Dim traversalTranscripts As String() = {
+            "evidence/phase-3/p3-07-focus-order.txt",
+            "evidence/phase-5/p5-16-inventory-focus-order.txt",
+            "evidence/phase-5/p5-16-pos-focus-order.txt"
+        }
+
+        For Each transcript As String In traversalTranscripts
+
+            Assert.Contains(transcript, citedPaths,
+                $"docs/ui-specification.md §4 claims a live traversal was captured per client but no longer cites '{transcript}'.")
+
+            Dim body As String = ReadRepoFile(transcript.Replace("/"c, Path.DirectorySeparatorChar))
+
+            StringAssert.Contains(body, "LIVE FOCUS TRAVERSAL",
+                $"'{transcript}' is cited by §4 as a live focus-traversal capture but contains no such section.")
+
+            StringAssert.Contains(body, "MoveFocus",
+                $"'{transcript}' records no MoveFocus walk, so it does not support the claim §4 cites it for.")
+
+        Next
+
+    End Sub
+
+    ''' <summary>
     ''' §5's failure-presentation table quotes ApiFailurePresenter's two
     ''' client-authored sentences and its MaintenanceErrorCode constant
     ''' verbatim. A reworded sentence or a renamed code fails this test rather

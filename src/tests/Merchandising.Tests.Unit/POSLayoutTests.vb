@@ -11,12 +11,26 @@
 ' Phase 3's own closure note names the mistake this guards against: a window
 ' whose declared MinHeight exceeded the work area it was supposedly fitted
 ' to, discovered only because the arithmetic was written down and never
-' compared. The three assertions below are that comparison, run as code.
+' compared. The four assertions below are that comparison, run as code.
+'
+' P5-16 ADDED THE FOURTH. The Phase 5 gate found this suite implemented only
+' the TabIndex half of "a test over TabIndex AND ACCESS KEYS per screen", and
+' found this header quoting the box with an ellipsis that removed exactly the
+' words it did not prove. NoScreenAuthorsAnAccessKey is the missing half. It
+' asserts the convention docs/ui-specification.md section 4 states - that no
+' client authors an Alt+letter mnemonic, so Tab/Shift+Tab plus Enter/Space is
+' the WHOLE keyboard story and there is no second, unasserted mechanism a
+' cashier is expected to know. It does not assert that mnemonics exist; if a
+' future screen adds one, this test fails and that paragraph gets rewritten,
+' which is the point.
 '
 ' Nothing here shows a window. Measure/Arrange on the content tree is enough
 ' for a layout assertion and keeps the suite runnable on a machine with no
 ' interactive desktop session - which matters because /orchestrate dispatches
-' this suite to box3 (ProcurementLayoutTests' own header).
+' this suite to box3 (ProcurementLayoutTests' own header). That a person
+' pressing Tab actually lands where these numbers predict needs a shown
+' window, and is captured once, outside this suite, in
+' evidence/phase-5/p5-16-pos-focus-order.txt.
 
 Imports System.Collections.Generic
 Imports System.Globalization
@@ -183,8 +197,8 @@ Public NotInheritable Class POSLayoutTests
     ''' TabIndex, no two controls share one, and within a screen they ascend in the
     ''' order the XAML declares them, so reading order and Tab order agree. Not
     ''' asserted here: that a person pressing Tab sees what these numbers predict -
-    ''' that needs a shown window and is captured once, by hand, in
-    ''' evidence/phase-5/p5-13-pos-client.txt.
+    ''' that needs a shown window and is captured once, outside this suite, in
+    ''' evidence/phase-5/p5-16-pos-focus-order.txt.
     ''' </summary>
     <TestMethod>
     Public Sub EveryInteractiveControl_HasAUniqueTabIndex_AscendingInReadingOrder()
@@ -222,6 +236,43 @@ Public NotInheritable Class POSLayoutTests
             Next
 
         Next
+
+    End Sub
+
+    ''' <summary>
+    ''' The access-key half of P5-13's "asserted by a test over TabIndex and
+    ''' access keys per screen", added at P5-16 after the Phase 5 gate found it
+    ''' missing. WPF offers a keyboard user two independent mechanisms: sequential
+    ''' traversal (TabIndex, asserted above) and direct Alt+letter jumps (access
+    ''' keys). This window authors NONE of the second kind, deliberately and
+    ''' identically to Procurement and Inventory, and that is what makes the
+    ''' TabIndex assertion a complete account of the keyboard story rather than
+    ''' half of one.
+    '''
+    ''' All five mechanisms WPF recognises are checked, per screen, because
+    ''' checking only Button.Content would pass a window whose tab strip or
+    ''' labels carried mnemonics: an underscore mnemonic in a ContentControl's
+    ''' Content, one in a HeaderedContentControl's Header (TabItem, GroupBox), a
+    ''' Label with a Target, a literal AccessText element, and any InputBinding
+    ''' (KeyBinding gestures such as Ctrl+S, which are shortcuts by another name).
+    ''' </summary>
+    <TestMethod>
+    Public Sub NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory()
+
+        Dim mnemonics As List(Of String) = OnStaThread(
+            Function()
+                Dim window As New MainWindow()
+                Dim found As New List(Of String)()
+                WalkForAccessKeys(window, "Chrome", found)
+                Return found
+            End Function)
+
+        Assert.IsEmpty(mnemonics,
+                       "docs/ui-specification.md §4 states that access keys (Alt+letter mnemonics) are not used " &
+                       "anywhere in any of the three clients, which is what makes the TabIndex convention the " &
+                       "complete keyboard story. These access keys are now authored, so either the window or " &
+                       "that paragraph is wrong:" & Environment.NewLine &
+                       String.Join(Environment.NewLine, mnemonics))
 
     End Sub
 
@@ -387,6 +438,107 @@ Public NotInheritable Class POSLayoutTests
             End If
 
         Next
+
+    End Sub
+
+    ''' <summary>
+    ''' Walks the logical tree recording every access-key mechanism found, tagged
+    ''' with the screen it sits on so a failure names the tab to open.
+    ''' </summary>
+    Private Shared Sub WalkForAccessKeys(node As DependencyObject, screen As String, into As List(Of String))
+
+        If node Is Nothing Then
+            Return
+        End If
+
+        Dim currentScreen As String = screen
+
+        Dim tab As TabItem = TryCast(node, TabItem)
+        If tab IsNot Nothing AndAlso tab.Header IsNot Nothing Then
+            currentScreen = tab.Header.ToString()
+        End If
+
+        Dim element As FrameworkElement = TryCast(node, FrameworkElement)
+        If element IsNot Nothing AndAlso String.Equals(element.Name, "SignInPanel", StringComparison.Ordinal) Then
+            currentScreen = "Sign in"
+        End If
+
+        ' 1. A HeaderedContentControl's Header - the tab strip itself, and group
+        '    boxes. Checked before Content because TabItem is both.
+        Dim headered As HeaderedContentControl = TryCast(node, HeaderedContentControl)
+        If headered IsNot Nothing Then
+            RecordMnemonic(currentScreen, headered.GetType().Name & ".Header", TryCast(headered.Header, String), into)
+        End If
+
+        ' 2. A ContentControl's Content - buttons, check boxes, labels.
+        Dim content As ContentControl = TryCast(node, ContentControl)
+        If content IsNot Nothing AndAlso headered Is Nothing Then
+            RecordMnemonic(currentScreen, content.GetType().Name & ".Content", TryCast(content.Content, String), into)
+        End If
+
+        ' 3. A Label with a Target is an access key even when its own text has no
+        '    underscore, because the mnemonic forwards focus to the target.
+        Dim label As Label = TryCast(node, Label)
+        If label IsNot Nothing AndAlso label.Target IsNot Nothing Then
+            into.Add($"[{currentScreen}] Label.Target is set on '{LabelOf(label)}' - a targeted Label is an access key by definition.")
+        End If
+
+        ' 4. An explicit AccessText element, the long-hand form of 1 and 2.
+        If TypeOf node Is AccessText Then
+            into.Add($"[{currentScreen}] an AccessText element declares '{CType(node, AccessText).Text}'.")
+        End If
+
+        ' 5. Any InputBinding - a KeyBinding gesture (Ctrl+S, F2) is a keyboard
+        '    shortcut under a different name and belongs in §4 if it exists.
+        Dim uiElement As UIElement = TryCast(node, UIElement)
+        If uiElement IsNot Nothing AndAlso uiElement.InputBindings.Count > 0 Then
+            into.Add($"[{currentScreen}] {node.GetType().Name} declares {uiElement.InputBindings.Count} InputBinding(s) - a key gesture is a shortcut §4 does not document.")
+        End If
+
+        For Each child As Object In LogicalTreeHelper.GetChildren(node)
+
+            Dim childNode As DependencyObject = TryCast(child, DependencyObject)
+            If childNode IsNot Nothing Then
+                WalkForAccessKeys(childNode, currentScreen, into)
+            End If
+
+        Next
+
+    End Sub
+
+    ''' <summary>
+    ''' Reports the WPF access key in <paramref name="text"/>, if any. A single
+    ''' underscore before a letter or digit declares one; a doubled underscore is
+    ''' WPF's own escape for a literal underscore and declares nothing, so "__"
+    ''' is skipped rather than read as a mnemonic on "_".
+    ''' </summary>
+    Private Shared Sub RecordMnemonic(screen As String, where As String, text As String, into As List(Of String))
+
+        If String.IsNullOrEmpty(text) Then
+            Return
+        End If
+
+        Dim index As Integer = 0
+
+        While index < text.Length - 1
+
+            If text(index) = "_"c Then
+
+                If text(index + 1) = "_"c Then
+                    index += 2
+                    Continue While
+                End If
+
+                If Char.IsLetterOrDigit(text(index + 1)) Then
+                    into.Add($"[{screen}] {where} = ""{text}"" declares Alt+{text(index + 1)}.")
+                    Return
+                End If
+
+            End If
+
+            index += 1
+
+        End While
 
     End Sub
 

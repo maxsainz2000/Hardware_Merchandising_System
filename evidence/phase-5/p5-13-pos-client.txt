@@ -66,8 +66,32 @@ POSLayoutTests - adapted line-for-line from InventoryLayoutTests (P4-12):
     panel and all three tabs carries an explicit TabIndex, no two controls
     anywhere in the window share one, and within each screen the numbers
     ascend in the order the XAML declares them - so Tab order and reading
-    order agree. This is the card's own "asserted by a test over TabIndex...
-    not by a sentence" box.
+    order agree.
+
+    CORRECTED AT P5-16, and the correction is the point. This bullet
+    originally quoted the card's box as "asserted by a test over TabIndex...
+    not by a sentence" - an ellipsis that removed the words AND ACCESS KEYS,
+    which is exactly the half no test in this suite implemented. The Phase 5
+    exit review found it. Quoting an acceptance box with the unproven half
+    elided is how a round-up survives a reader who is checking, so the box is
+    now written out in full and both halves are asserted:
+
+      "the whole sale workflow is completable without a mouse, asserted by a
+       test over TabIndex and access keys per screen, not by a sentence"
+
+    TabIndex half  -> EveryInteractiveControl_HasAUniqueTabIndex_AscendingInReadingOrder
+                      (above), plus the live traversal that shows those
+                      numbers are the order a cashier really gets,
+                      evidence/phase-5/p5-16-pos-focus-order.txt.
+    Access-key half -> NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory,
+                      added at P5-16. It asserts the convention
+                      docs/ui-specification.md section 4 states - that no
+                      screen authors an Alt+letter mnemonic - which is what
+                      makes the TabIndex assertion a COMPLETE account of the
+                      keyboard story rather than half of one. It does not
+                      assert that mnemonics exist; none do, in any of the
+                      three clients, deliberately. See
+                      evidence/phase-5/p5-16-gate-remediation.txt section 1.
 
 POSClientTests - the properties this card adds on top of what Tracks C/D/E
 already proved server-side:

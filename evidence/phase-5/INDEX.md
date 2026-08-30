@@ -1,8 +1,10 @@
 # Phase 5 — POS · Evidence Index
 
-**Built at P5-15, 2026-08-30**, continuing `../phase-4/INDEX.md` rather than starting a new
-register — the same three rules apply, because an index is only worth as much as its weakest
-row.
+**Built at P5-15, 2026-08-30; re-issued at P5-16 after the exit review returned FAIL.**
+Continuing `../phase-4/INDEX.md` rather than starting a new register — the same three rules
+apply, because an index is only worth as much as its weakest row. **The review found two defects
+behind ticked boxes that this file's own §4 was supposed to catch and did not; both are recorded
+in §4.6, closed, rather than quietly repaired.**
 **Spec:** `documentations/Merchandising System for a Mid-Scale Hardware Store.md` §10.3, §11,
 §14, §16, §20, §23
 **Plan:** `plan.md` §7 (Phase 5), §10 (risk register mapping)
@@ -39,11 +41,11 @@ From `tasks.md`'s `Phase 5 exit gate` checklist (mirroring `plan.md` §7 Phase 5
 | 4 | Idempotent retry returns the original result, never a second sale | P5-09 | `p5-09-idempotent-sale.txt` | ✅ |
 | 5 | Completed sales immutable | P5-10 | `p5-10-sale-immutability.txt` | ✅ |
 | 6 | Change calculation exact to the stored precision | P5-01, P5-07 | `p5-01-sale-arithmetic.txt`, `p5-07-atomic-sale.txt` | ✅ |
-| 7 | Payment-method wording verified non-authorising, UI and reports | P5-12 | `p5-12-payment-wording.txt` | ✅ |
-| 8 | `docs/ui-specification.md` written | P5-14 | `p5-14-ui-specification.txt`, `../../docs/ui-specification.md` | ✅ |
+| 7 | Payment-method wording verified non-authorising, UI and reports | P5-12 | `p5-12-payment-wording.txt` | ⚠ §4.8 |
+| 8 | `docs/ui-specification.md` written | P5-14, P5-16 | `p5-14-ui-specification.txt`, `../../docs/ui-specification.md`, `p5-16-gate-remediation.txt` §2 | ✅ *(§4.6 finding 2 — a false citation, corrected and now machine-checked)* |
 | 9 | G-24 closed, and G-12's sale component closed, in the gap register | P5-15 | this file, §3 | ✅ |
-| 10 | Clean-clone build and both test suites green | P5-15 | `p5-15-clean-clone.log` | ✅ |
-| — | *(CLAUDE.md §9)* Every task done, no card left 🟡 and rounded up | P5-13 | `p5-13-pos-client.txt` §6 | ✅ |
+| 10 | Clean-clone build and both test suites green | P5-15, P5-16 | `p5-16-clean-clone.log` | ✅ |
+| — | *(CLAUDE.md §9)* Every task done, no card left 🟡 and rounded up | P5-13, P5-16 | `p5-13-pos-client.txt` §6, `p5-16-gate-remediation.txt` §1 | ✅ *(§4.6 finding 1 — box 5 was rounded up; the missing half now exists)* |
 
 **Criteria 1, 2 and the "every task done" row now round up to ✅.** P5-13's own Done-when box 1
 was unticked when this pack began — the deployed API service was found stale (same defect class
@@ -72,6 +74,7 @@ the authenticated pass that ran once the redeploy landed.
 | P5-13 | POS WPF client reaches usable state, mouse-free | `p5-13-pos-client.txt` §6 | ✅ |
 | P5-14 | `docs/ui-specification.md` — all three clients | `p5-14-ui-specification.txt` | ✅ |
 | P5-15 | Closure pack — suite green, clean clone, this index | `p5-15-clean-clone.log`, this file | ✅ |
+| P5-16 | The exit review's two findings, closed — access-key assertion, live traversals, citation check | `p5-16-gate-remediation.txt`, `p5-16-pos-focus-order.txt`, `p5-16-inventory-focus-order.txt`, `p5-16-clean-clone.log` | ✅ |
 
 **P5-13 moved 🟡 → ✅ within this closure pack, in the exact P4-15 shape.** Every box this card
 could verify without a live redeploy was already green (guardrail G-B, server-side refusal
@@ -235,6 +238,55 @@ card for this is left to Phase 6 planning**, per this pack's own scope (evidence
 build-infrastructure authorship) — the practical mitigation (do not clean-clone-build under a
 deep `AppData\Local\Temp` path) is recorded in the log so it is not rediscovered at cost.
 
+### 4.6 The exit review returned FAIL, and this section did not catch either finding
+
+**Added at P5-16, after the gate.** The Phase 5 exit review found two defects behind ticked
+boxes with **zero missing artifacts**. Both are recorded here in full because §4's preamble
+promised exactly this service and did not deliver it — the pack wrote *"assume this one has a
+third"* and then produced a §4 that recorded four narrowings, none of them these.
+
+| | Finding | Where it lived | Closed by |
+|---|---|---|---|
+| 1 | P5-13's box 5 says *"asserted by a test over TabIndex **and access keys** per screen"*. Only the TabIndex half was implemented; `p5-13-pos-client.txt` quoted the box with an ellipsis that removed the words *and access keys* | `POSLayoutTests`, `p5-13-pos-client.txt` §1 | P5-16 — two new assertions, both watched fail |
+| 2 | `docs/ui-specification.md` §4 cited `p5-13-pos-client.txt` §2 for a by-hand focus traversal. §2 of that file is *"THE FINDING — the deployed service is stale"*; the file contains no traversal at all. The *"per client"* claim was also untrue for Inventory | `docs/ui-specification.md` §4 | P5-16 — two live traversals captured, citation repointed, and now machine-checked |
+
+**Finding 2 is the Phase 4 gate's own failure #1 recurring in a new place** — a criterion resting
+on a citation that never fired. It survived for the same reason: nothing checked citations. It
+cannot recur silently now, because
+`UiSpecificationDocumentationTests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor`
+resolves every `evidence/…` path the document names against disk **and** requires the three
+traversal transcripts to contain a traversal. It was watched fail against the original broken
+citation itself, not an invented one.
+
+**Neither finding was a design defect**, and that is worth stating plainly rather than as
+consolation: mouse-free POS genuinely works, and the no-access-keys convention is deliberate,
+system-wide, and documented. Both were *claims that outran their evidence*. Full record:
+`p5-16-gate-remediation.txt`.
+
+### 4.7 What the review checked and found sound
+
+Recorded because a §4 that lists only defects tells a reader nothing about coverage. The review
+independently reproduced, rather than reading from this pack: guardrails G-A–G-D, the build at 0
+warnings, 79/79 unit and 465/465 integration against the real MariaDB, the deployed binary's
+`LastWriteTime` (2026-08-30 21:18:42, later than every source commit), every `**Status:**` line
+in `docs/adr.md`, ADR-022's line number against the template fence, grants `0013`'s INSERT-only
+privileges on `sales`/`salelines`/`salepayments`, `p5-08-drift-correction.sql` as INSERT-only,
+the full P4-gate→P5-15 test-count chain against each card's own file, and a hand re-run of
+P5-12's denylist across the whole of `src/`. All reproduced as claimed.
+
+### 4.8 ⚠ G-24's denylist scope is correct today and will silently narrow in Phase 6
+
+Exit criterion 7 reads *"payment-method wording verified as non-authorising in both UI **and
+reports**."* `PaymentWordingTests` scans `src/Merchandising.POS/**/*.xaml` and
+`src/Merchandising.Contracts/Sales/*.vb` — which **is** every report-shaped surface that exists
+at Phase 5 close (the daily-closing payment-method breakdown, the sale and return responses).
+Spec §14's twelve reports are Phase 6 and will land outside that scan, in new directories.
+
+**The claim is therefore sound now and will quietly stop being sound the moment reports exist.**
+Not fixed at P5-16 on purpose: widening a scan to directories that do not exist yet asserts
+nothing today, and would pass vacuously the moment they appear. **Phase 6 owes the widening as
+part of building the reports**, and this row is the reminder.
+
 ---
 
 ## 5. Test-suite growth across Phase 5
@@ -243,6 +295,7 @@ deep `AppData\Local\Temp` path) is recorded in the log so it is not rediscovered
 |---|---|---|---|
 | Phase 4 gate (`76aaa7d`, 2026-08-29) | 47 | 348 | 395 |
 | P5-15 closure pack (`a6d3b6a`, 2026-08-30) | 79 | 465 | 544 |
+| P5-16 gate remediation (2026-08-30) | 82 | 465 | 547 |
 
 Full per-card chain, cross-checked against every card's own cited suite-state line with no gap
 and no double-count, is in `p5-15-clean-clone.log` §3. Unit grew by 32: P5-01's sale-arithmetic
@@ -252,6 +305,14 @@ A–G — schema/grants (P5-02, P5-03), cashier sessions and closing (P5-04, P5-
 (P5-06), the atomic sale and its concurrency/idempotency/immutability proofs (P5-07–P5-10), and
 sale returns (P5-11) — all against the real pinned MariaDB 10.4.32, never a substitute. 0
 skipped in both suites at every capture this phase.
+
+**P5-16 added the last three unit tests, and they are the two findings' regression protection:**
+`POSLayoutTests.NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory`,
+`UiSpecificationDocumentationTests.NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention`,
+and `UiSpecificationDocumentationTests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor`.
+All three were watched fail before being trusted — the third against the exit review's own
+original broken citation rather than an invented one. Integration is unchanged at 465: P5-16
+touches no database, no API and no schema.
 
 **No MSB3030 recurrence** in the capture that actually produced this index's own evidence
 (`p5-15-clean-clone.log` §2/§3, first attempt, outside `AppData\Local\Temp`) — see §4.5 above

@@ -1,0 +1,175 @@
+===============================================================================
+P5-16 - INVENTORY LIVE FOCUS TRAVERSAL, A REAL WINDOW AT THE WORK-AREA SIZE
+Captured 2026-08-30 21:48 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P5-16, closing the Phase 5 gate's second finding
+Precedent: evidence/phase-3/p3-07-focus-order.txt section 4, same technique
+===============================================================================
+
+WHY THIS FILE EXISTS.
+
+docs/ui-specification.md section 4 states that live Tab traversal "is
+confirmed once by hand per client and recorded in that client's own evidence
+file." At the Phase 5 exit review that was true of exactly one client.
+Procurement had evidence/phase-3/p3-07-focus-order.txt; the POS citation
+pointed at a section about a stale Windows Service; and Inventory - this
+client - had no such capture at all. P4-12's own keyboard box cites
+InventoryLayoutTests, which asserts the authored TabIndex numbers and
+deliberately shows no window, so it cannot speak to what a person pressing
+Tab actually gets.
+
+This file is the missing Inventory capture. It is not a Phase 5 deliverable
+in itself - Inventory closed at the Phase 4 gate - but the document written
+at P5-14 makes a claim across all three clients, and a claim is either true
+of all three or it is reworded. Capturing it was cheaper than narrowing the
+sentence, and leaves the stronger result.
+
+===============================================================================
+1. WHAT WAS RUN
+===============================================================================
+
+Identical harness and method to evidence/phase-5/p5-16-pos-focus-order.txt
+section 1, against Merchandising.Inventory.MainWindow with a MainViewModel
+signed in as inventoryclerk through a stubbed transport - the same fixture
+InventoryLayoutTests uses. Window at the origin, sized to the 1366x768 @ 125%
+work area (1092.8 x 576.0 DIP), shown and activated; then per tab, focus the
+lowest TabIndex and call
+
+  MoveFocus(New TraversalRequest(FocusNavigationDirection.Next))
+
+until focus returns to a control already visited, reconciling every authored
+control against the walk. The harness is not committed, for the reason that
+file's section 1 gives.
+
+===============================================================================
+2. LIVE FOCUS TRAVERSAL - THE TRANSCRIPT
+===============================================================================
+
+Client: Inventory
+Window shown at 1093.0 x 576.0 DIP
+Requested work area 1092.8 x 576.0 DIP
+
+--- Tab: Stock ---
+  01. CheckBox Include inactive (TabIndex 10)   [on screen]
+  02. TextBox <unnamed> (TabIndex 11)   [on screen]
+  03. Button Search (TabIndex 12)   [on screen]
+  04. TextBox <unnamed> (TabIndex 20)   [on screen]
+  05. TextBox <unnamed> (TabIndex 21)   [on screen]
+  06. TextBox <unnamed> (TabIndex 22)   [on screen]
+  07. TextBox <unnamed> (TabIndex 23)   [on screen]
+  08. Button Load movements (TabIndex 24)   [on screen]
+  09. Button SignOutButton (TabIndex 99)   [on screen]
+  10. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  CheckBox Include inactive (TabIndex 10)
+    visited  TextBox <unnamed> (TabIndex 11)
+    visited  Button Search (TabIndex 12)
+    skipped  DataGrid grid:SKU (TabIndex 13)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox <unnamed> (TabIndex 20)
+    visited  TextBox <unnamed> (TabIndex 21)
+    visited  TextBox <unnamed> (TabIndex 22)
+    visited  TextBox <unnamed> (TabIndex 23)
+    visited  Button Load movements (TabIndex 24)
+    skipped  DataGrid grid:Delta (TabIndex 25)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+--- Tab: Receive ---
+  01. TextBox <unnamed> (TabIndex 30)   [on screen]
+  02. Button Load order (TabIndex 31)   [on screen]
+  03. TextBox <unnamed> (TabIndex 33)   [on screen]
+  04. TextBox <unnamed> (TabIndex 34)   [on screen]
+  05. TextBox <unnamed> (TabIndex 38)   [on screen]
+  06. Button SignOutButton (TabIndex 99)   [on screen]
+  07. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox <unnamed> (TabIndex 30)
+    visited  Button Load order (TabIndex 31)
+    skipped  DataGrid grid:Line# (TabIndex 32)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox <unnamed> (TabIndex 33)
+    visited  TextBox <unnamed> (TabIndex 34)
+    skipped  Button Add line (TabIndex 35)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:Product (TabIndex 36)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Remove selected line (TabIndex 37)  <- command disabled - nothing selected yet, so WPF skips it
+    visited  TextBox <unnamed> (TabIndex 38)
+    skipped  Button Receive goods (TabIndex 39)  <- command disabled - nothing selected yet, so WPF skips it
+
+--- Tab: Counts ---
+  01. Button Open new count (TabIndex 40)   [on screen]
+  02. TextBox <unnamed> (TabIndex 41)   [on screen]
+  03. Button Load (TabIndex 42)   [on screen]
+  04. TextBox <unnamed> (TabIndex 43)   [on screen]
+  05. Button Search (TabIndex 44)   [on screen]
+  06. TextBox <unnamed> (TabIndex 46)   [on screen]
+  07. Button SignOutButton (TabIndex 99)   [on screen]
+  08. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  Button Open new count (TabIndex 40)
+    visited  TextBox <unnamed> (TabIndex 41)
+    visited  Button Load (TabIndex 42)
+    visited  TextBox <unnamed> (TabIndex 43)
+    visited  Button Search (TabIndex 44)
+    skipped  DataGrid grid:SKU (TabIndex 45)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox <unnamed> (TabIndex 46)
+    skipped  Button Record line (TabIndex 47)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:SKU (TabIndex 48)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Close count (TabIndex 49)  <- command disabled - nothing selected yet, so WPF skips it
+
+--- Tab: Adjustments ---
+  01. TextBox <unnamed> (TabIndex 50)   [on screen]
+  02. Button Search (TabIndex 51)   [on screen]
+  03. TextBox <unnamed> (TabIndex 53)   [on screen]
+  04. TextBox <unnamed> (TabIndex 54)   [on screen]
+  05. Button SignOutButton (TabIndex 99)   [on screen]
+  06. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox <unnamed> (TabIndex 50)
+    visited  Button Search (TabIndex 51)
+    skipped  DataGrid grid:SKU (TabIndex 52)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox <unnamed> (TabIndex 53)
+    visited  TextBox <unnamed> (TabIndex 54)
+    skipped  Button Request adjustment (TabIndex 55)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:Id (TabIndex 56)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Approve (TabIndex 57)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  Button Reject (TabIndex 58)  <- command disabled - nothing selected yet, so WPF skips it
+
+--- Tab: Low stock ---
+  01. TextBox <unnamed> (TabIndex 60)   [on screen]
+  02. Button Search (TabIndex 61)   [on screen]
+  03. Button SignOutButton (TabIndex 99)   [on screen]
+  04. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox <unnamed> (TabIndex 60)
+    visited  Button Search (TabIndex 61)
+    skipped  DataGrid grid:SKU (TabIndex 62)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+
+===============================================================================
+3. WHAT THIS PROVES, AND WHAT IT DOES NOT
+===============================================================================
+
+PROVEN HERE:
+  - The window fits the work area, shown, at 1093.0 x 576.0 DIP - the same
+    figure Procurement and POS record, which is the point of section 3's
+    "all three clients declare the same geometry" table.
+  - Every control that receives focus is inside the window bounds; no line
+    reads OFF SCREEN.
+  - Focus visits controls in ascending TabIndex order on all five screens,
+    Sign out (99) last before the cycle wraps to the tab strip.
+  - Every authored control is either visited or skipped for a named, correct
+    WPF reason. No unexplained skip.
+
+NOT PROVEN HERE: the same three limits POS's section 3 lists - rendering
+fidelity at real 125% DPI, focus visuals, and traversal with grids populated
+and commands enabled. Phase 7's UI pass owns the first two; the third is
+DataGrid's own behaviour rather than this window's authoring.
+
+A note on the unnamed text boxes above. Inventory's XAML gives x:Name to
+fewer controls than POS's does, so this transcript reads "TextBox <unnamed>
+(TabIndex 21)" where POS reads "TextBox CartQuantityBox (TabIndex 23)". The
+TabIndex is what identifies the control either way and the walk is unaffected;
+it is recorded here because a reader comparing the two files will notice, and
+because naming them is a small readability improvement Phase 7's UI pass
+could fold in - not a defect, and no card is raised for it.

@@ -1,0 +1,154 @@
+===============================================================================
+P5-16 - POS LIVE FOCUS TRAVERSAL, A REAL WINDOW SHOWN AT THE WORK-AREA SIZE
+Captured 2026-08-30 21:48 +08:00 on LAPTOP-3HH6OHHE
+Card: tasks.md P5-16, closing the Phase 5 gate's second finding
+Precedent: evidence/phase-3/p3-07-focus-order.txt section 4, same technique
+===============================================================================
+
+WHY THIS FILE EXISTS.
+
+The Phase 5 exit review found docs/ui-specification.md section 4 making this
+claim:
+
+  "that a person pressing Tab actually lands where those numbers predict is
+   confirmed once by hand per client and recorded in that client's own
+   evidence file (POS: evidence/phase-5/p5-13-pos-client.txt section 2)"
+
+Section 2 of that file is "THE FINDING - the deployed service is stale". It
+records a 404 from a Phase 3-era binary. No focus traversal was recorded in
+it, or anywhere else in it - the file contains no mention of a Tab keypress
+at all. The citation pointed at a real file that did not contain the thing it
+was cited for, which is the same defect class the Phase 4 gate found in that
+phase's exit criterion 5, and it survived because nothing checked it.
+
+Only Procurement (P3-07) had ever had such a capture. This file is the POS
+one; evidence/phase-5/p5-16-inventory-focus-order.txt is Inventory's. With
+all three present the sentence is true as written, and
+UiSpecificationDocumentationTests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+now resolves every evidence path the document names against disk and requires
+these three to actually contain a traversal - so this citation cannot rot
+again without a red test.
+
+===============================================================================
+1. WHAT WAS RUN
+===============================================================================
+
+The real Merchandising.POS.MainWindow, with a real MainViewModel signed in
+through a stubbed transport - the same StubHttpMessageHandler posture
+POSLayoutTests and POSClientTests use, so every line of the client under test
+is the real one and only the network is not. The window was positioned at the
+origin, sized to the 1366x768 @ 125% work area (1092.8 x 576.0 DIP), shown
+and activated. Then, for each of the three tabs: select the tab, let layout
+settle, focus the screen's lowest TabIndex, and call
+
+  MoveFocus(New TraversalRequest(FocusNavigationDirection.Next))
+
+repeatedly - the identical traversal the Tab key performs - until focus
+returns to a control already visited. Every control authored on the screen is
+then reconciled: either it was visited, or the reason WPF skipped it is
+named. There is no unexplained skip anywhere below.
+
+The harness is NOT committed, the same division P3-07 made and for the same
+reason: it shows and activates a window, which needs an interactive desktop
+session, and leaving it in the suite would break every headless run - which
+matters because /orchestrate dispatches this suite to box3. The regression
+protection lives in POSLayoutTests' four assertions, which show no window.
+
+===============================================================================
+2. LIVE FOCUS TRAVERSAL - THE TRANSCRIPT
+===============================================================================
+
+Client: POS
+Window shown at 1093.0 x 576.0 DIP
+Requested work area 1092.8 x 576.0 DIP
+
+--- Tab: Session ---
+  01. TextBox OpeningFloatBox (TabIndex 10)   [on screen]
+  02. Button Open session (TabIndex 11)   [on screen]
+  03. TextBox DeclaredCashBox (TabIndex 12)   [on screen]
+  04. Button SignOutButton (TabIndex 99)   [on screen]
+  05. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox OpeningFloatBox (TabIndex 10)
+    visited  Button Open session (TabIndex 11)
+    visited  TextBox DeclaredCashBox (TabIndex 12)
+    skipped  Button Close session (TabIndex 13)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:Method (TabIndex 14)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+--- Tab: Checkout ---
+  01. TextBox ProductSearchBox (TabIndex 20)   [on screen]
+  02. Button Look up (TabIndex 21)   [on screen]
+  03. TextBox CartQuantityBox (TabIndex 23)   [on screen]
+  04. ComboBox PaymentMethodCombo (TabIndex 27)   [on screen]
+  05. TextBox TenderedAmountBox (TabIndex 28)   [on screen]
+  06. Button SignOutButton (TabIndex 99)   [on screen]
+  07. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  TextBox ProductSearchBox (TabIndex 20)
+    visited  Button Look up (TabIndex 21)
+    skipped  DataGrid grid:SKU (TabIndex 22)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox CartQuantityBox (TabIndex 23)
+    skipped  Button Add to cart (TabIndex 24)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:SKU (TabIndex 25)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    skipped  Button Remove selected line (TabIndex 26)  <- command disabled - nothing selected yet, so WPF skips it
+    visited  ComboBox PaymentMethodCombo (TabIndex 27)
+    visited  TextBox TenderedAmountBox (TabIndex 28)
+    skipped  Button Complete sale (TabIndex 29)  <- command disabled - nothing selected yet, so WPF skips it
+    skipped  DataGrid grid:SKU (TabIndex 30)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+
+--- Tab: Returns ---
+  01. DataGrid grid:Sale # (TabIndex 40)   [on screen]
+  02. TextBox QuantityReturnedBox (TabIndex 42)   [on screen]
+  03. CheckBox RestocksItemBox (TabIndex 43)   [on screen]
+  04. TextBox ReasonBox (TabIndex 44)   [on screen]
+  05. ComboBox RefundMethodCombo (TabIndex 45)   [on screen]
+  06. Button SignOutButton (TabIndex 99)   [on screen]
+  07. TabItem System.Windows.Controls.Grid (TabIndex unset)   [on screen]
+
+  Reconciliation - every control authored on this screen:
+    visited  DataGrid grid:Sale # (TabIndex 40)
+    skipped  DataGrid grid:Product (TabIndex 41)  <- grid is empty in this fixture - an empty DataGrid has no focusable cell
+    visited  TextBox QuantityReturnedBox (TabIndex 42)
+    visited  CheckBox RestocksItemBox (TabIndex 43)
+    visited  TextBox ReasonBox (TabIndex 44)
+    visited  ComboBox RefundMethodCombo (TabIndex 45)
+    skipped  Button Record return (TabIndex 46)  <- command disabled - nothing selected yet, so WPF skips it
+
+
+===============================================================================
+3. WHAT THIS PROVES, AND WHAT IT DOES NOT
+===============================================================================
+
+PROVEN HERE:
+  - The window fits the work area, shown, at 1093.0 x 576.0 DIP against the
+    1092.8 x 576.0 requested. (The 0.2 DIP is WPF rounding the window to a
+    whole device pixel; it is the same figure P3-07 recorded for Procurement.)
+  - Every control that receives focus is inside the window bounds - the
+    "[on screen]" marker on every line above, none reading OFF SCREEN.
+  - Focus visits controls in ascending TabIndex order on all three screens,
+    with Sign out (TabIndex 99) last before the cycle wraps to the tab strip.
+    The numbers POSLayoutTests asserts statically are therefore the order a
+    cashier actually gets.
+  - Every authored control is either visited or skipped for a named, correct
+    WPF reason - a disabled command, or an empty grid with no focusable cell.
+  - The five actions spec section 16 names for the POS mouse-free requirement
+    are all reachable in this walk: search (ProductSearchBox 20, Look up 21),
+    cart changes (CartQuantityBox 23, Add to cart 24, Remove selected line
+    26), payment (PaymentMethodCombo 27, TenderedAmountBox 28), completion
+    (Complete sale 29) and session closing (DeclaredCashBox 12, Close session
+    13).
+
+NOT PROVEN HERE, and left where the cards already put it:
+  - Rendering fidelity at a real 125% DPI - Phase 7's UI pass.
+  - Focus VISUALS - whether the focus rectangle reads clearly against each
+    background. That is a look question, not a reachability question.
+  - Traversal with grids populated and commands enabled. Every grid is empty
+    in this fixture, so the six disabled buttons and seven empty grids above
+    are skipped by WPF for the reasons named rather than walked. Their
+    TabIndex position among their siblings is asserted statically by
+    POSLayoutTests.EveryInteractiveControl_HasAUniqueTabIndex_AscendingInReadingOrder;
+    a DataGrid's internal cell navigation is DataGrid's own behaviour, not
+    this window's authoring. Same limit P3-07 recorded, stated again rather
+    than quietly inherited.

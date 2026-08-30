@@ -394,6 +394,25 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-15-clean-clone.log`, `evidence/phase-5/INDEX.md`
 
+### ✅ P5-16 · The exit review's two findings, closed
+
+**Spec:** §16 · **Files:** `src/tests/Merchandising.Tests.Unit/POSLayoutTests.vb`, `src/tests/Merchandising.Tests.Unit/UiSpecificationDocumentationTests.vb`, `docs/ui-specification.md`, `evidence/phase-5/`
+
+**Do:** The Phase 5 exit review returned **FAIL** with zero missing artifacts, on two defects behind ticked boxes — both on the keyboard/mouse-free claim, and **the third gate running to find a real defect behind a box that was reasoned about rather than exercised.** (1) P5-13's box 5 says *"asserted by a test over TabIndex **and access keys** per screen"* and only the TabIndex half existed; the evidence file quoted the box with an ellipsis that removed the unproven words. (2) `docs/ui-specification.md` §4 cited `p5-13-pos-client.txt` §2 for a by-hand focus traversal, and §2 of that file is about a stale Windows Service — the same "citation that never fired" class as the Phase 4 gate's own first failure. Close both, and make each impossible to repeat silently.
+
+**Done when:**
+
+- [x] The access-key half exists as a test, over all five mechanisms WPF recognises (mnemonic in `Content`, mnemonic in `Header`, `Label` with `Target`, `AccessText`, any `InputBinding`) — per screen for POS, and across all three clients' XAML for the convention `ui-specification.md` §4 states at that level
+- [x] **Watched fail**, both: `Content="_Sign in"` + `Header="C_heckout"` in POS fired the per-screen test naming both screens and both Alt+letters; `Content="_Search"` in Inventory fired the cross-client scan. Reverted, green
+- [x] The missing live focus traversals captured for POS **and Inventory**, in the P3-07 shape — real window shown at the work area, walked with `MoveFocus`, every authored control visited or skipped for a named reason, no unexplained skip. The harness is not committed, for P3-07's own stated reason
+- [x] `ui-specification.md` §4's citation repointed to a three-row table, one transcript per client, so the sentence is true as written rather than narrowed to fit
+- [x] **The citation itself is now machine-checked** — every `evidence/…` path the document names is resolved against disk, and the three transcripts must *contain* a traversal. **Watched fail against the review's own original broken citation**, not an invented one: existence was never the bar, since the defect was a file that existed and did not contain what it was cited for
+- [x] `p5-13-pos-client.txt`'s ellipsis corrected, with the full box written out and both halves mapped to where they are proven
+- [x] `INDEX.md` §4.6 records both findings under the pack's own rule 3, §4.7 records what the review checked and found sound, and §4.8 carries the ⚠ the review raised on G-24's denylist scope as a **Phase 6** obligation
+- [x] Guardrails, build at 0 warnings, both suites green, and a fresh clean clone — the P5-15 log no longer covers a tree whose test source has changed
+
+**Evidence:** `evidence/phase-5/p5-16-gate-remediation.txt`, `evidence/phase-5/p5-16-pos-focus-order.txt`, `evidence/phase-5/p5-16-inventory-focus-order.txt`, `evidence/phase-5/p5-16-clean-clone.log`
+
 ---
 
 ## Phase 5 exit gate
@@ -407,9 +426,9 @@ From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-5/` 
 - [x] Completed sales immutable (P5-10)
 - [x] Change calculation exact to the stored precision (P5-01, P5-07)
 - [x] Payment-method wording verified as non-authorising in both UI and reports (P5-12)
-- [x] `docs/ui-specification.md` written (P5-14)
+- [x] `docs/ui-specification.md` written (P5-14), and every evidence path it cites checked to contain what it is cited for (P5-16)
 - [x] G-24 closed, and G-12's sale component closed, in the gap register (P5-15)
-- [x] Clean-clone build and both test suites green (P5-15)
-- [x] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
+- [x] Clean-clone build and both test suites green (P5-16 — the P5-15 log predates this phase's last source change)
+- [x] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up (P5-13's box 5 was; P5-16 closed it)
 
 **Carried, not owed here:** P0-02 and P0-05 belong to the **Phase 6** gate (ADR-016). P0-07's structure box belongs to **Phase 7** — but one of its documents, `ui-specification.md`, *is* owed here as P5-14. CARRY-02 belongs to **Phase 6** (ADR-019). CARRY-04 is a watch item, and its own threshold ("raise a card only on a second sighting") has now been met — see `evidence/phase-5/INDEX.md` §4.5 and §7; naming the card is Phase 6 planning's to do. **CARRY-01 has now been carried through four phases without an owner and must be placed when Phase 6 planning opens.** **CARRY-05** — the deployed service was found stale at both the Phase 4 and Phase 5 gates — belongs to Phase 6's health monitoring; this phase's own narrower obligation (confirm currency before believing a client-side result) is discharged at P5-13/P5-15.

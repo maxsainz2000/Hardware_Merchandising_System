@@ -153,13 +153,38 @@ Complete-sale action) does not force one.
 
 **What this convention does not assert.** The `TabIndex`/`IsDefault` properties are declarative
 inputs to WPF's own focus traversal, not evidence that traversal happens as declared. `*LayoutTests`
-assert the numbers themselves (unique, ascending, present); that a person pressing Tab actually
-lands where those numbers predict is confirmed once by hand per client and recorded in that
-client's own evidence file (POS: `evidence/phase-5/p5-13-pos-client.txt` §2) — not re-asserted
-here or by any automated suite. **Access keys (Alt+letter mnemonics)** are not used anywhere in
-any of the three clients as of Phase 5 — every control is reached by `Tab`/`Shift+Tab` and
-activated by `Enter`/`Space`, never by an underlined-letter shortcut. A future screen that adds
-one should update this paragraph.
+assert the numbers themselves (unique, ascending, present) without ever showing a window, which is
+what keeps the suite runnable where there is no interactive desktop session. That a person pressing
+Tab actually lands where those numbers predict needs a window on screen, and is captured once per
+client, outside the suite, by walking the shown window with WPF's own
+`MoveFocus(FocusNavigationDirection.Next)` — the traversal the Tab key performs — and reconciling
+every authored control against the walk:
+
+| Client | Live traversal transcript |
+|---|---|
+| Procurement | `evidence/phase-3/p3-07-focus-order.txt` §4 |
+| Inventory | `evidence/phase-5/p5-16-inventory-focus-order.txt` §2 |
+| POS | `evidence/phase-5/p5-16-pos-focus-order.txt` §2 |
+
+All three show the window at 1093.0 × 576.0 DIP, visit controls in ascending `TabIndex` order with
+Sign out (99) last, and record every authored control as either visited or skipped for a named WPF
+reason — a disabled command, or an empty grid with no focusable cell. None is a regression test:
+they are captures, made once, and the standing protection is the `*LayoutTests` assertions above.
+`UiSpecificationDocumentationTests.EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor`
+resolves each path in that table against disk and requires it to contain an actual traversal, because
+the Phase 5 exit review found this paragraph citing a file whose §2 was about something else entirely.
+
+**Access keys (Alt+letter mnemonics) are not used anywhere in any of the three clients** — every
+control is reached by `Tab`/`Shift+Tab` and activated by `Enter`/`Space`, never by an
+underlined-letter shortcut, and no `KeyBinding` gesture is authored either. This is what makes the
+`TabIndex` convention a *complete* account of the keyboard story rather than half of one, so it is
+asserted rather than described: `POSLayoutTests.NoScreenAuthorsAnAccessKey_SoTabTraversalIsTheWholeKeyboardStory`
+walks the POS window's live logical tree per screen, and
+`UiSpecificationDocumentationTests.NoClientWindow_AuthorsAnAccessKey_MatchingSection4sStatedConvention`
+scans all three `MainWindow.xaml` files for the five mechanisms WPF recognises — an underscore
+mnemonic in `Content` or `Header`, a `Label` with a `Target`, an `AccessText` element, and any
+`InputBinding`. A future screen that adds one turns both tests red, which is the signal to rewrite
+this paragraph rather than to delete the assertion.
 
 ---
 
