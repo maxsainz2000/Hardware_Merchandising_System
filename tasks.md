@@ -235,7 +235,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-07-atomic-sale.txt`
 
-### ⬜ P5-08 · Negative stock impossible under concurrent load
+### ✅ P5-08 · Negative stock impossible under concurrent load
 
 **Spec:** §11 · **Files:** `src/tests/Merchandising.Tests.Integration/SaleConcurrencyTests.vb`
 
@@ -243,12 +243,12 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] N simultaneous sales of the last remaining unit: exactly one succeeds, every other gets the controlled insufficient-stock outcome, never an unexpected exception (the P1-13 / P4-08 / P4-15 shape — launch every task, then await)
-- [ ] Sale racing **receive**, and sale racing **adjustment**, both fired at one product — the pairs P4-15 explicitly did not claim and left to this phase (`p4-15-concurrent-receive-and-adjust.txt` §6)
-- [ ] **No movement row ever records a `QuantityAfter` below zero**, asserted over the append-only ledger — not only that the final balance is non-negative. P4-15 §2.1(b): a transient negative is erased by a later movement and the final balance cannot see it
-- [ ] **Watched fail.** Break the conditional decrement's guard, confirm the tests fail naming the negative, revert, confirm green — and heal any drift the broken run wrote with **compensating movements only**, never an edit or delete (CLAUDE.md §7 item 7; `p4-15-drift-correction.sql` is the precedent and the shape)
-- [ ] Both orderings genuinely observed in the mixed races, and the distribution printed — a test that only ever sees one ordering asserts one path and claims two
-- [ ] Integration suite green
+- [x] N simultaneous sales of the last remaining unit: exactly one succeeds, every other gets the controlled insufficient-stock outcome, never an unexpected exception (the P1-13 / P4-08 / P4-15 shape — launch every task, then await)
+- [x] Sale racing **receive**, and sale racing **adjustment**, both fired at one product — the pairs P4-15 explicitly did not claim and left to this phase (`p4-15-concurrent-receive-and-adjust.txt` §6)
+- [x] **No movement row ever records a `QuantityAfter` below zero**, asserted over the append-only ledger — not only that the final balance is non-negative. P4-15 §2.1(b): a transient negative is erased by a later movement and the final balance cannot see it
+- [x] **Watched fail.** Break the conditional decrement's guard, confirm the tests fail naming the negative, revert, confirm green — and heal any drift the broken run wrote with **compensating movements only**, never an edit or delete (CLAUDE.md §7 item 7; `p4-15-drift-correction.sql` is the precedent and the shape)
+- [x] Both orderings genuinely observed in the mixed races, and the distribution printed — a test that only ever sees one ordering asserts one path and claims two
+- [x] Integration suite green
 
 **Evidence:** `evidence/phase-5/p5-08-sale-concurrency.txt` — including the induced-failure run
 

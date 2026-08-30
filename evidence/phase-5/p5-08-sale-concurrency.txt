@@ -1,0 +1,259 @@
+P5-08 - Phase 5 exit criterion "negative stock impossible under concurrent
+load," closed by an executed proof rather than an argument.
+
+Captured 2026-08-30 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0).
+
+===============================================================================
+0. Why this file exists
+===============================================================================
+
+P4-15's own closing section (evidence/phase-4/p4-15-concurrent-receive-and-
+adjust.txt section 6) named exactly what it did not claim:
+
+    "DOES NOT CLAIM: that receive-vs-adjust is the only contention pair in
+     the system. Sale-vs-receive and sale-vs-adjust are Phase 5's transaction
+     and Phase 5's to prove."
+
+This file is that proof, plus the P1-13-shaped "N simultaneous sales of the
+last remaining unit" box tasks.md's own Done-when list asks for. Three
+properties, all fired under real concurrent load in the P1-13 / P4-08 / P4-15
+"launch every task, then await" shape:
+
+  box 1   N SIMULTANEOUS SALES OF THE LAST REMAINING UNIT. Exactly one
+          succeeds; every other gets InsufficientStock; never an unexpected
+          exception. Run at N=2 and N=10.
+  box 2   SALE RACING RECEIVE. Both orderings are legal; both observed.
+  box 3   SALE RACING ADJUSTMENT. Both are decrements here - exactly one
+          wins each round, and which one wins is the "ordering" this box's
+          distribution reports.
+
+  File:  src/tests/Merchandising.Tests.Integration/SaleConcurrencyTests.vb
+  Tests: 3, all against the real database, no substitute provider
+
+SaleService.CompleteAsync differs from every earlier concurrency file in one
+structural way: it requires the CALLING USER to hold an Open CashierSession
+(spec section 10.3), and CashierSessionRepository.GetOpenForUpdateByUserAsync
+locks that session row FOR UPDATE. Two sales from the SAME cashier would
+therefore serialize on the SESSION row, not the STOCK row - testing the wrong
+contention. SaleConcurrencyTests fixes this with a pool of ten distinct
+fixture cashiers, each holding its own pre-opened session, so box 1's N=10
+round races on StockBalances alone.
+
+===============================================================================
+1. Box 1 - N simultaneous sales of the last remaining unit
+===============================================================================
+
+Sale_ConcurrentSameProduct_LastUnitExactlyOneSucceeds
+
+A product holding exactly 1.000 unit, bought by N distinct cashiers at once,
+run at N=2 and then N=10 (StockDecrementTests' own P1-13 two-round shape),
+resetting the balance to 1.000 between rounds.
+
+  P5-08 box 1 x2 raw distribution -> sale:Created | sale:InsufficientStock
+  P5-08 box 1 x10 raw distribution -> sale:Created | sale:InsufficientStock |
+      sale:InsufficientStock | sale:InsufficientStock | sale:InsufficientStock
+      | sale:InsufficientStock | sale:InsufficientStock | sale:InsufficientStock
+      | sale:InsufficientStock | sale:InsufficientStock
+
+Asserted for both rounds: exactly one Created, the rest InsufficientStock,
+zero unexpected exceptions, final balance exactly 0.000, the P4-01 ledger
+reconciliation, and MIN(QuantityAfter) >= 0 across the product's whole
+ledger.
+
+-------------------------------------------------------------------------------
+1.1 A fixture defect this box's own assertion caught, before any application
+    code was touched
+-------------------------------------------------------------------------------
+
+The first draft of ResetBalanceAsync reset a fixture product's balance with a
+bare `UPDATE StockBalances SET Quantity = @quantity WHERE ProductId =
+@productId` after computing the delta and writing the matching StockMovements
+row. Box 1's fixture product is created by CreateFixtureProductAsync WITHOUT
+a StockBalances row - the same fact P4-15 section 2.1(a) already found: a
+product that has never held a balance has NO row at all. The bare UPDATE
+against that missing row affected zero rows, silently, while the
+StockMovements row (+1.000) it wrote alongside was still committed - the
+ledger recorded a change that never reached StockBalances. Both concurrent
+sale attempts then correctly saw no usable balance and both returned
+InsufficientStock, which is exactly what surfaced the bug:
+
+  Failed Sale_ConcurrentSameProduct_LastUnitExactlyOneSucceeds
+  Assert.AreEqual failed. Expected:<1>. Actual:<0>.
+  P5-08 box 1 x2 raw distribution -> sale:InsufficientStock | sale:InsufficientStock
+
+Fixed by rewriting ResetBalanceAsync to go through
+StockRepository.IncrementAsync (an upsert - creates the row if missing) for
+a positive delta and StockRepository.TryDecrementAsync for a negative one -
+the same conditional-write discipline every real command in this codebase
+already follows. No application code was ever touched for this; it was
+confined to the new test file and never committed in its broken form.
+
+The broken draft's write was a real, permanent row (StockMovements is
+append-only) for fixture product 5718
+(p5_08_fixture_sku_227edbd6940b4cad), closed by
+evidence/phase-5/p5-08-drift-correction.sql - one compensating movement, run
+once as merch_migrator, NEVER an edit or delete. Verified immediately
+afterward:
+
+  ProductId  Before correction        After correction
+  5718       Expected 1.000 / Actual 0.000   Expected 0.000 / Actual 0.000
+
+===============================================================================
+2. Box 2 - sale racing receive, both orderings possible
+===============================================================================
+
+Sale_RacingReceive_SameProduct_BothOrderingsObserved
+
+A receive of +5.000 races a sale of 5.000 (EWallet - no cash-tender
+arithmetic to complicate the race) at a product holding 2.000 - the P4-15
+box-2 numbers, with the sale standing in for the adjustment. 2.000 is
+load-bearing for the identical reason P4-15 section 2.1(a) recorded: a
+never-received product has no StockBalances row at all, so the conditional
+decrement's row-existence check would refuse the sale before the "Quantity
+>= @qty" guard is ever reached.
+
+  P5-08 box 2 round 1 -> receive:Created sale:InsufficientStock balance:7.000
+  P5-08 box 2 round 2 -> receive:Created sale:Created           balance:2.000
+  P5-08 box 2 round 3 -> receive:Created sale:Created           balance:2.000
+  P5-08 box 2 round 4 -> receive:Created sale:Created           balance:2.000
+  P5-08 box 2 round 5 -> receive:Created sale:Created           balance:2.000
+  P5-08 box 2 round 6 -> receive:Created sale:Created           balance:2.000
+  P5-08 box 2 ordering distribution over 6 rounds ->
+      sale won: 5, receive won (sale refused): 1
+
+BOTH orderings genuinely observed. The receive itself has nothing to contend
+for (it only adds stock) and always commits; asserted every round. Every
+round also asserts MIN(QuantityAfter) >= 0 over the ledger and the P4-01
+reconciliation.
+
+===============================================================================
+3. Box 3 - sale racing adjustment, exactly one wins
+===============================================================================
+
+Sale_RacingAdjustment_SameProduct_ExactlyOneWins
+
+A sale of 5.000 races an adjustment of -5.000 at a product holding exactly
+5.000. Unlike box 2, BOTH sides are decrements - no ordering lets both
+commit, so exactly one wins each round and the balance lands on 0.000
+either way. What this box's distribution reports is WHICH COMMAND won,
+over 8 rounds, with a hard assertion that both winners actually occurred at
+least once (a race that only ever resolves one way is not a race).
+
+  P5-08 box 3 round 1 -> sale:Created           adjust:InsufficientStock balance:0.000
+  P5-08 box 3 round 2 -> sale:Created           adjust:InsufficientStock balance:0.000
+  P5-08 box 3 round 3 -> sale:InsufficientStock adjust:Created           balance:0.000
+  P5-08 box 3 round 4 -> sale:InsufficientStock adjust:Created           balance:0.000
+  P5-08 box 3 round 5 -> sale:Created           adjust:InsufficientStock balance:0.000
+  P5-08 box 3 round 6 -> sale:InsufficientStock adjust:Created           balance:0.000
+  P5-08 box 3 round 7 -> sale:Created           adjust:InsufficientStock balance:0.000
+  P5-08 box 3 round 8 -> sale:InsufficientStock adjust:Created           balance:0.000
+  P5-08 box 3 ordering distribution over 8 rounds -> sale won: 4, adjustment won: 4
+
+===============================================================================
+4. Falsification - all three tests watched fail, for the right reasons
+===============================================================================
+
+A reconciliation/negative-stock test never proven to fail is decoration
+(P4-01's and P4-15's own wording). StockRepository.TryDecrementAsync's
+conditional UPDATE was temporarily broken by deleting its
+"AND Quantity >= @qty" guard clause (the entire criterion this card exists to
+prove), the three SaleConcurrencyTests re-run against the broken build, and
+the file then reverted with `git checkout --`, verified byte-identical to
+HEAD (a45ea3a8f4c77afe710bb46dc5d7f6ef1878b768).
+
+All three failed, each for exactly the right reason:
+
+  Failed Sale_ConcurrentSameProduct_LastUnitExactlyOneSucceeds [432 ms]
+  Assert.AreEqual failed. Expected:<1>. Actual:<2>.
+  P5-08 box 1 x2 raw distribution -> sale:Created | sale:Created
+
+  -> both simultaneous buyers of the last unit "succeeded" - the last unit
+     was sold twice.
+
+  Failed Sale_RacingReceive_SameProduct_BothOrderingsObserved [203 ms]
+  Assert.IsGreaterThanOrEqualTo failed. Actual value <-3.000> is not greater
+  than or equal to expected value <0>. Product 5749: the ledger records a
+  balance of -3.000 at some point during round 1.
+  P5-08 box 2 round 1 -> receive:Created sale:Created balance:2.000
+
+  -> and note the round's own printed line shows balance:2.000 - the FINAL
+     BALANCE WAS NOT NEGATIVE. Only the append-only ledger caught the
+     transient -3.000 the broken write actually recorded before the receive
+     landed. This is P4-15 section 2.1(b)'s argument, demonstrated directly
+     rather than merely inherited: the sale (unconstrained by the guard) sold
+     stock the product did not yet have, driving the ledger to -3.000, and
+     the very next committed row (the receive) brought the STORED balance
+     back to a number indistinguishable from the safe ordering.
+
+  Failed Sale_RacingAdjustment_SameProduct_ExactlyOneWins [119 ms]
+  Assert.IsGreaterThanOrEqualTo failed. Actual value <-5.000> is not greater
+  than or equal to expected value <0>. Round 1: balance went negative
+  (-5.000).
+  P5-08 box 3 round 1 -> sale:Created adjust:Created balance:-5.000
+
+  -> with the guard gone, BOTH decrements against the same 5.000 succeeded
+     at once; the stored balance itself went negative here, no ledger
+     archaeology required.
+
+-------------------------------------------------------------------------------
+4.1 The falsification run left no drift
+-------------------------------------------------------------------------------
+
+Unlike P4-15's falsification (which broke IncrementAsync into a
+read-then-write, producing writes whose StockMovements rows no longer
+matched what StockBalances actually held), removing TryDecrementAsync's
+guard only removes a REFUSAL CONDITION - every write it still performs
+remains internally consistent: the QuantityBefore/QuantityAfter captured and
+written to StockMovements is exactly what the (wrongly permitted) UPDATE
+produced. The business invariant broke; the ledger-matches-balance invariant
+did not. Confirmed directly against the database immediately after the
+falsification run and before reverting:
+
+  SELECT p.Id, COALESCE(m.TotalDelta,0.000), COALESCE(b.Quantity,0.000)
+    FROM Products p
+    LEFT JOIN (SELECT ProductId, SUM(Delta) AS TotalDelta
+                 FROM StockMovements GROUP BY ProductId) m ON m.ProductId = p.Id
+    LEFT JOIN StockBalances b ON b.ProductId = p.Id
+   WHERE COALESCE(m.TotalDelta,0.000) <> COALESCE(b.Quantity,0.000);
+
+  -> zero rows returned. No compensating correction was needed for this run.
+
+===============================================================================
+5. Confirm green again after the revert
+===============================================================================
+
+  Test Run Successful.
+  Total tests: 3
+       Passed: 3
+   Total time: 2.6960 Seconds
+
+  P5-08 box 1 x2 raw distribution -> sale:Created | sale:InsufficientStock
+  P5-08 box 1 x10 raw distribution -> sale:Created | sale:InsufficientStock (x9)
+  P5-08 box 2 ordering distribution over 6 rounds -> sale won: 5, receive won: 1
+  P5-08 box 3 ordering distribution over 8 rounds -> sale won: 4, adjustment won: 4
+
+===============================================================================
+6. Suite state
+===============================================================================
+
+  $ pwsh ./scripts/run-tests.ps1
+
+  Guardrails    G-A, G-B, G-C, G-D all pass
+  Build         0 warnings, 0 errors
+  Unit          61 / 61   passed, 0 skipped
+  Integration  443 / 443  passed, 0 skipped   (440 at P5-07 + these 3)
+
+===============================================================================
+7. What this closes, and what it does not
+===============================================================================
+
+CLOSES: the Phase 5 exit criterion "Negative stock impossible under
+concurrent load" - P4-15's own named gap (sale-vs-receive, sale-vs-adjust),
+plus the N-way last-unit race tasks.md's Done-when list asks for, all fired
+under real concurrent load against the real pinned MariaDB, with a genuine
+watched-fail/revert/green cycle and both orderings of every mixed race
+actually observed rather than assumed.
+
+DOES NOT CLAIM: idempotent retry safety for SaleService.CompleteAsync (that
+is P5-09's own card) or completed-sale immutability (P5-10).
