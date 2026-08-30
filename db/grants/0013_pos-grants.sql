@@ -67,4 +67,18 @@ FLUSH PRIVILEGES;
 --   mysql -u merch_api -p merchandising -e "UPDATE salepayments SET Amount = 0;"
 --
 -- Asserted continuously by PosSchemaTests, not only here.
+--
+-- P5-10: "a sale may be cancelled only before completion" (spec section
+-- 10.3) has no server-side "in-progress" row to act on - a Sales row is
+-- only ever inserted already Completed (P5-07). So "cancelling a completed
+-- sale is refused" is THE SAME fact this file already argues, checked
+-- against the ONE column a cancellation would actually have to change:
+--
+--   mysql -u merch_api -p merchandising -e "UPDATE sales SET Status = 'Cancelled' WHERE Id = 1;"
+--
+-- ERROR 1142, for the identical reason `UPDATE sales SET Total = 0` above
+-- is - no UPDATE grant exists on `sales` AT ALL, so no column on it is
+-- reachable, `Status` included. Asserted directly, against a real completed
+-- sale, by SaleServiceTests.CompletedSale_StatusUpdateToCancelled_
+-- DeniedByDatabaseGrant.
 -- =============================================================================

@@ -268,7 +268,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Evidence:** `evidence/phase-5/p5-09-sale-idempotency.txt`
 
-### ⬜ P5-10 · Completed sales are immutable; cancellation only before completion
+### ✅ P5-10 · Completed sales are immutable; cancellation only before completion
 
 **Spec:** §10.3 · **Files:** `src/Merchandising.Api/Sales/SaleService.vb`, `db/grants/0013_pos-grants.sql`
 
@@ -276,10 +276,10 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Immutability is enforced **by database grant** where it can be, not only by policy — the `merch_api` account's write privileges on `Sales` and `SalePayments` argued explicitly in the grants file header, with the refusal proven as `ERROR 1142` by calling the production write path directly, the P4-07 / P4-08 shape
-- [ ] Every route that could mutate a completed sale is refused with a stable code, asserted **over every completed state**, not spot-checked
-- [ ] Cancelling a completed sale is refused; cancelling an in-progress one succeeds and leaves no stock effect
-- [ ] **Matrix suite extended**; integration suite green
+- [x] Immutability is enforced **by database grant** where it can be, not only by policy — the `merch_api` account's write privileges on `Sales` and `SalePayments` argued explicitly in the grants file header, with the refusal proven as `ERROR 1142` by calling the production write path directly, the P4-07 / P4-08 shape
+- [x] Every route that could mutate a completed sale is refused with a stable code, asserted **over every completed state**, not spot-checked
+- [x] Cancelling a completed sale is refused; cancelling an in-progress one succeeds and leaves no stock effect
+- [x] **Matrix suite extended**; integration suite green
 
 **Evidence:** `evidence/phase-5/p5-10-sale-immutability.txt`
 

@@ -1,0 +1,163 @@
+P5-10 - Completed sales are immutable; cancellation only before completion.
+Spec section 10.3: "Completed sales are never edited or deleted. A sale may
+be cancelled only before completion." Fired, not argued.
+
+Captured 2026-08-30 on this workstation, against the real pinned MariaDB
+10.4.32 (XAMPP 8.2.12-0).
+
+===============================================================================
+0. The design decision this card required, confirmed before writing code
+===============================================================================
+
+The card's Done-when box 3 ("cancelling a completed sale is refused;
+cancelling an in-progress one succeeds and leaves no stock effect") reads as
+if a callable "cancel" action exists. It does not, anywhere: no route in
+spec section 13's endpoint table, no Cancel* method in this codebase, and
+SaleStatus.vb's own header states outright: "Cancelled is modelled now but
+driven by no card in this phase." The card's own Files line names only
+SaleService.vb and db/grants/0013_pos-grants.sql - no new controller or
+contract file.
+
+Confirmed with the user before implementing: prove the guarantee
+STRUCTURALLY (no new endpoint), rather than invent a cancel mechanism the
+spec never asks for. A Sales row is only ever inserted already Completed
+(P5-07's atomic transaction) - there is no persisted draft/in-progress row
+for a cart to attach to. "Cancel before completion" is therefore not an API
+call at all; it is the client simply never calling CompleteAsync.
+
+===============================================================================
+1. Box 1 - immutability enforced by database grant
+===============================================================================
+
+db/grants/0013_pos-grants.sql already grants merch_api INSERT-only on
+sales/salelines/salepayments (argued at P5-02, with this file's own header
+already anticipating "the one card that names this file again, P5-10").
+PosSchemaTests already proves this generically: UPDATE/DELETE/ALTER/DROP on
+all three tables denied ERROR 1142, as merch_api.
+
+This card names the SPECIFIC statement a cancellation would actually have to
+be - Status -> 'Cancelled' - not a column this suite happened not to check:
+
+  CompletedSale_StatusUpdateToCancelled_DeniedByDatabaseGrant
+    1. A real sale is completed via SaleService.CompleteAsync (Created).
+    2. UPDATE Sales SET Status = 'Cancelled' WHERE Id = <that sale's id>,
+       through the SAME merch_api connection factory production code uses.
+    3. Asserted: MySqlException.Number = 1142 (TableAccessDeniedError).
+    4. Re-read Status afterward: still 'Completed' - the refused attempt
+       left no trace at all.
+
+  Passed CompletedSale_StatusUpdateToCancelled_DeniedByDatabaseGrant [412 ms]
+
+There is no repository method that attempts this write (SaleRepository has
+no UpdateAsync at all) - unlike P4-07's IncrementReceivedQuantityAsync,
+where "call the production write path directly" meant calling an existing
+guarded method with the guard removed. For Sales, the guard IS the absence
+of any write path, and the database is what proves that absence is real,
+not merely coded. db/grants/0013_pos-grants.sql's own trailing comment now
+names this exact statement and test.
+
+===============================================================================
+2. Box 3 (in-progress half) - an abandoned cart leaves no trace
+===============================================================================
+
+AbandonedSale_NeverCompleted_LeavesNoRowsOrStockEffect
+
+Everything a real sale would need is prepared - a real product, a real open
+cashier session, a line that would be valid - and then CompleteAsync is
+deliberately never called, the same as a cashier clearing a cart before
+checkout.
+
+  Assert.AreEqual(9.000D, balance)              -- stock never touched
+  Assert.AreEqual(0L, CountSalesAsync(...))      -- no Sales row
+  Assert.AreEqual(0L, CountMovementsAsync(...))  -- no StockMovements row
+
+  Passed AbandonedSale_NeverCompleted_LeavesNoRowsOrStockEffect [35 ms]
+
+This makes the structural argument in section 0 an executable assertion
+rather than only a comment: "cancelling an in-progress sale" needs no
+server-side undo because nothing was ever committed for it to undo.
+
+===============================================================================
+3. Box 2 - every route that could mutate a completed sale, not spot-checked
+===============================================================================
+
+SalesController declares exactly one action (CreateSale, POST
+/api/v1/sales) - no {id}-scoped route exists for an existing sale at all.
+Proven through the real HTTP pipeline against a REAL completed sale, for
+every mutating verb:
+
+  ExistingSale_NoMutatingRouteReachesIt_RefusedForEveryMutatingVerb
+    PUT/PATCH/DELETE /api/v1/sales/{realSaleId}    -> 404 (no route resolves)
+    PUT/PATCH/DELETE /api/v1/sales (bare)          -> never 200/204
+    Re-read Status afterward: still 'Completed'.
+
+  Passed ExistingSale_NoMutatingRouteReachesIt_RefusedForEveryMutatingVerb [606 ms]
+
+And the matrix half, in AuthorizationMatrixTests.vb - PUT/DELETE against a
+real completed sale's own id, for every one of the five roles AND an
+anonymous caller:
+
+  Sales_NoMutatingRouteReachesAnExistingSale_ForAnyRoleOrAnonymous
+
+  Sales.NoMutatingRoute | Cashier      | PUT    /api/v1/sales/{id} | got 404 NotFound
+  Sales.NoMutatingRoute | Cashier      | DELETE /api/v1/sales/{id} | got 404 NotFound
+  Sales.NoMutatingRoute | anonymous    | PUT    /api/v1/sales/{id} | got 404 NotFound
+  Sales.NoMutatingRoute | anonymous    | DELETE /api/v1/sales/{id} | got 404 NotFound
+  (SuperAdmin, Admin, ProcurementOfficer, InventoryClerk logged identically - 404 every time)
+
+  Passed Sales_NoMutatingRouteReachesAnExistingSale_ForAnyRoleOrAnonymous [~1.4 s]
+
+This is deliberately NOT a policy-decision matrix like every other
+*_MatrixMatchesPolicyRegistry test in this file: ASP.NET Core's own pipeline
+runs ROUTING before AUTHORIZATION, so an unmatched endpoint never reaches an
+[Authorize] check at all. There is no "who is this for" question here - only
+"does this route exist," and the answer must be the identical 404 regardless
+of identity, including no identity at all. That uniformity is what this
+test actually asserts.
+
+A NOTE ON "A STABLE CODE." A genuinely unmatched route (no endpoint at all,
+confirmed: no MapFallback/UseStatusCodePages handler exists anywhere in
+Program.vb) returns a bare 404 with no body - ADR-014's ApiErrorResponse
+envelope wraps errors the APPLICATION produces (a business refusal, a
+validation failure, an unhandled exception); it never runs for a request
+that never reached any controller action, because there is no application
+code in the loop to produce that envelope. "A stable code" here is the HTTP
+status itself: 404, proven identical across every role and anonymous, for
+every mutating verb, forever - not an ApiErrorResponse.errorCode string,
+which would require inventing a fallback handler for every unmatched route
+across the whole API, a change this card's file scope (SaleService.vb, one
+grants file) does not invite and no other card has asked for.
+
+===============================================================================
+4. Suite state
+===============================================================================
+
+  $ pwsh ./scripts/run-tests.ps1
+
+  Guardrails    G-A, G-B, G-C, G-D all pass
+  Build         0 warnings, 0 errors
+  Unit          61 / 61   passed, 0 skipped
+  Integration  450 / 450  passed, 0 skipped   (446 at P5-09; 4 new: three in
+                                               SaleServiceTests.vb, one
+                                               matrix test in
+                                               AuthorizationMatrixTests.vb)
+
+===============================================================================
+5. What this closes, and what it does not
+===============================================================================
+
+CLOSES: all four P5-10 Done-when boxes - immutability proven by database
+grant against the specific Status->Cancelled statement a cancellation would
+require; every mutating HTTP verb against a real completed sale refused
+(404), asserted both directly and across every role plus anonymous; an
+abandoned/never-completed sale proven to leave zero trace and zero stock
+effect. db/grants/0013_pos-grants.sql's own comment updated to name the
+exact verification statement and test.
+
+DOES NOT CLAIM: that a "cancel sale" API exists, or that one should - the
+spec names none, SaleStatus.vb's own header disclaims driving Cancelled from
+any Phase 5 card, and this card's Files line named no new controller or
+contract. What it claims is narrower and, for this architecture, complete:
+a completed sale cannot be mutated by any route or any database write
+merch_api can make, and an in-progress sale has no server-side existence to
+cancel in the first place.

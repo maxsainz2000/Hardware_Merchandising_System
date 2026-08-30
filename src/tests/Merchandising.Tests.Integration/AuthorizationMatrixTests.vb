@@ -1166,6 +1166,90 @@ Public Class AuthorizationMatrixTests
 
     End Function
 
+    ''' <summary>
+    ''' P5-10 box 2/4: "every route that could mutate a completed sale is
+    ''' refused... not spot-checked", the matrix half. SalesController
+    ''' declares no {id}-scoped route at all for an existing sale - PUT and
+    ''' DELETE against a REAL, completed sale's own id must resolve to
+    ''' NOTHING, for every role AND for an anonymous caller. This holds
+    ''' independent of identity because ASP.NET Core's own pipeline runs
+    ''' ROUTING before AUTHORIZATION - an unmatched endpoint never reaches an
+    ''' [Authorize] check at all, so there is no role-specific DECISION being
+    ''' made here (unlike every other *_MatrixMatchesPolicyRegistry test in
+    ''' this file, which asks "who is this policy for"). The matrix dimension
+    ''' this test asserts is narrower and stronger: the answer must be the
+    ''' SAME refusal - 404, a route that does not exist - regardless of who
+    ''' is asking, including nobody at all.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Sales_NoMutatingRouteReachesAnExistingSale_ForAnyRoleOrAnonymous() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+        Await CloseAnyOpenFixtureCashierSessionsDirectlyAsync()
+        Dim productId As Integer = Await EnsureFixtureProductAsync()
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim cashierToken As String = Await LoginAsync(client, RoleNames.Cashier)
+            Await ResetStockBalanceDirectlyAsync(productId, 10.000D)
+
+            Dim openBody As New OpenCashierSessionRequest With {
+                .OpeningFloat = 0D, .IdempotencyKey = Guid.NewGuid().ToString("d")}
+
+            Dim sessionId As Integer
+            Using openResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/cashier-sessions", cashierToken, openBody)
+                Assert.AreEqual(HttpStatusCode.Created, openResponse.StatusCode)
+                sessionId = (Await openResponse.Content.ReadFromJsonAsync(Of CashierSessionResponse)()).Id
+            End Using
+
+            Dim saleId As Integer
+            Dim saleBody As New CreateSaleRequest With {
+                .IdempotencyKey = Guid.NewGuid().ToString("d"),
+                .Lines = New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                .Payment = New CreateSalePaymentRequest With {.Method = "Cash", .TenderedAmount = 5.0000D}
+            }
+            Using saleResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, "/api/v1/sales", cashierToken, saleBody)
+                Assert.AreEqual(HttpStatusCode.Created, saleResponse.StatusCode, "Fixture sale for this test could not be completed.")
+                saleId = (Await saleResponse.Content.ReadFromJsonAsync(Of SaleResponse)()).Id
+            End Using
+
+            Using closeResponse As HttpResponseMessage =
+                Await SendAsync(client, HttpMethod.Post, $"/api/v1/cashier-sessions/{sessionId}/close", cashierToken,
+                    New CloseCashierSessionRequest With {.IdempotencyKey = Guid.NewGuid().ToString("d")})
+                Assert.AreEqual(HttpStatusCode.OK, closeResponse.StatusCode)
+            End Using
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                For Each method As HttpMethod In New HttpMethod() {HttpMethod.Put, HttpMethod.Delete}
+                    Using response As HttpResponseMessage =
+                        Await SendAsync(client, method, $"/api/v1/sales/{saleId}", token, requestBody:=Nothing)
+                        Console.WriteLine($"Sales.NoMutatingRoute | {roleName} | {method} /api/v1/sales/{{id}} | got {CInt(response.StatusCode)} {response.StatusCode}")
+                        Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode,
+                            $"{method} /api/v1/sales/{{id}} must not resolve to any action for role '{roleName}' - no route exists to reach it.")
+                    End Using
+                Next
+
+            Next
+
+            For Each method As HttpMethod In New HttpMethod() {HttpMethod.Put, HttpMethod.Delete}
+                Using response As HttpResponseMessage =
+                    Await SendAsync(client, method, $"/api/v1/sales/{saleId}", token:=Nothing, requestBody:=Nothing)
+                    Console.WriteLine($"Sales.NoMutatingRoute | anonymous | {method} /api/v1/sales/{{id}} | got {CInt(response.StatusCode)} {response.StatusCode}")
+                    Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode,
+                        $"{method} /api/v1/sales/{{id}} must not resolve to any action for an anonymous caller either - the route itself does not exist.")
+                End Using
+            Next
+
+        End Using
+
+    End Function
+
     ' --------------------------------------------------------------- shared assertions
 
     Private Shared Function RolesFor(policyName As String) As IReadOnlyList(Of String)

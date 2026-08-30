@@ -550,6 +550,146 @@ Public Class SaleServiceTests
 
     End Function
 
+    ' ------------------------------------------------------------------ P5-10: completed sales are immutable
+
+    ''' <summary>
+    ''' P5-10 box 1: "cancelling a completed sale is refused" is the SAME
+    ''' database-grant fact db/grants/0013_pos-grants.sql already argues and
+    ''' PosSchemaTests already proves generically (no UPDATE grant at all on
+    ''' `sales`) - this test names the SPECIFIC statement a cancellation would
+    ''' have to be, `Status -> 'Cancelled'`, run through the same connection
+    ''' factory (merch_api) production code uses, rather than a column this
+    ''' card happens not to care about. There is no repository method that
+    ''' attempts this (SaleRepository has no UpdateAsync at all - the P4-07
+    ''' "call the production write path directly" shape does not apply here
+    ''' the way it did to a repository method that exists and needs a guard;
+    ''' for Sales, the guard IS the absence of any write path, and the
+    ''' database is what proves that absence is real, not merely coded).
+    ''' </summary>
+    <TestMethod>
+    Public Async Function CompletedSale_StatusUpdateToCancelled_DeniedByDatabaseGrant() As Task
+
+        Const TableAccessDeniedErrorNumber As Integer = 1142
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=6.0000D, cost:=2.0000D)
+        Await SeedStockDirectlyAsync(productId, 5.000D)
+        Await EnsureOpenSessionAsync()
+
+        Dim outcome As SaleOutcome =
+            Await _saleService.CompleteAsync(
+                New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                PaymentMethod.Cash, 10.0000D, _cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Assert.AreEqual(SaleOutcomeKind.Created, outcome.Kind)
+
+        Dim ex As MySqlException =
+            Await Assert.ThrowsExactlyAsync(Of MySqlException)(
+                Function() UpdateSaleStatusDirectlyAsync(outcome.Response.Id, "Cancelled"))
+
+        Assert.AreEqual(TableAccessDeniedErrorNumber, ex.Number, "merch_api must have no UPDATE grant on Sales at all - a status change to Cancelled must be denied exactly like any other column.")
+
+        Dim storedStatus As String = Await ReadSaleStatusAsync(outcome.Response.Id)
+        Assert.AreEqual("Completed", storedStatus, "The refused attempt must leave the sale's own Status column untouched.")
+
+    End Function
+
+    ''' <summary>
+    ''' P5-10 box 3 (the "in-progress" half): a cart is never a server-side
+    ''' row in this system - SaleService.CompleteAsync's own header states it
+    ''' commits the Sales row and every other effect together, atomically, at
+    ''' completion; nothing is written beforehand for a cart to attach to
+    ''' (SaleStatus.vb's own header: "There is no persisted draft/in-progress
+    ''' row"). "Cancelling an in-progress sale" is therefore not an API call
+    ''' at all - it is simply the client never calling CompleteAsync. This
+    ''' test makes that structural fact an executable assertion rather than
+    ''' an argument in a comment: preparing everything CompleteAsync would
+    ''' need (a real product, a real open session, a real correlation id) and
+    ''' then never invoking it must leave precisely zero trace and zero stock
+    ''' effect - because there was never anything to undo.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function AbandonedSale_NeverCompleted_LeavesNoRowsOrStockEffect() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=3.0000D, cost:=1.0000D)
+        Await SeedStockDirectlyAsync(productId, 9.000D)
+        Await EnsureOpenSessionAsync()
+
+        Dim correlationId As String = Guid.NewGuid().ToString()
+
+        ' Everything a real sale would need is prepared - a product, an open
+        ' session, lines that would be valid - and then simply abandoned:
+        ' CompleteAsync is deliberately never called, the same as a cashier
+        ' clearing a cart before checkout.
+        Dim abandonedLines As New List(Of CreateSaleLineRequest) From {
+            New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 2.000D}
+        }
+        GC.KeepAlive(abandonedLines) ' prepared, never sent - the point being made
+
+        Assert.AreEqual(9.000D, Await ReadBalanceOrZeroAsync(productId), "An abandoned cart must never have touched stock.")
+        Assert.AreEqual(0L, Await CountSalesAsync(correlationId), "An abandoned cart must never have written a Sales row.")
+        Assert.AreEqual(0L, Await CountMovementsAsync(correlationId, productId), "An abandoned cart must never have written a StockMovements row.")
+
+    End Function
+
+    ''' <summary>
+    ''' P5-10 box 2: "every route that could mutate a completed sale is
+    ''' refused... not spot-checked." SalesController declares exactly one
+    ''' action (CreateSale, POST /api/v1/sales) - there is no {id}-scoped
+    ''' route at all for an existing sale, so a PUT/PATCH/DELETE naming a
+    ''' real, completed sale's own id cannot reach any action. Proven through
+    ''' the real HTTP pipeline against a REAL completed sale (not a made-up
+    ''' id), for every mutating verb, so a future route added without
+    ''' thought fails this test rather than shipping untested. Routing
+    ''' happens before authorization for an unmatched endpoint (ASP.NET
+    ''' Core's own pipeline order), so this holds independent of the caller's
+    ''' role - there is no policy decision to be role-specific ABOUT, only a
+    ''' route that must continue not to exist.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function ExistingSale_NoMutatingRouteReachesIt_RefusedForEveryMutatingVerb() As Task
+
+        Dim productId As Integer = Await CreateFixtureProductAsync(price:=6.0000D, cost:=2.0000D)
+        Await SeedStockDirectlyAsync(productId, 5.000D)
+        Await EnsureOpenSessionAsync()
+
+        Dim outcome As SaleOutcome =
+            Await _saleService.CompleteAsync(
+                New List(Of CreateSaleLineRequest) From {
+                    New CreateSaleLineRequest With {.ProductId = productId, .Quantity = 1.000D}},
+                PaymentMethod.Cash, 10.0000D, _cashierUserId, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())
+        Assert.AreEqual(SaleOutcomeKind.Created, outcome.Kind)
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Dim token As String = Await LoginAsync(client, CashierUsername)
+
+            For Each method As HttpMethod In New HttpMethod() {HttpMethod.Put, HttpMethod.Patch, HttpMethod.Delete}
+
+                Using idScoped As HttpResponseMessage =
+                    Await SendAsync(client, method, $"/api/v1/sales/{outcome.Response.Id}", token, requestBody:=Nothing)
+                    Assert.AreEqual(
+                        HttpStatusCode.NotFound, idScoped.StatusCode,
+                        $"{method} /api/v1/sales/{{id}} must not resolve to any action - a completed sale must have no route that can mutate it.")
+                End Using
+
+                Using collectionScoped As HttpResponseMessage =
+                    Await SendAsync(client, method, "/api/v1/sales", token, requestBody:=Nothing)
+                    Assert.AreNotEqual(
+                        HttpStatusCode.OK, collectionScoped.StatusCode,
+                        $"{method} /api/v1/sales must never succeed - only POST (create) is a declared action on this route.")
+                    Assert.AreNotEqual(HttpStatusCode.NoContent, collectionScoped.StatusCode)
+                End Using
+
+            Next
+
+        End Using
+
+        ' The refused calls above must not have touched the sale at all.
+        Dim storedStatus As String = Await ReadSaleStatusAsync(outcome.Response.Id)
+        Assert.AreEqual("Completed", storedStatus)
+
+    End Function
+
     ' ------------------------------------------------------------------ HTTP-level round trip
 
     ''' <summary>End to end through the real ASP.NET Core pipeline: 201, the committed shape, and G-24's wording in the actual JSON body.</summary>
@@ -807,6 +947,38 @@ Public Class SaleServiceTests
                 command.Parameters.AddWithValue("@cost", cost)
                 command.Parameters.AddWithValue("@productId", productId)
                 Await command.ExecuteNonQueryAsync()
+            End Using
+        End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P5-10: attempts the exact write a "cancel a completed sale" command
+    ''' would have to make, through the SAME connection factory (merch_api)
+    ''' production code uses - never merch_migrator. Must throw
+    ''' MySqlException ERROR 1142; there is no repository method to call
+    ''' because none exists (see the calling test's own header).
+    ''' </summary>
+    Private Async Function UpdateSaleStatusDirectlyAsync(saleId As Integer, status As String) As Task
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "UPDATE Sales SET Status = @status WHERE Id = @saleId;"
+                command.Parameters.AddWithValue("@status", status)
+                command.Parameters.AddWithValue("@saleId", saleId)
+                Await command.ExecuteNonQueryAsync()
+            End Using
+        End Using
+
+    End Function
+
+    Private Async Function ReadSaleStatusAsync(saleId As Integer) As Task(Of String)
+
+        Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT Status FROM Sales WHERE Id = @saleId;"
+                command.Parameters.AddWithValue("@saleId", saleId)
+                Return CStr(Await command.ExecuteScalarAsync())
             End Using
         End Using
 
