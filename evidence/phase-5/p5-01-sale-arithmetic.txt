@@ -1,0 +1,157 @@
+P5-01 — Fixed-precision sale arithmetic in Domain, with no database at all
+============================================================================
+
+Scope: src/Merchandising.Domain/Sales/{SaleRoundingPolicy,SaleLine,SaleTotals,CashTender}.vb
+Tests: src/tests/Merchandising.Tests.Unit/SaleArithmeticTests.vb (14 tests)
+Decides: ADR-022 (docs/adr.md)
+Date: 2026-08-30
+
+----------------------------------------------------------------------------
+1. A real bug this card's tests found and fixed, before evidence was captured
+----------------------------------------------------------------------------
+
+First implementation of SaleLine's and CashTenderResult's constructors
+assigned properties from identically-named-but-lowercase parameters, e.g.:
+
+    Public Sub New(productId As Integer, quantity As Decimal,
+                    capturedUnitPrice As Decimal, capturedUnitCost As Decimal, ...)
+        ProductId = productId
+        Quantity = quantity
+        CapturedUnitPrice = capturedUnitPrice
+        CapturedUnitCost = capturedUnitCost
+        ...
+
+VB.NET is case-insensitive, so "ProductId" and "productId" are the SAME
+identifier. Each assignment above resolved both sides to the local
+parameter and silently no-op'd rather than setting the property - the
+backing fields stayed at their type defaults (0, False). First test run
+against this version failed 4 of 61 tests:
+
+    Failed ComputeChange_TenderedBelowTotal_IsRefusedNotNegative
+        Assert.AreEqual failed. Expected:<0.0001>. Actual:<0>.
+    Failed SaleLine_CapturedPriceAndCost_AreUnmovedByLaterProductChange
+        Assert.AreEqual failed. Expected:<100.0000>. Actual:<0>.
+    Failed ComputeChange_TenderedAboveTotal_ReturnsExactChange
+        Assert.IsTrue failed. 'condition' expression: 'result.IsAccepted'.
+    Failed ComputeChange_ExactTender_GivesExactZeroChange
+        Assert.IsTrue failed. 'condition' expression: 'result.IsAccepted'.
+
+Fix: renamed every colliding constructor parameter to a distinct word
+(saleProductId, lineQuantity, unitPrice, unitCost, accepted, changeAmount,
+shortfall) - the same "settingKey" -> Key convention SystemSettingDefinition
+already uses in this codebase, precisely to avoid this collision. Full
+suite green afterward (section 3 below).
+
+This is exactly the P4-15 lesson tasks.md opens Phase 5 with: "a test that
+has never been watched fail is not a check." These four tests caught a
+real defect in the first draft.
+
+----------------------------------------------------------------------------
+2. Watched-fail proof for the source-scan test itself
+----------------------------------------------------------------------------
+
+The "no Double or Single anywhere" box is asserted by a source scan
+(SalesSourceFiles_ContainNoDoubleOrSingleTokens), which is exactly the
+kind of test that can pass by accident if the regex or the file glob is
+wrong. Proven by deliberately injecting the disallowed token into
+SaleTotals.vb and re-running just that test:
+
+    Injected: "' TEMP-WATCHED-FAIL-PROBE: Dim probe As Double" into
+              SaleTotals.vb
+
+    $ dotnet test --filter "FullyQualifiedName~SalesSourceFiles_ContainNoDoubleOrSingleTokens"
+
+    Failed SalesSourceFiles_ContainNoDoubleOrSingleTokens [42 ms]
+      Error Message:
+       Assert.IsFalse failed. 'condition' expression: 'Regex.IsMatch(text, "\bDouble\b")'.
+       SaleTotals.vb contains the disallowed token 'Double'. Money and
+       quantity are Decimal everywhere (CLAUDE.md section 5).
+
+    Failed!  - Failed: 1, Passed: 0, Skipped: 0, Total: 1, Duration: 81 ms
+
+Probe reverted immediately afterward; SaleTotals.vb carries no trace of it
+(confirmed by the clean full-suite run in section 3).
+
+----------------------------------------------------------------------------
+3. Full guardrails + both test suites, green
+----------------------------------------------------------------------------
+
+$ pwsh ./scripts/run-tests.ps1
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+All guardrails passed.
+
+=== Build ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+=== Unit tests ===
+Passed!  - Failed: 0, Passed: 61, Skipped: 0, Total: 61, Duration: 1 s
+
+=== Integration tests (real MariaDB) ===
+Passed!  - Failed: 0, Passed: 348, Skipped: 0, Total: 348, Duration: 48 s
+
+All checks passed.
+
+(61 = the Phase 4 closure baseline of 47 unit tests + 14 new
+SaleArithmeticTests. Integration count unchanged at 348 - this card
+touches no database.)
+
+----------------------------------------------------------------------------
+4. Acceptance-box mapping
+----------------------------------------------------------------------------
+
+- Every value Decimal, no Double/Single: SalesSourceFiles_ContainNoDoubleOrSingleTokens
+  (source scan, watched-fail proof section 2).
+- Rounding uses currency.roundingPolicy, never an implicit default, and a
+  changed policy changes the result: SaleRoundingPolicy.Parse maps both
+  registered setting values; LineTotal_ChangesWithConfiguredRoundingPolicy
+  proves 0.5 x 4.0005 (a genuine DECIMAL(19,4) midpoint, even digit before
+  it) rounds to 2.0003 under AwayFromZero and 2.0002 under ToEven from the
+  identical inputs - the setting value provably reaches the arithmetic.
+- Change = tendered - total, exact to DECIMAL(19,4); tendered < total
+  refused, not negative: ComputeChange_TenderedAboveTotal_ReturnsExactChange,
+  ComputeChange_TenderedBelowTotal_IsRefusedNotNegative (asserts Change=0,
+  ShortfallAmount=0.0001, IsAccepted=False - CashTenderResult has no way to
+  construct a negative Change at all).
+- Scale validation refuses an over-scale input before rounding, proven
+  with 1.99999 against a 4-scale field: ComputeChange_OverScaleTenderedAmount_IsRejectedBeforeRounding,
+  SaleLine_OverScaleUnitPrice_IsRejectedBeforeRounding.
+- A sale line holds its captured price/cost as data, unmoved by a later
+  product price change: SaleLine_CapturedPriceAndCost_AreUnmovedByLaterProductChange
+  (mutates a real Merchandising.Domain.Entities.Product after capture;
+  the SaleLine is unmoved) - the P5-07 defect, caught here in Domain.
+- Boundary cases enumerated: SaleLine_ZeroQuantity_IsRefused,
+  SaleLine_NegativeQuantity_IsRefused, ComputeChange_ExactTender_GivesExactZeroChange
+  (0.0000 change), SaleLine_LargestColumnValue_RoundTripsExactly
+  (999999999999999.9999, the largest DECIMAL(19,4) value, round-trips with
+  no overflow or truncation).
+- ADR-022 records the rounding policy, where rounding happens, and why it
+  is not the database's job: docs/adr.md ADR-022, ACCEPTED.
+- Unit suite green; guardrails pass; build 0 warnings: section 3 above.
+
+----------------------------------------------------------------------------
+5. Relationship to ADR-004.1 - read before reusing this pattern elsewhere
+----------------------------------------------------------------------------
+
+ADR-004.1 (Phase 1) mandates AwayFromZero rounding everywhere and
+explicitly rejects MidpointRounding.ToEven for "a printed receipt a
+customer can add up." This card's own acceptance criteria require the
+opposite: rounding driven by the already-registered (P2-05), previously
+unconsumed "currency.roundingPolicy" SystemSettings value, which allows
+ToEven as a real, tested, admin-configurable choice.
+
+Per CLAUDE.md section 1's precedence rule (tasks.md outranks docs/adr.md),
+the task card's explicit requirement governs. ADR-022 records this as a
+scoped narrowing of ADR-004.1: the *scale* rules (money 4dp, quantity 3dp)
+and "round once at the boundary, sum from already-rounded components" are
+unchanged and still binding on every card; only the *rounding direction*
+for POS sale-line/total arithmetic specifically is now configurable
+through the setting this card is the first real consumer of.
+DecimalScaleGuard.RoundMoney/RoundQuantity are untouched and keep
+defaulting to AwayFromZero for every other caller in the system.

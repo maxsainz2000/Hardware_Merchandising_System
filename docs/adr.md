@@ -1050,6 +1050,31 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-022 · Sale arithmetic rounding is configurable, and a narrowing of ADR-004.1
+
+**Status:** ACCEPTED
+**Date:** 2026-08-30
+**Decides:** where sale-line and sale-total rounding happens, which direction it rounds, and how that squares with ADR-004.1's blanket `AwayFromZero`. Raised and settled at P5-01, first and alone per `plan.md` section 7 — every later Phase 5 card that touches a sale total builds on this.
+
+**Decision.**
+
+1. **Rounding happens once, in `Merchandising.Domain.Sales.SaleLine`, at construction.** `LineTotal = Decimal.Round(quantity * unitPrice, 4, roundingPolicy)` is computed exactly once when a line is built and never recomputed. `SaleTotals.ComputeSaleTotal` sums already-rounded `LineTotal` values with no second rounding step — header and lines agree by construction, the same guarantee ADR-004.1 already requires for every other total in this system.
+2. **The rounding direction is the `currency.roundingPolicy` SystemSettings value, resolved through `SaleRoundingPolicy.Parse`.** That setting was registered generically at P2-05 (`SystemSettingRegistry.Keys.CurrencyRoundingPolicy`, values `AwayFromZero` / `ToEven`) with no consumer until this card. `SaleLine`/`CashTender` take a `MidpointRounding` parameter rather than reading the setting themselves — Domain depends on nothing (CLAUDE.md section 4), so a later API-layer card reads the setting row and passes the resolved value in, the same shape `AdjustmentThresholdPolicy` already takes its threshold as a parameter.
+3. **Change is never rounded at all.** `CashTender.ComputeChange` subtracts two already-money-scale values (`tendered - total`); the difference of two exact 4-decimal-place `Decimal`s is exact at 4 decimal places by construction, so there is nothing for a rounding policy to do there. `tendered < total` is refused (`CashTenderResult.IsAccepted = False`), never represented as a negative `Change` — the type has no constructor path that can produce one.
+4. **Scale validation (ADR-004.1) is unchanged and still runs first.** Every money/quantity value entering `SaleLine`/`CashTender` goes through the existing `DecimalScaleGuard.EnsureMoneyScale`/`EnsureQuantityScale` before anything is rounded — an over-scale client value is still a rejection, never a value this card's rounding logic gets a chance to touch.
+
+**Reasoning — the tension with ADR-004.1, named rather than hidden.** ADR-004.1 mandates `AwayFromZero` everywhere and explicitly *rejects* `MidpointRounding.ToEven`, reasoning specifically about "a printed receipt a customer can add up" — precisely POS's domain. This card's own acceptance criteria require the opposite: the rounding direction must follow the already-registered, previously-unconsumed `currency.roundingPolicy` setting, and a changed policy must provably change a computed total. Per CLAUDE.md section 1's precedence rule, `tasks.md` outranks `docs/adr.md`, so the card's explicit requirement governs. This ADR resolves the tension by scope, not by overturning ADR-004.1 wholesale: **the scale rules (money 4dp, quantity 3dp) and "round once at the boundary, sum from already-rounded components" stand exactly as ADR-004.1 wrote them, and bind this card too.** Only the *rounding direction* for POS sale-line/total arithmetic becomes configurable — everywhere else in the system, `DecimalScaleGuard.RoundMoney`/`RoundQuantity` are untouched and keep defaulting to `AwayFromZero`, so a landed-cost allocation or a price-history rounding elsewhere in the codebase is not silently affected by a store changing this one setting.
+
+**Rejected.**
+
+- **Leaving `currency.roundingPolicy` unconsumed and hard-coding `AwayFromZero` in Sales too**, matching ADR-004.1 to the letter. Rejected because the P5-01 card's own acceptance criteria require the setting to provably change a computed result — an administered setting with no code path that reads it is exactly the kind of decorative configuration CLAUDE.md's "don't design for hypothetical future requirements" warns against, except here it was already built (P2-05) and this is its first real consumer.
+- **Reading the SystemSettings value directly inside `Sales/`.** Would give Domain a dependency on `Infrastructure`/`SystemSettingsRepository`, inverting the dependency direction CLAUDE.md section 4 fixes. The resolved `MidpointRounding` is passed in instead, the same shape every other Domain policy in this codebase already takes its inputs.
+- **Rounding the sale total independently of its lines**, or rounding intermediate arithmetic before the final line total. Both are exactly the drift ADR-004.1 already named and forbade; nothing about making the direction configurable licenses reintroducing it.
+
+**Evidence.** `evidence/phase-5/p5-01-sale-arithmetic.txt` — a genuine defect this card's own tests caught before evidence was captured (VB's case-insensitivity turning `ProductId = productId` into a silent no-op), the watched-fail proof for the source-scan test, and the full green guardrails + both suites run.
+
+---
+
 ## Template for new entries
 
 ```markdown

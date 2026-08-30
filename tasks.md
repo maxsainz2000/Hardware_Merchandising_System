@@ -93,7 +93,7 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 *Independent of the schema. Can run in parallel with Track B.*
 
-### ⬜ P5-01 · Fixed-precision sale arithmetic in `Domain`, with no database at all 🎯
+### ✅ P5-01 · Fixed-precision sale arithmetic in `Domain`, with no database at all 🎯
 
 **Spec:** §10.3, §11 · **Decides:** ADR-022
 **Files:** `src/Merchandising.Domain/Sales/`, `src/tests/Merchandising.Tests.Unit/SaleArithmeticTests.vb`
@@ -102,14 +102,14 @@ No test asserts `OffHostPath` when a `MERCHBACKUP` volume *is* attached. Artifac
 
 **Done when:**
 
-- [ ] Every value is `Decimal`. No `Double` or `Single` appears anywhere in the file — asserted by a source scan in the test, not by inspection, because this is the rule that is easiest to break by accident and hardest to see
-- [ ] Rounding is explicit and uses the `currency.roundingPolicy` `SystemSettings` value (P2-06), never an implicit default — and a changed policy changes the result, asserted
-- [ ] Change = tendered − total, exact to `DECIMAL(19,4)`; tendered < total is a refusal, not a negative change
-- [ ] Scale validation refuses an over-scale input **before** it could be silently rounded (ADR-004.1, CLAUDE.md §6.3) — proven with `1.99999` against a 4-scale field
-- [ ] A sale line holds its **captured** unit price and cost as data. A test constructs a line, then changes the product's price, and asserts the line is unmoved — the P5-07 defect, caught in `Domain` where it is cheap
-- [ ] Boundary cases enumerated, not spot-checked: zero-quantity line refused, exact tender giving `0.0000` change, the largest total the column allows
-- [ ] ADR-022 records the rounding policy, where rounding happens, and why it is not the database's job
-- [ ] Unit suite green; guardrails pass; build 0 warnings
+- [x] Every value is `Decimal`. No `Double` or `Single` appears anywhere in the file — asserted by a source scan in the test, not by inspection, because this is the rule that is easiest to break by accident and hardest to see
+- [x] Rounding is explicit and uses the `currency.roundingPolicy` `SystemSettings` value (P2-06), never an implicit default — and a changed policy changes the result, asserted
+- [x] Change = tendered − total, exact to `DECIMAL(19,4)`; tendered < total is a refusal, not a negative change
+- [x] Scale validation refuses an over-scale input **before** it could be silently rounded (ADR-004.1, CLAUDE.md §6.3) — proven with `1.99999` against a 4-scale field
+- [x] A sale line holds its **captured** unit price and cost as data. A test constructs a line, then changes the product's price, and asserts the line is unmoved — the P5-07 defect, caught in `Domain` where it is cheap
+- [x] Boundary cases enumerated, not spot-checked: zero-quantity line refused, exact tender giving `0.0000` change, the largest total the column allows
+- [x] ADR-022 records the rounding policy, where rounding happens, and why it is not the database's job
+- [x] Unit suite green; guardrails pass; build 0 warnings
 
 **Evidence:** `evidence/phase-5/p5-01-sale-arithmetic.txt`
 
