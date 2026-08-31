@@ -29,6 +29,7 @@
 
 Imports System.Collections.Generic
 Imports System.Globalization
+Imports System.Linq
 Imports System.Threading.Tasks
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Reporting
@@ -51,6 +52,9 @@ Namespace Controllers
 
         Private Const DefaultPageSize As Integer = 25
         Private Const MaxPageSize As Integer = 100
+
+        ''' <summary>P6-06: a CSV export returns every matching row, never just the on-screen page - ReportsController.ExportPageSize's own reasoning.</summary>
+        Private Const ExportPageSize As Integer = Integer.MaxValue
 
         Private ReadOnly _reportService As ReportService
 
@@ -101,6 +105,40 @@ Namespace Controllers
 
         End Function
 
+        ''' <summary>P6-06: same route/validation as <see cref="GetCurrentStockReport"/>, exported as CSV - every matching row. includeInactive is carried into the export filename since it is the only parameter this point-in-time report has (CsvExporter.BuildFileName's extraSuffix).</summary>
+        <HttpGet("current-stock/csv")>
+        Public Async Function GetCurrentStockReportCsv(
+            <FromQuery> Optional includeInactive As Boolean = False,
+            <FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+
+            Dim sortField As CurrentStockReportSortField = CurrentStockReportSortField.ProductName
+            Dim sortDescending As Boolean = False
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseCurrentStockSort(sort, sortField, sortDescending) Then
+                    Return ValidationFailed(
+                        "sort", "Unsupported sort. Use one of productName, quantity, reorderLevel, optionally suffixed with ':asc' or ':desc'.",
+                        correlationId)
+                End If
+            End If
+
+            Dim result =
+                Await _reportService.GetCurrentStockReportAsync(
+                    includeInactive, sortField, sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.CurrentStockRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.CurrentStockHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName(
+                "current-stock", Nothing, Nothing, If(includeInactive, "including-inactive", "active-only"))
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
+
+        End Function
+
         ''' <summary>Spec section 14 row 9. No date parameters. Reuses P4-11's own StockSortField whitelist and sort parsing.</summary>
         <HttpGet("low-stock")>
         Public Async Function GetLowStockReport(
@@ -140,6 +178,36 @@ Namespace Controllers
                 .MaxPageSize = MaxPageSize,
                 .Sort = CanonicalStockSort(sortField, sortDescending)
             })
+
+        End Function
+
+        ''' <summary>P6-06: same route/validation as <see cref="GetLowStockReport"/>, exported as CSV - every matching row.</summary>
+        <HttpGet("low-stock/csv")>
+        Public Async Function GetLowStockReportCsv(<FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+
+            Dim sortField As StockSortField = StockSortField.Quantity
+            Dim sortDescending As Boolean = False
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseStockSort(sort, sortField, sortDescending) Then
+                    Return ValidationFailed(
+                        "sort", "Unsupported sort. Use one of productName, quantity, reorderLevel, optionally suffixed with ':asc' or ':desc'.",
+                        correlationId)
+                End If
+            End If
+
+            Dim result =
+                Await _reportService.GetLowStockReportAsync(sortField, sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.LowStockRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.LowStockHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName("low-stock", Nothing, Nothing)
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
 
         End Function
 
@@ -192,6 +260,47 @@ Namespace Controllers
 
         End Function
 
+        ''' <summary>P6-06: same route/validation as <see cref="GetStockMovementReport"/>, exported as CSV - every matching row. A filtered productId is carried into the filename (CsvExporter.BuildFileName's extraSuffix).</summary>
+        <HttpGet("stock-movements/csv")>
+        Public Async Function GetStockMovementReportCsv(
+            <FromQuery> Optional productId As Integer? = Nothing,
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim range As ParsedDateRange = ParseDateRange(fromDate, toDate, fieldErrors)
+
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseCreatedAtSort(sort, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use createdAt, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim result =
+                Await _reportService.GetStockMovementReportAsync(
+                    productId, range.FromUtc, range.ToUtcExclusive, sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.StockMovementRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.StockMovementHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName(
+                "stock-movements", range.FromDateText, range.ToDateText,
+                If(productId.HasValue, "product-" & productId.Value.ToString(CultureInfo.InvariantCulture), Nothing))
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
+
+        End Function
+
         ''' <summary>Spec section 14 row 11. The first GET route StockAdjustments has ever had.</summary>
         <HttpGet("stock-adjustments")>
         Public Async Function GetStockAdjustmentReport(
@@ -238,6 +347,47 @@ Namespace Controllers
                 .MaxPageSize = MaxPageSize,
                 .Sort = "createdAt" & If(sortDescending, ":desc", ":asc")
             })
+
+        End Function
+
+        ''' <summary>P6-06: same route/validation as <see cref="GetStockAdjustmentReport"/>, exported as CSV - every matching row.</summary>
+        <HttpGet("stock-adjustments/csv")>
+        Public Async Function GetStockAdjustmentReportCsv(
+            <FromQuery> Optional productId As Integer? = Nothing,
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim range As ParsedDateRange = ParseDateRange(fromDate, toDate, fieldErrors)
+
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseCreatedAtSort(sort, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use createdAt, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim result =
+                Await _reportService.GetStockAdjustmentReportAsync(
+                    productId, range.FromUtc, range.ToUtcExclusive, sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.StockAdjustmentRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.StockAdjustmentHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName(
+                "stock-adjustments", range.FromDateText, range.ToDateText,
+                If(productId.HasValue, "product-" & productId.Value.ToString(CultureInfo.InvariantCulture), Nothing))
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
 
         End Function
 

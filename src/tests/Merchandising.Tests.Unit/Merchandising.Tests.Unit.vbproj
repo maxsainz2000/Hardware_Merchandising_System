@@ -63,6 +63,8 @@
     <ProjectReference Include="..\..\Merchandising.Inventory\Merchandising.Inventory.vbproj" />
     <ProjectReference Include="..\..\Merchandising.Procurement\Merchandising.Procurement.vbproj" />
     <ProjectReference Include="..\..\Merchandising.POS\Merchandising.POS.vbproj" />
+    <!-- P6-06: CsvExporter/ReportCsvFormatters and the three report controllers live in Merchandising.Api - CsvExporterTests.vb needs no database, only Merchandising.Api.vbproj's InternalsVisibleTo grant to reach ReportCsvFormatters's Friend members. -->
+    <ProjectReference Include="..\..\Merchandising.Api\Merchandising.Api.vbproj" />
   </ItemGroup>
 
 </Project>

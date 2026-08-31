@@ -29,6 +29,7 @@
 
 Imports System.Collections.Generic
 Imports System.Globalization
+Imports System.Linq
 Imports System.Threading.Tasks
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Reporting
@@ -51,6 +52,9 @@ Namespace Controllers
 
         Private Const DefaultPageSize As Integer = 25
         Private Const MaxPageSize As Integer = 100
+
+        ''' <summary>P6-06: a CSV export returns every matching row, never just the on-screen page - ReportsController.ExportPageSize's own reasoning.</summary>
+        Private Const ExportPageSize As Integer = Integer.MaxValue
 
         Private ReadOnly _reportService As ReportService
 
@@ -108,6 +112,46 @@ Namespace Controllers
 
         End Function
 
+        ''' <summary>P6-06: same route/validation as <see cref="GetPurchaseOrderHistoryReport"/>, exported as CSV - every matching row.</summary>
+        <HttpGet("purchase-orders/csv")>
+        Public Async Function GetPurchaseOrderHistoryReportCsv(
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim range As ParsedDateRange = ParseDateRange(fromDate, toDate, fieldErrors)
+
+            Dim sortField As PurchaseOrderHistoryReportSortField = PurchaseOrderHistoryReportSortField.CreatedAt
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParsePurchaseOrderHistorySort(sort, sortField, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use one of createdAt, orderNumber, status, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim result =
+                Await _reportService.GetPurchaseOrderHistoryReportAsync(
+                    range.FromDateText, range.ToDateText, range.FromUtc, range.ToUtcExclusive,
+                    sortField, sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.PurchaseOrderHistoryRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.PurchaseOrderHistoryHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName("purchase-order-history", range.FromDateText, range.ToDateText)
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
+
+        End Function
+
         ''' <summary>Spec section 14 row 7.</summary>
         <HttpGet("goods-receiving")>
         Public Async Function GetGoodsReceivingHistory(
@@ -154,6 +198,45 @@ Namespace Controllers
                 .MaxPageSize = MaxPageSize,
                 .Sort = "receivedAt" & If(sortDescending, ":desc", ":asc")
             })
+
+        End Function
+
+        ''' <summary>P6-06: same route/validation as <see cref="GetGoodsReceivingHistory"/>, exported as CSV - every matching row.</summary>
+        <HttpGet("goods-receiving/csv")>
+        Public Async Function GetGoodsReceivingHistoryCsv(
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim range As ParsedDateRange = ParseDateRange(fromDate, toDate, fieldErrors)
+
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseReceivedAtSort(sort, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use receivedAt, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim result =
+                Await _reportService.GetGoodsReceivingHistoryAsync(
+                    range.FromDateText, range.ToDateText, range.FromUtc, range.ToUtcExclusive,
+                    sortDescending, 1, ExportPageSize, HttpContext.RequestAborted)
+
+            Dim rows As IReadOnlyList(Of String)() =
+                result.Items.Select(Function(item) ReportCsvFormatters.GoodsReceivingHistoryRow(item)).ToArray()
+
+            Dim bytes As Byte() = CsvExporter.BuildFile(ReportCsvFormatters.GoodsReceivingHistoryHeaders(), rows)
+            Dim fileName As String = CsvExporter.BuildFileName("goods-receiving-history", range.FromDateText, range.ToDateText)
+
+            Return File(bytes, CsvExporter.ContentType, fileName)
 
         End Function
 

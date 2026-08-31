@@ -606,19 +606,31 @@ Public Class AuthorizationMatrixTests
 
         Dim routes As (Label As String, Path As String)() = {
             ("Reports.View (daily-summary)", $"/api/v1/reports/sales/daily-summary?date={todayText}"),
+            ("Reports.View (daily-summary csv)", $"/api/v1/reports/sales/daily-summary/csv?date={todayText}"),
             ("Reports.View (by-product)", $"/api/v1/reports/sales/by-product?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (by-product csv)", $"/api/v1/reports/sales/by-product/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (by-cashier)", $"/api/v1/reports/sales/by-cashier?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (by-cashier csv)", $"/api/v1/reports/sales/by-cashier/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (payment-methods)", $"/api/v1/reports/sales/payment-methods?fromDate={todayText}&toDate={todayText}"),
+            ("Reports.View (payment-methods csv)", $"/api/v1/reports/sales/payment-methods/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (sales detail)", $"/api/v1/sales?fromDate={todayText}&toDate={todayText}&pageSize=1"),
             ("Reports.View (returns-and-cancellations)", $"/api/v1/reports/sales/returns?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (returns-and-cancellations csv)", $"/api/v1/reports/sales/returns/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (product-performance)", $"/api/v1/reports/sales/product-performance?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (product-performance csv)", $"/api/v1/reports/sales/product-performance/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (sales returns detail)", $"/api/v1/sales/returns?fromDate={todayText}&toDate={todayText}&pageSize=1"),
             ("Reports.View (purchase-order history)", $"/api/v1/reports/procurement/purchase-orders?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (purchase-order history csv)", $"/api/v1/reports/procurement/purchase-orders/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (goods-receiving history)", $"/api/v1/reports/procurement/goods-receiving?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (goods-receiving history csv)", $"/api/v1/reports/procurement/goods-receiving/csv?fromDate={todayText}&toDate={todayText}"),
             ("Reports.View (current stock)", "/api/v1/reports/inventory/current-stock?pageSize=1"),
+            ("Reports.View (current stock csv)", "/api/v1/reports/inventory/current-stock/csv"),
             ("Reports.View (low stock)", "/api/v1/reports/inventory/low-stock?pageSize=1"),
+            ("Reports.View (low stock csv)", "/api/v1/reports/inventory/low-stock/csv"),
             ("Reports.View (stock movements)", $"/api/v1/reports/inventory/stock-movements?fromDate={todayText}&toDate={todayText}&pageSize=1"),
-            ("Reports.View (stock adjustments)", $"/api/v1/reports/inventory/stock-adjustments?fromDate={todayText}&toDate={todayText}&pageSize=1")
+            ("Reports.View (stock movements csv)", $"/api/v1/reports/inventory/stock-movements/csv?fromDate={todayText}&toDate={todayText}"),
+            ("Reports.View (stock adjustments)", $"/api/v1/reports/inventory/stock-adjustments?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (stock adjustments csv)", $"/api/v1/reports/inventory/stock-adjustments/csv?fromDate={todayText}&toDate={todayText}")
         }
 
         Using client As HttpClient = _factory.CreateClient()

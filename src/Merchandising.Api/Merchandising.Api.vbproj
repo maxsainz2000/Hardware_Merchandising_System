@@ -99,6 +99,13 @@
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="Merchandising.Tests.Integration" />
+    <!--
+      P6-06: ReportCsvFormatters is Friend - its header/row functions are
+      exercised directly by CsvExporterTests.vb (Merchandising.Tests.Unit),
+      with a hand-built response object and no database, the same reasoning
+      as the Merchandising.Tests.Integration grant above.
+    -->
+    <InternalsVisibleTo Include="Merchandising.Tests.Unit" />
   </ItemGroup>
 
 </Project>

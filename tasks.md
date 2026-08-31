@@ -182,18 +182,18 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 *Runs after Track B. Files are its own plus the export routes.*
 
-### ⬜ P6-06 · CSV export, and the Excel round trip
+### ✅ P6-06 · CSV export, and the Excel round trip
 **Spec:** §14 · **Decides:** ADR-024 · **Files:** `src/Merchandising.Api/Reporting/CsvExporter.vb`, `src/Merchandising.Api/Controllers/ReportsController.vb`, `src/tests/Merchandising.Tests.Unit/CsvExporterTests.vb`
 
 **Do:** UTF-8, header row, invariant column order, correct escaping, report parameters in the filename or export metadata. Export permissions mirror report permissions exactly.
 
 **Done when:**
-- [ ] Escaping is asserted against the values that actually break CSV: an embedded comma, an embedded double quote, an embedded newline, a leading `=`/`+`/`-`/`@` (formula injection), and a UTF-8 name outside ASCII
-- [ ] **UTF-8 BOM decision recorded in ADR-024 and tested** — Excel misreads a BOM-less UTF-8 CSV as ANSI and mangles non-ASCII, and "round-trips through Excel without mangling" is a gate criterion, so this is a decision with evidence rather than a default
-- [ ] Column order is invariant and asserted against a committed expected header, so a reordered `SELECT` fails the suite rather than a classmate's spreadsheet
-- [ ] Export permission for each report **equals** that report's own view permission — asserted per report by the matrix suite, not by inspection
-- [ ] The round trip is **performed**: a real export opened in Excel on this machine and read back, with the artifact recorded, not described
-- [ ] Decimal values keep their stored scale in the export — no float formatting anywhere near money
+- [x] Escaping is asserted against the values that actually break CSV: an embedded comma, an embedded double quote, an embedded newline, a leading `=`/`+`/`-`/`@` (formula injection), and a UTF-8 name outside ASCII
+- [x] **UTF-8 BOM decision recorded in ADR-024 and tested** — Excel misreads a BOM-less UTF-8 CSV as ANSI and mangles non-ASCII, and "round-trips through Excel without mangling" is a gate criterion, so this is a decision with evidence rather than a default
+- [x] Column order is invariant and asserted against a committed expected header, so a reordered `SELECT` fails the suite rather than a classmate's spreadsheet
+- [x] Export permission for each report **equals** that report's own view permission — asserted per report by the matrix suite, not by inspection
+- [x] The round trip is **performed**: a real export opened in Excel on this machine and read back, with the artifact recorded, not described
+- [x] Decimal values keep their stored scale in the export — no float formatting anywhere near money
 
 **Evidence:** `evidence/phase-6/p6-06-csv-export.txt`, `evidence/phase-6/p6-06-excel-roundtrip/`
 

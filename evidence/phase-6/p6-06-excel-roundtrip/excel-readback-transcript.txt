@@ -1,0 +1,102 @@
+P6-06: Excel round-trip readback transcript
+=============================================
+
+Date: 2026-08-31
+Machine Excel build: 16.0.20426.20000 (Microsoft 365, Click-to-Run;
+Application.Version/Build via COM = 12.0 / 28032 - the frozen object-model
+version string, not the product version; the real product version is read
+from EXCEL.EXE's own file version).
+
+-------------------------------------------------------------------
+1. What was opened
+-------------------------------------------------------------------
+
+evidence/phase-6/p6-06-excel-roundtrip/current-stock-live-export.csv - the
+REAL response bytes from a live GET /api/v1/reports/inventory/current-stock/csv
+call, captured by
+Merchandising.Tests.Integration.CsvExportRoundTripTests.CurrentStockCsvExport_EscapesHostileProductNameAndWritesEvidence
+(src/tests/Merchandising.Tests.Integration/CsvExportRoundTripTests.vb),
+through the real ASP.NET Core pipeline against the real pinned MariaDB -
+not a hand-written CSV, not CsvExporter called in isolation. The file
+contains the full current-stock catalog (7781 products, includeInactive=true)
+plus one fixture row (p6_06_fixture_hostile_sku) whose Products.Name was set
+directly to:
+
+    =1+1, "special" café
+
+carrying an embedded comma, an embedded double quote, a leading '=', and a
+non-ASCII character in one real database value.
+
+Opened via COM automation (Excel.Application, Workbooks.Open - the same
+code path a double-click uses), not by hand, so the result below is
+Excel's own actual reading of the file, captured programmatically.
+
+-------------------------------------------------------------------
+2. What Excel reported back
+-------------------------------------------------------------------
+
+HEADER: productId | sku | name | categoryId | categoryName | isActive |
+        quantity | reorderLevel | stockStatus
+
+Row 2 (the hostile fixture product), column C ("name"):
+    Text    = '=1+1, "special" café
+    Value2  = '=1+1, "special" café
+    HasFormula = False
+
+Total data rows (including header): 7782 - the whole current-stock catalog
+came through as one export, confirming the "export all matching rows, not
+just the on-screen page" scope decision actually produced a real, complete
+file Excel can open (697,340 bytes), not merely a small synthetic sample.
+
+-------------------------------------------------------------------
+3. What this proves
+-------------------------------------------------------------------
+
+- FORMULA-INJECTION MITIGATION HOLDS ON REAL, LIVE DATA. The stored value
+  began with '=', which unmitigated (see CsvExporter.vb's own header and
+  the synthetic probe below) Excel evaluates as a formula
+  (HasFormula = True, "=1+1" -> 2). Here HasFormula = False: the exported
+  field was "'=1+1, ""special"" café" (apostrophe-prefixed, RFC4180-quoted
+  because of the embedded comma) - CsvExporter.EscapeField's exact
+  mitigation, exercised through the full production pipeline
+  (ReportService -> ReportCsvFormatters -> CsvExporter -> HTTP response),
+  not called directly. The apostrophe is visible in Excel's own Text/Value2
+  - the documented trade-off, not a defect.
+
+- THE EMBEDDED COMMA AND DOUBLE QUOTE SURVIVED INTACT. Excel's Text shows
+  `"special"` with the RFC4180 double-quote escaping correctly unwound by
+  Excel's own CSV parser, and the comma did not split the field into two
+  columns (categoryId column is still empty on this row, not "special" or
+  "1+1").
+
+- THE NON-ASCII CHARACTER (é) DISPLAYED CORRECTLY, confirming the UTF-8 BOM
+  this class always writes (ADR-024) round-trips through a real HTTP
+  response body and a real Excel file-open with no mangling, on a
+  697KB/7781-row real export - not just the small synthetic sample used to
+  make the original BOM decision.
+
+-------------------------------------------------------------------
+4. Cross-reference to the synthetic probe behind the ADR-024 decision
+-------------------------------------------------------------------
+
+Before any of CsvExporter.vb was written, the same COM-automation technique
+was used on small synthetic files to decide the formula-injection mitigation
+and the BOM question in the first place (docs/adr.md ADR-024 records both
+decisions and the measurements behind them):
+
+  =1+1   unmitigated -> HasFormula=True,  Value2=2   (executes)
+  +1+1   unmitigated -> HasFormula=True,  Value2=2   (executes)
+  -1+1   unmitigated -> HasFormula=True,  Value2=0   (executes)
+  @SUM(1+1) unmitigated -> HasFormula=False (did not execute on this build,
+                            mitigated anyway per the card's own four-character list)
+  '=1+1, '+1+1, '-1+1, '@SUM(1+1) (apostrophe-prefixed) -> HasFormula=False
+                            for all four, Text keeps the leading apostrophe
+
+  UTF-8 BOM vs BOM-less, identical accented-name row -> both opened
+  correctly on this machine's Excel build (16.0.20426.20000); BOM kept
+  anyway as the zero-cost, standard defensive default for a build this
+  project cannot assume the classroom machine matches.
+
+This transcript (section 2 above) is the SAME measurement repeated against
+the real production pipeline's own live output, not the synthetic probe
+again.

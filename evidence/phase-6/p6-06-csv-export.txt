@@ -1,0 +1,211 @@
+P6-06: CSV export, and the Excel round trip
+==============================================
+
+Base commit for this card: 625000b
+(P6-05: current stock, low stock, stock movement, and stock adjustment reports)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope
+-------------------------------------------------------------------
+
+Spec section 14's CSV paragraph, per docs/report-specification.md (the
+P6-01 document Track B/C cards cite instead of re-deciding these
+questions): "CSV exports use UTF-8, include a header row, use invariant
+field ordering, escape delimiters/quotes correctly, and include report
+parameters in the export metadata or filename. Export permissions follow
+report permissions."
+
+Two scope decisions confirmed with the user before implementation, since
+neither is spelled out in the card's literal text:
+
+  - ALL TWELVE spec section 14 reports get a CSV export, not only the six
+    already living in ReportsController - the card's Files: list names only
+    ReportsController.vb, but Track C's own header ("Files are its own plus
+    the export routes") and the Done-when box's "export permission for each
+    report" (twelve, not six) both point the same way.
+
+  - A CSV export returns EVERY row matching the caller's filters, never
+    just the on-screen page (the JSON routes cap at 100 rows/page) - the
+    entire reason an export exists is the full result set.
+
+-------------------------------------------------------------------
+2. What was built
+-------------------------------------------------------------------
+
+  - CsvExporter.vb (Merchandising.Api.Reporting) - generic CSV mechanics
+    only: RFC4180 escaping, the formula-injection mitigation, UTF-8-BOM
+    encoding, CRLF line endings, decimal/integer/boolean/UTC-datetime
+    formatting, and the shared filename shape. No report-specific column
+    knowledge.
+
+  - ReportCsvFormatters.vb (Merchandising.Api.Reporting, Friend) - one
+    header array and one row-building function per report, all twelve.
+    Column order mirrors each response contract's own JSON property order.
+    PaymentMethodTotalResponse's three-row list is flattened into
+    CashTotal/CardTotal/EWalletTotal columns wherever a report carries it.
+
+  - Twelve new ".../csv" GET routes, one beside every existing JSON report
+    route, across all three report controllers (ReportsController - 6,
+    ProcurementReportsController - 2, InventoryReportsController - 4). Each
+    lives under the SAME class-level <Authorize(Policy:=Reports.View)>
+    attribute as its JSON sibling, with no method-level override on either
+    - export permission equals view permission by construction, not by a
+    runtime check.
+
+  - InternalsVisibleTo("Merchandising.Tests.Unit") added to
+    Merchandising.Api.vbproj (mirroring the existing
+    Merchandising.Tests.Integration grant) so ReportCsvFormatters's Friend
+    members are reachable from CsvExporterTests.vb with no database.
+    Merchandising.Tests.Unit.vbproj gained a ProjectReference to
+    Merchandising.Api.vbproj for the same reason.
+
+  - CsvExporterTests.vb (Merchandising.Tests.Unit) - escaping (comma,
+    embedded quote, embedded newline/CR, all four formula-injection
+    leading characters individually and composed with a comma, a non-ASCII
+    name, Nothing), the UTF-8 BOM, CRLF line endings, decimal-scale
+    preservation, filename shaping, all twelve reports' committed header
+    order, one report's row-building exercised with every hostile value at
+    once, and the reflection-based permission matrix
+    (EveryReport_ExportPolicyEqualsViewPolicy).
+
+  - CsvExportRoundTripTests.vb (Merchandising.Tests.Integration) - the
+    "real export" half of the round-trip Done-when box: real HTTP through
+    MerchandisingApiFactory against the real pinned MariaDB, a live
+    product row whose Name carries four of the five hostile values in one
+    field, asserts the BOM and the exact escaped/mitigated field, and
+    writes the real response bytes to
+    evidence/phase-6/p6-06-excel-roundtrip/current-stock-live-export.csv.
+
+  - AuthorizationMatrixTests.vb's existing ReportsView_MatrixMatchesPolicyRegistry
+    behavioral matrix (real HTTP, real per-role login, all five roles) was
+    extended with all twelve new CSV routes, alongside their existing JSON
+    siblings - the same "extend, per card" precedent P6-02 through P6-05's
+    own evidence files record for this exact test.
+
+  - ADR-024 (docs/adr.md) - the UTF-8 BOM decision and the
+    formula-injection mitigation, both measured against a real Excel
+    install on this machine via COM automation before being coded, plus the
+    export/view permission-mirror and export-all-rows decisions.
+
+-------------------------------------------------------------------
+3. Files changed
+-------------------------------------------------------------------
+
+New:
+  src/Merchandising.Api/Reporting/CsvExporter.vb
+  src/Merchandising.Api/Reporting/ReportCsvFormatters.vb
+  src/tests/Merchandising.Tests.Unit/CsvExporterTests.vb
+  src/tests/Merchandising.Tests.Integration/CsvExportRoundTripTests.vb
+  evidence/phase-6/p6-06-excel-roundtrip/current-stock-live-export.csv
+  evidence/phase-6/p6-06-excel-roundtrip/excel-readback-transcript.txt
+
+Modified:
+  src/Merchandising.Api/Controllers/ReportsController.vb
+    - GetDailySalesSummaryCsv, GetPaymentMethodSummaryCsv,
+      GetSalesByProductCsv, GetSalesByCashierCsv,
+      GetReturnsAndCancellationsCsv, GetProductPerformanceCsv
+    - ExportPageSize constant
+  src/Merchandising.Api/Controllers/ProcurementReportsController.vb
+    - GetPurchaseOrderHistoryReportCsv, GetGoodsReceivingHistoryCsv
+  src/Merchandising.Api/Controllers/InventoryReportsController.vb
+    - GetCurrentStockReportCsv, GetLowStockReportCsv,
+      GetStockMovementReportCsv, GetStockAdjustmentReportCsv
+  src/Merchandising.Api/Merchandising.Api.vbproj
+    - InternalsVisibleTo("Merchandising.Tests.Unit")
+  src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj
+    - ProjectReference to Merchandising.Api.vbproj
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb
+    - Twelve CSV routes added to ReportsView_MatrixMatchesPolicyRegistry's
+      routes array
+  docs/adr.md
+    - ADR-024 (new)
+  tasks.md
+
+-------------------------------------------------------------------
+4. Done-when boxes
+-------------------------------------------------------------------
+
+[x] Escaping asserted against the values that actually break CSV -
+    CsvExporterTests: EscapeField_EmbeddedComma_QuotesTheWholeField,
+    EscapeField_EmbeddedDoubleQuote_QuotesAndDoublesTheQuote,
+    EscapeField_EmbeddedNewline_QuotesTheWholeField (+ CR variant),
+    EscapeField_LeadingEquals/Plus/Minus/At_PrefixedWithApostrophe (each of
+    the four individually), EscapeField_LeadingEqualsWithEmbeddedComma_
+    PrefixedAndQuoted (composed case), EscapeField_NonAsciiName_
+    PassesThroughUnescaped. Reproduced live in
+    CsvExportRoundTripTests against a real database row.
+
+[x] UTF-8 BOM decision recorded in ADR-024 and tested - ADR-024 point 1
+    records the measurement (two identical accented-name exports, BOM vs
+    no BOM, both opened correctly on this Excel build; BOM kept as the
+    zero-cost defensive default). CsvExporterTests.BuildFile_
+    AlwaysBeginsWithUtf8Bom asserts the three BOM bytes directly;
+    CsvExportRoundTripTests asserts them again on a real live 697KB
+    response.
+
+[x] Column order invariant, asserted against a committed expected header -
+    CsvExporterTests: twelve *Headers_MatchCommittedOrder tests, one per
+    report, each against a literal array.
+
+[x] Export permission equals view permission, asserted per report by the
+    matrix suite - CsvExporterTests.EveryReport_ExportPolicyEqualsViewPolicy
+    (reflection, all twelve pairs, asserts equality to each other AND to
+    Reports.View) plus AuthorizationMatrixTests.
+    ReportsView_MatrixMatchesPolicyRegistry (real HTTP, all five roles, all
+    twelve new CSV routes alongside their JSON siblings).
+
+[x] The round trip is performed, not described -
+    CsvExportRoundTripTests.CurrentStockCsvExport_EscapesHostileProductNameAndWritesEvidence
+    calls the real live endpoint over real HTTP against the real database
+    and writes the real 697,340-byte response to
+    evidence/phase-6/p6-06-excel-roundtrip/current-stock-live-export.csv.
+    That exact file was then opened in Excel via COM automation on this
+    machine and read back; evidence/phase-6/p6-06-excel-roundtrip/
+    excel-readback-transcript.txt records what Excel actually reported
+    (HasFormula=False on the hostile field, the apostrophe visible, the
+    comma/quote/non-ASCII intact, 7781 real product rows).
+
+[x] Decimal values keep their stored scale in the export -
+    CsvExporterTests.FormatDecimal_PreservesMoneyScale/PreservesQuantityScale/
+    NegativeValue_KeepsSignAndScale, and
+    SalesByProductRow_EscapesSpecialCharactersAndPreservesDecimalScale
+    (100.000/1999.9900/1000.0000 all round-trip with every trailing zero
+    intact). CsvExporter.FormatDecimal never touches Double.
+
+-------------------------------------------------------------------
+5. Verification
+-------------------------------------------------------------------
+
+Guardrails:
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+Build: 0 Warning(s), 0 Error(s).
+
+Unit tests: Passed! - Failed: 0, Passed: 127, Skipped: 0, Total: 127.
+(127 = 92 from P6-05 + 35 new CsvExporterTests methods.)
+
+Integration tests (real MariaDB), run twice for stability:
+
+  Run 1: Passed! - Failed: 0, Passed: 497, Skipped: 0, Total: 497, Duration: 2m 35s
+  Run 2: Passed! - Failed: 0, Passed: 497, Skipped: 0, Total: 497, Duration: 2m 37s
+
+(497 = 496 from P6-05 + 1 new CsvExportRoundTripTests method. The twelve
+new routes added to ReportsView_MatrixMatchesPolicyRegistry's array run
+inside that one existing test method, not as new method count.)
+
+-------------------------------------------------------------------
+6. ADR-024
+-------------------------------------------------------------------
+
+docs/adr.md ADR-024, Status: ACCEPTED. Records the UTF-8 BOM decision, the
+formula-injection mitigation (both measured via COM automation against the
+real Excel install on this machine, EXCEL.EXE file version
+16.0.20426.20000, before being coded), the export/view permission-mirror
+mechanism, and the export-all-rows scope decision.
