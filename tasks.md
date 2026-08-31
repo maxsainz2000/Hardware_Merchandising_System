@@ -32,17 +32,34 @@
 
 # Carried forward — open items from earlier phases
 
-These are carried, not reopened. **Every one of them is owed at *this* gate** — Phase 6 is where the carrying stops.
+These are carried, not reopened. **Everything here that does not need a borrowed machine is owed at *this* gate.**
+
+> ## Re-scoped 2026-08-31 by ADR-030 — the machine-dependent half moves to a new Phase 8
+>
+> Phase 6 reached its gate with **fourteen of seventeen cards closed** (P6-01 – P6-12, P6-15, P6-17) and every open one blocked on the three classmates' laptops, which are not available. ADR-030 adds a final **Phase 8 — Field deployment and acceptance** collecting *all* work that needs those machines, from Phase 6 **and** Phase 7:
+>
+> | Was | Becomes | Origin |
+> |---|---|---|
+> | P6-13 · workstation manifest + admin rights | **P8-01** | P0-02 |
+> | P6-14 · demo network from cold | **P8-02** | P0-05 |
+> | P6-16 · clean install by someone else 🎯 | **P8-03** | ADR-012 |
+> | *(Phase 7)* timed demo rehearsal, three clients | **P8-04** | `plan.md` §7 |
+> | *(Phase 7)* training + UAT, one person per role | **P8-05** | `plan.md` §7 |
+> | *(Phase 7)* UAT defect correction + sign-off | **P8-06** | `plan.md` §7 |
+>
+> **The order is the point.** ADR-016 rejected carrying this work into a rehearsal phase because a problem found *during* rehearsal has *"no phase left to absorb it."* Phase 8 puts the survey, the cold start and the clean install **ahead** of the rehearsal inside one phase, which is what supplies that room. This answers ADR-016's objection rather than ignoring it.
+>
+> **G-16 splits:** its release-manifest half closed here at P6-11; its clean-machine installation test closes at P8-03. P6-18 records the split, never the whole.
 
 ---
 
-### 🟡 P0-02 · Windows baseline for every demo workstation — **owed at this gate (ADR-016)**
+### 🟡 P0-02 · Windows baseline for every demo workstation — **moved to the Phase 8 gate (ADR-030), as P8-01**
 
-Three demo workstations unsurveyed. `scripts/setup-client.ps1 -CaptureOnly` collects every field itself. Absorbed naturally by P6-16's clean-installation criterion: doing that on a classmate's laptop *is* the survey. **The one part that still fails late and unfixably:** whether each classmate holds **local administrator rights on their own laptop**. One message, no machine needed — send it before P6-16 is scheduled, not during it.
+Three demo workstations unsurveyed. `scripts/setup-client.ps1 -CaptureOnly` collects every field itself. Absorbed naturally by P8-03's clean-installation criterion: doing that on a classmate's laptop *is* the survey. **The one part that still fails late and unfixably, and that needs no machine at all:** whether each classmate holds **local administrator rights on their own laptop**. One message. ADR-016 flagged it on 2026-08-22 and it is still open — send it now, not when Phase 8 is scheduled.
 
-### 🟡 P0-05 · Demo network rehearsal — **owed at this gate (ADR-016)**
+### 🟡 P0-05 · Demo network rehearsal — **moved to the Phase 8 gate (ADR-030), as P8-02**
 
-ADR-015 chose the demo topology on capability *readings*, never a cold start. Two questions remain open and could still invalidate an ACCEPTED ADR: whether Mobile Hotspot starts **from cold with nothing to share**, and whether this adapter sustains station + Wi-Fi Direct GO concurrently under load. P6-14 owns it.
+ADR-015 chose the demo topology on capability *readings*, never a cold start. Two questions remain open and could still invalidate an ACCEPTED ADR: whether Mobile Hotspot starts **from cold with nothing to share**, and whether this adapter sustains station + Wi-Fi Direct GO concurrently under load. **Neither needs a classmate** — both are answerable on this laptop plus one lab client in about fifteen minutes, and a *no* on either means ADR-015 is wrong and the demo network needs re-planning. Only the per-workstation round trip actually waits for Phase 8.
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
@@ -56,7 +73,7 @@ Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 con
 
 # Phase 6 — Reporting and operations
 
-**Entry:** Phase 5 gate passed. **Closes:** G-22, G-15, G-16.
+**Entry:** Phase 5 gate passed. **Closes:** G-22, G-15, and **G-16's release-manifest half only** — its clean-machine installation test moves to P8-03 (ADR-030).
 **Docs produced:** `docs/report-specification.md`, `docs/backup-restore-guide.md`, `docs/user-guide.md`, and `docs/installation-guide.md` brought current.
 
 *This phase inherits every Phase 1–5 decision wholesale. A report that disagrees with the detail screen is the defect this phase exists to prevent; a report that invents a second definition of "net" is how it happens.*
@@ -301,30 +318,11 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 ---
 
-## Track G — The demo environment, proven rather than read
+## ~~Track G — The demo environment, proven rather than read~~ → **moved to Phase 8 (ADR-030)**
 
-*Needs the physical machines. Cannot be dispatched to `box3`.*
+*Needed the physical machines and could not be dispatched to `box3`. **P6-13 → P8-01**, **P6-14 → P8-02**. Their acceptance boxes travel unchanged and are not re-argued here; `plan.md` §7 Phase 8 carries them. Not deleted, moved — this block is the pointer that stops a future reader concluding they were dropped.*
 
-### ⬜ P6-13 · Workstation manifest and admin rights — **P0-02, owed here**
-**Spec:** §20 · **Files:** `docs/environment-manifest.md`
-
-**Done when:**
-- [ ] All three demo workstations captured in §3.2: edition, build, architecture, resolution, scaling, and **local administrator rights**
-- [ ] Captured by running `scripts/setup-client.ps1 -CaptureOnly` on each machine, not by asking and transcribing
-- [ ] Lab hardware does not satisfy this (ADR-012) — the machines are the classmates' own laptops
-
-**Evidence:** `evidence/phase-6/p6-13-workstation-manifest.txt`
-
-### ⬜ P6-14 · Demo network from cold — **P0-05, owed here**
-**Spec:** §20 · **Files:** `docs/environment-manifest.md`, `docs/installation-guide.md`
-
-**Done when:**
-- [ ] Mobile Hotspot brought up **from cold, with nothing to share**, and the result recorded either way — this is the open question ADR-015 was accepted without
-- [ ] The adapter sustains station + Wi-Fi Direct GO concurrently **under load**, measured
-- [ ] `ping MERCH-HOST` and a validated HTTPS round trip from **every** demo workstation
-- [ ] If either question invalidates ADR-015, that is a finding and an ADR amendment, not a card to quietly close
-
-**Evidence:** `evidence/phase-6/p6-14-network-cold-start.txt`
+> **P8-02's first two boxes need no classmate and should not wait for Phase 8's schedule:** Mobile Hotspot from cold with nothing to share, and station + Wi-Fi Direct GO concurrently under load. Author's laptop plus one lab client, ~15 minutes. If either answer is no, **ADR-015 is wrong** — a finding worth having now rather than on demo day.
 
 ---
 
@@ -341,19 +339,11 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-15-user-guide.txt`
 
-### ⬜ P6-16 · Clean installation on a machine the author has never configured 🎯
-**Spec:** §20, §23 · **Closes:** G-15, G-16 (installation half) · **Files:** `docs/installation-guide.md`, `scripts/`, `README.md`
+### ~~P6-16 · Clean installation on a machine the author has never configured~~ → **P8-03 (ADR-030)** 🎯
 
-**Do:** **ADR-012 promotes this above every other criterion in the phase:** under the delivery model it is *the measure of whether the deliverable exists at all* — three classmates must install and demonstrate this system without the author present. Read *fresh machine* strictly: not the author's, and not one the author has ever configured.
+*ADR-012's promotion travels with it: under the delivery model this is still **the measure of whether the deliverable exists at all**, and it is still the highest-value card in the project. It moves only because it needs a classmate at the keyboard and no classmate is available. Read *fresh machine* strictly — not the author's, and not one the author has ever configured.*
 
-**Done when:**
-- [ ] A `README` and a bootstrap script exist and perform the setup currently recorded only as prose: XAMPP layout, `my.ini` `sql_mode`, `bind-address`, all three database accounts and their grants, the backup directory, the hosts entry
-- [ ] The installation is performed **by someone other than the author**, from the guide alone, with the author not touching the keyboard — the point is the guide, not the outcome
-- [ ] Every question that person had to ask is a defect in the guide and is fixed before the box is ticked
-- [ ] The result is a working client reaching the API over HTTPS, with a sale completed on it
-- [ ] Time taken recorded as a number
-
-**Evidence:** `evidence/phase-6/p6-16-clean-install.txt`
+**One box does not move, because it needs no second machine.** The **`README` and the bootstrap script** — XAMPP layout, `my.ini` `sql_mode`, `bind-address`, all three database accounts and their grants, the backup directory, the hosts entry — are the artifacts P8-03 will be *performed from*. Writing them in Phase 7, against `docs/installation-guide.md` as it now stands, is what makes P8-03 a test of the guide rather than a test of the author's memory. `plan.md` §7 Phase 7 now carries them.
 
 ### ✅ P6-17 · `MSB3030` under deep build paths — **CARRY-04, second sighting met**
 **Spec:** — · **Files:** `Directory.Build.props`, `scripts/run-tests.ps1`, `docs/adr.md`
@@ -373,10 +363,12 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 **Done when:**
 - [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p6-18-clean-clone.log`
 - [ ] `evidence/phase-6/INDEX.md` maps every exit criterion and every card to an artifact that exists **and contains what it is cited for** — three gates running have now been failed by a claim outrunning its evidence, and the last one had a perfect existence record
-- [ ] **G-22, G-15 and G-16 recorded closed** in the gap register, each against its own artifact
-- [ ] Every carried item from Phases 0–5 either closed or explicitly re-carried with an owner — CARRY-01, CARRY-02, CARRY-04, CARRY-05, P0-02, P0-05 all land here
+- [ ] **G-22 and G-15 recorded closed** in the gap register, each against its own artifact
+- [ ] **G-16 recorded as its two halves, never as one gap closed** — the release-manifest and runtime-verification half closed here against `p6-11-release-manifest.txt`; the clean-machine installation test **open, owned by P8-03** (ADR-030). A gap register that says "G-16 closed" is this pack's own failure mode
+- [ ] Every carried item from Phases 0–5 either closed or explicitly re-carried with an owner — CARRY-01, CARRY-02, CARRY-04, CARRY-05 close here; **P0-02 and P0-05 re-carried to the Phase 8 gate under ADR-030**, which is the ADR-016 mechanism used a third time, not a quiet slip
+- [ ] **ADR-030 is ACCEPTED and its card-move table matches `plan.md` §7 and this file** — P6-13→P8-01, P6-14→P8-02, P6-16→P8-03, checked in all three places rather than assumed consistent
 - [ ] Any claim narrower than its wording marked ⚠ and explained; **every quantitative claim checked against the number it cites**
-- [ ] Every ADR this phase owed (ADR-023 – ADR-028, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`
+- [ ] Every ADR this phase owed (ADR-023 – ADR-030, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`
 - [ ] New ADRs appended **before** the *Template for new entries* section — verified by line number
 - [ ] **The deployed service is current**, verified by P6-10's own build-identity check rather than by hand
 
@@ -391,12 +383,17 @@ From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-6/` 
 - [ ] Every report reconciles to source data (P6-01 – P6-05)
 - [ ] CSV round-trips through Excel without mangling (P6-06)
 - [ ] Backup/restore meets the documented RPO/RTO with measured evidence (P6-07, P6-08)
-- [ ] A clean installation on a fresh machine succeeds from the guide alone (P6-16)
-- [ ] Every demo workstation captured, including local administrator rights (P6-13 — ADR-016)
-- [ ] `ping MERCH-HOST` + validated HTTPS round trip from every workstation, network brought up from cold (P6-14 — ADR-016)
-- [ ] G-22, G-15, G-16 closed in the gap register (P6-18)
-- [ ] `report-specification.md`, `backup-restore-guide.md`, `user-guide.md` written; `installation-guide.md` current (P6-01, P6-09, P6-15, P6-16)
+- [ ] G-22 and G-15 closed in the gap register; **G-16 recorded as one half closed, one half open** (P6-18)
+- [ ] `report-specification.md`, `backup-restore-guide.md`, `user-guide.md` written; `installation-guide.md` current (P6-01, P6-09, P6-15)
 - [ ] Clean-clone build and both test suites green (P6-18)
 - [ ] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
 
-**Carried, not owed here:** P0-07's structure box closes in **Phase 7** with `test-plan.md`. Everything else carried from Phases 0–5 is owed at **this** gate — P0-02 (P6-13), P0-05 (P6-14), CARRY-01 (P6-12), CARRY-02 (P6-07), CARRY-04 (P6-17), CARRY-05 (P6-10). **Nothing carried into Phase 6 may be carried out of it without an ADR saying why**, in the ADR-016 shape — that mechanism exists, has been used once honestly, and is the only acceptable route.
+**Moved to the Phase 8 gate by ADR-030 — struck from this list, not silently dropped:**
+
+- ~~A clean installation on a fresh machine succeeds from the guide alone~~ → **P8-03**
+- ~~Every demo workstation captured, including local administrator rights~~ → **P8-01** *(P0-02)*
+- ~~`ping MERCH-HOST` + validated HTTPS round trip from every workstation, network from cold~~ → **P8-02** *(P0-05)*
+
+**Carried, not owed here:** P0-07's structure box closes in **Phase 7** with `test-plan.md`. Of the rest carried from Phases 0–5, four close at **this** gate — CARRY-01 (P6-12), CARRY-02 (P6-07), CARRY-04 (P6-17), CARRY-05 (P6-10) — and two re-carry to the **Phase 8** gate: P0-02 (P8-01) and P0-05 (P8-02).
+
+**Nothing carried into Phase 6 may be carried out of it without an ADR saying why**, in the ADR-016 shape. That rule is intact and was followed: **ADR-030** is the ADR, it names what the deferral costs, and it answers ADR-016's own objection to a later destination rather than talking past it. This is the mechanism's third honest use and remains the only acceptable route.

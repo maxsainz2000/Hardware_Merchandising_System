@@ -1321,6 +1321,57 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-030 · Machine-dependent field work collects into a new Phase 8; Phases 6 and 7 close on what the hardware in hand can prove
+
+**Status:** ACCEPTED
+**Date:** 2026-08-31
+**Decides:** where the work that cannot proceed without the three classmates' laptops is owed, now that Phase 6 has reached its gate with every machine-independent card closed and only machine-dependent ones open. Amends ADR-016's destination and re-opens the option ADR-016 explicitly rejected, on grounds ADR-016 itself named.
+
+**Decision.**
+
+1. **A new Phase 8 — *Field deployment and acceptance* — is added to `plan.md` §7, after Phase 7.** It is the project's final phase. Phase 7's own §7 entry is split, and the phase list becomes 0–8 rather than 0–7.
+2. **Phase 8 collects every criterion in the plan that requires a machine this project does not own**, from both Phase 6 and Phase 7:
+
+   | Criterion | Was | Becomes | Origin |
+   |---|---|---|---|
+   | Demo workstations captured — edition, build, architecture, resolution, scaling, local administrator rights | P6-13 | **P8-01** | P0-02, carried by ADR-016 |
+   | Demo network from cold; `ping MERCH-HOST` + HTTPS round trip from every workstation | P6-14 | **P8-02** | P0-05, carried by ADR-016 |
+   | Clean installation on a machine the author has never configured | P6-16 | **P8-03** | `plan.md` §7, promoted by ADR-012 |
+   | Timed demo rehearsal from cold, three clients set up by someone other than the author | Phase 7 | **P8-04** | `plan.md` §7 |
+   | Training, and UAT with a real person in each of the five roles | Phase 7 | **P8-05** | `plan.md` §7 |
+   | Professor/store sign-off; correction of defects found in UAT | Phase 7 | **P8-06** | `plan.md` §7 |
+
+3. **Phase 8's card order is load-bearing, not presentational.** P8-01 → P8-02 → P8-03 run *before* P8-04's rehearsal, so a finding about admin rights, the wireless adapter, or the installation guide is discovered with the whole rest of the phase left to absorb it. This is the condition ADR-016 required and could not get from Phase 7.
+4. **Phase 6 closes on its engineering criteria.** G-22 and G-15 close there in full. **G-16 splits:** its release-manifest and runtime-verification half closed at P6-11 in Phase 6; its *clean-machine installation test* half closes at P8-03. P6-18's closure pack records the split rather than claiming the whole.
+5. **Phase 7 keeps everything provable on the hardware in hand** — the spec §17 security review, the load test, recovery tests, the UI refinement and scaling pass, the deployment rehearsal with rollback, defect correction, and `test-plan.md`. **G-27 splits** the same way G-16 does: its UI verification report closes in Phase 7, its UAT half at P8-05. G-06, G-08, G-17 and G-28 stay in Phase 7, with G-06's profile re-run against the real client mix at P8-04 as confirmation, not as its closure.
+6. **P0-02 and P0-05's destination moves from the Phase 6 gate to the Phase 8 gate.** ADR-016 is amended, not superseded: its governing distinction is untouched and its carry is still live.
+
+**Reasoning.**
+
+- **Phase 6 arrived at its gate with fourteen of seventeen cards closed and all three open ones blocked on hardware that is not in the room.** P6-01 – P6-12, P6-15 and P6-17 are done with executed evidence. Nothing in P6-13, P6-14 or P6-16 is a question about this system's design; all three are questions about three specific laptops. Holding a phase open on availability of borrowed hardware stalls work that has no dependency on it.
+- **ADR-016 rejected "carry to Phase 7 instead" for one stated reason, and that reason is the thing this ADR fixes.** Its words: *"Phase 7 is the demo rehearsal and UAT. Arriving there with unsurveyed machines means discovering an admin-rights or adapter problem during rehearsal, with no phase left to absorb it."* The objection was never to the *destination* — it was to arriving at a rehearsal with the survey undone and no room left. Phase 8 orders the survey, the cold start and the clean install ahead of the rehearsal inside one phase, which supplies exactly the room ADR-016 said was missing. Moving the rehearsal too, rather than only the survey, is what makes that ordering possible.
+- **The physical work is one session, and splitting it across two gates is what was artificial.** The day three classmates arrive with their laptops, the workstation survey, the cold-start network, the clean install performed by one of them, the timed rehearsal, the training and the UAT all happen in the same room within hours of each other. P6-13, P6-14 and P6-16 were never separable from Phase 7's rehearsal in practice; they were separated only by which phase's list they were written on.
+- **Phase 7's remaining half is substantial and is available now.** The spec §17 control-table review, the 5–10 session load test against the real host and MariaDB, recovery tests, the 1366×768 / 125% scaling pass across three clients, the deployment rehearsal with rollback, and `test-plan.md` need the author's laptop and the host, both of which are present. `plan.md` §7 already names the load test as the thing to run *early* in Phase 7 — the one Phase 7 item where being blocked would cost real rework time.
+- **This is the third application of `plan.md` §5's principle, unchanged.** Behaviour is proved by any second machine; facts are proved only by the machine they are facts about. Phase 8 is that distinction given a phase of its own instead of a carry note, which is the honest form once the carried set has grown from two criteria to six.
+
+**What this costs, recorded rather than smoothed over.**
+
+- **P0-05's unretired assumption rides one gate further.** ADR-015 chose the demo topology on `netsh wlan show wirelesscapabilities` reporting `Wi-Fi Direct GO: Supported` — a capability reading, never a cold start. If Mobile Hotspot will not start with nothing to share, or this Intel adapter will not sustain station + Wi-Fi Direct GO concurrently under load, **ADR-015 is wrong** and the demo network needs re-planning. That finding now surfaces at P8-02 rather than at the Phase 6 gate. **Mitigation, and it is a real one: both questions are answerable on the author's own laptop plus one lab client, in about fifteen minutes, with no classmate present.** ADR-016 said this in 2026-08-22 and it is still true and still not done. P8-02 is therefore written so its first two boxes can be closed *before* the laptops arrive; only the per-workstation round trip waits.
+- **Local administrator rights remain the one item that fails late and unfixably.** One message, no machine needed, and without it neither the certificate import nor the hosts entry completes. It is a stated precondition on P8-01 and should be sent the day this ADR is accepted, not the day Phase 8 is scheduled.
+- **A phase count is a commitment.** Going from seven phases to eight is visible in `plan.md`, `tasks.md`, every future evidence index, and the presentation. That is the correct cost to pay: it is accurate, whereas a Phase 6 gate passed with three ticked boxes it did not earn would not be.
+
+**Rejected.**
+
+- **Ticking P6-13, P6-14 and P6-16 and declaring PASS.** Three consecutive gates have now been failed by claims outrunning their evidence, twice with a perfect artifact-existence record. This would be the fourth and the most deliberate.
+- **Holding Phase 6 open until the laptops are available.** It stops all work on a schedule this project does not control, for cards that share no code, no document and no dependency with what remains.
+- **Moving only P6-13/P6-14/P6-16 into a Phase 8 sitting after Phase 7.** Phase 7's rehearsal, training and UAT need the same three laptops, so Phase 7 would block within a few cards on the identical constraint — and the workstation survey would then run *after* the rehearsal it exists to de-risk, which is precisely ADR-016's objection with the order made worse rather than better.
+- **Renumbering so the field phase becomes Phase 7 and today's Phase 7 becomes Phase 8.** Cheapest on paper and rejected on records: "Phase 7" is already referenced by name in `plan.md` §5, §7 and §10, in ADR-016's rejection list, and in P0-07's carried structure box, and would come to mean two different things depending on when a document was written.
+- **Treating this as an ADR-016 supersession.** ADR-016's carry is still live and its reasoning still governs. A destination that moves is an amendment; superseding it would discard a distinction this ADR relies on.
+
+**Evidence.** `plan.md` §7 (Phase 8) · `tasks.md` (Phase 6 exit gate) · `docs/adr.md` ADR-012, ADR-015, ADR-016 · `evidence/phase-6/INDEX.md` §G-16 split, at P6-18.
+
+---
+
 ## Template for new entries
 
 ```markdown

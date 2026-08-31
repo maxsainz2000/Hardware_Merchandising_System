@@ -94,7 +94,7 @@ Hardware_Merchandising_System/
 │  ├─ installation-guide.md       ├─ backup-restore-guide.md
 │  ├─ user-guide.md               └─ test-plan.md
 ├─ evidence/
-│  └─ phase-1/ … phase-7/         ← screenshots, logs, test output, port scans
+│  └─ phase-1/ … phase-8/         ← screenshots, logs, test output, port scans
 ├─ db/
 │  └─ migrations/0001_*.sql …     ← numbered, forward-only, checksummed
 ├─ scripts/
@@ -193,6 +193,12 @@ No application code is written in Phase 0.
 > The two survivors now carry to the **Phase 6** gate, where `plan.md` §7 already puts installation, packaging and handover, and where the exit criterion *"a clean installation on a fresh machine succeeds from the guide alone"* cannot be met without them. The governing distinction is unchanged — **behaviour is proved by any second machine; facts are proved only by the machine they are facts about** — and this is its second application, not a new rule.
 >
 > **What the deferral costs is recorded in ADR-016 rather than smoothed over.** P0-02 is field work and carries no design risk. P0-05 is different in kind: ADR-015 chose the demo topology on capability *readings*, never a cold start, so whether Mobile Hotspot begins with nothing to share and whether this adapter sustains station + Wi-Fi Direct GO concurrently are open questions that could still invalidate an ACCEPTED ADR. Deferring it was decided deliberately at the gate. Phase 6 cannot pass without exercising it.
+
+> **Amended 2026-08-31 by ADR-030 — the destination moves once more, to the *Phase 8* gate.** Phase 6 reached its gate with every machine-independent card closed (P6-01 – P6-12, P6-15, P6-17) and only machine-dependent ones open. ADR-030 adds a final **Phase 8 — Field deployment and acceptance** that collects *all* work requiring the classmates' laptops, from Phase 6 **and** Phase 7, and orders the survey, the cold start and the clean install ahead of the rehearsal inside one phase.
+>
+> **This answers ADR-016's own objection rather than ignoring it.** ADR-016 rejected carrying to Phase 7 because arriving at a rehearsal with unsurveyed machines leaves *"no phase left to absorb it"*. Phase 8 supplies that room by moving the rehearsal too. **P0-02 → P8-01, P0-05 → P8-02.** The governing distinction — behaviour is proved by any second machine, facts only by the machine they are facts about — is untouched; this is its third application.
+>
+> **P0-05's first two questions still need no classmate.** Whether Mobile Hotspot starts from cold with nothing to share, and whether this adapter sustains station + Wi-Fi Direct GO concurrently, are answerable on the author's laptop plus one lab client in about fifteen minutes. P8-02 is written so those boxes close before the laptops arrive.
 
 > **Re-scoped 2026-08-18 by ADR-012 — this paragraph previously said the opposite of `tasks.md`.** It used to state that P1-09, P1-10, P1-15 and P1-04's root check are *"hard blockers"* pending a client laptop. **They are not, and have not been since ADR-012.** Those four test **software behaviour across a real network boundary**, which *any* second machine proves — the author's lab desktop (`DESKTOP-OUU3M8J`, manifest §3.1) is sufficient for every one of them. What a lab machine cannot do is stand in for a *demo workstation* in P0-02 and P0-05, because those cards record facts about specific machines rather than behaviours.
 >
@@ -401,19 +407,46 @@ Once the gate passes, work becomes predictable. Each phase follows the same inte
 **Entry:** Phase 5 exit.
 **Build:** all twelve reports from spec §14 with explicit date-boundary and returns-treatment definitions; CSV export (UTF-8, header row, invariant column order, correct escaping, parameters in filename/metadata); export permissions mirroring report permissions; the backup/restore work from Phase 1 promoted to production quality with retention and off-host rotation; health monitoring; release packaging; installation guide; user guide.
 **Key design call:** every report ships with a *reconciliation test* asserting the report total equals the sum from the corresponding detail screen for the same filter. A report that disagrees with the detail screen during the demo is the single most damaging kind of defect in a merchandising system.
-**Exit:** every report reconciles to source data; CSV round-trips through Excel without mangling; backup/restore meets the documented RPO/RTO with measured evidence; a clean installation on a fresh machine succeeds from the guide alone.
-**Carried in from Phase 1 by ADR-016 — these are exit criteria of *this* gate now:** every demo workstation captured in `docs/environment-manifest.md` §3.2 (edition, build, architecture, resolution, scaling, **local administrator rights**) — **P0-02**; and `ping MERCH-HOST` plus a validated HTTPS round trip from every demo workstation, with the demo network brought up from cold at least once — **P0-05**. Lab hardware does not satisfy either (ADR-012). Both are absorbed naturally by the clean-installation criterion above: doing that on a classmate's laptop *is* the survey and *is* the rehearsal, performed rather than recorded in advance.
+**Exit:** every report reconciles to source data; CSV round-trips through Excel without mangling; backup/restore meets the documented RPO/RTO with measured evidence.
+**Closes:** G-22, G-15, and **G-16's release-manifest and runtime-verification half**.
 
-> **ADR-012 (2026-08-18) promotes one of these exit criteria above the others.** "A clean installation on a fresh machine succeeds from the guide alone" was one line in a list. Under the delivery model it is **the measure of whether the deliverable exists at all** — three classmates must install and demonstrate this system without the author present. Read *fresh machine* strictly: not the author's, and not one the author has ever configured. Two supporting artefacts are owed and do not yet exist — a **README** and a **bootstrap script** that performs the setup currently recorded only as prose (XAMPP layout, `my.ini` `sql_mode`, `bind-address`, both database accounts and grants, the backup directory, the hosts entry). Neither can be written before P1-06 and P1-07 exist for the bootstrap to invoke.
-**Closes:** G-22, G-15, G-16.
+> **Re-scoped 2026-08-31 by ADR-030.** Phase 6 previously also owned *"a clean installation on a fresh machine succeeds from the guide alone"* and the two criteria ADR-016 carried in from Phase 1 (**P0-02**, **P0-05**). All three need the three classmates' laptops, which this project does not own, and all three now land in **Phase 8** — as **P8-03**, **P8-01** and **P8-02** respectively, ordered ahead of the rehearsal so a finding has room to absorb. **G-16 splits accordingly:** the manifest half closed at P6-11 here; the clean-machine installation test closes at P8-03.
+>
+> ADR-012's promotion of the clean-installation criterion is unchanged and travels with it — under the delivery model it remains **the measure of whether the deliverable exists at all**. Read *fresh machine* strictly: not the author's, and not one the author has ever configured. Two supporting artefacts are owed — a **README** and a **bootstrap script** performing the setup currently recorded only as prose (XAMPP layout, `my.ini` `sql_mode`, `bind-address`, all three database accounts and grants, the backup directory, the hosts entry). **Both can and should be written before Phase 8**, because neither needs a second machine; only the install *performed by someone else* does.
 
-### Phase 7 — Hardening and acceptance
+### Phase 7 — Hardening
 **Entry:** Phase 6 exit.
-**Build:** a **demo rehearsal** — full setup from cold with the host as access point, three clients joined and set up by someone other than the author, timed (ADR-015; school Wi-Fi is firewalled and venue Wi-Fi commonly isolates stations, so neither is used); security review against the full spec §17 control table; load test at the 5–10 session profile recording p50/p95/error rates for lookup, reports, receiving, and concurrent sales; recovery tests; UI refinement pass across all three clients for consistency, keyboard navigation, focus states, 1366×768 and 125% scaling; POS mouse-free workflow verification; deployment rehearsal including rollback; training; UAT with a real person in each of the five roles; defect correction; sign-off.
+**Build:** security review against the full spec §17 control table; load test at the 5–10 session profile recording p50/p95/error rates for lookup, reports, receiving, and concurrent sales; recovery tests; UI refinement pass across all three clients for consistency, keyboard navigation, focus states, 1366×768 and 125% scaling; POS mouse-free workflow verification; deployment rehearsal including rollback; correction of every defect these surface; the README and bootstrap script Phase 8's clean install will be performed from.
 **Key design call:** run the load test *early* in Phase 7, not last. If the host laptop cannot sustain the profile you need room to tune indexes and connection pooling.
-**Exit:** all critical defects closed; full acceptance suite green; measured performance and RPO/RTO recorded against the spec's targets; professor/store sign-off obtained; every document in spec §20 complete.
+**Exit:** all critical defects found in this phase closed; full acceptance suite green; measured performance and RPO/RTO recorded against the spec's targets; every document in spec §20 complete except the ones Phase 8's results fill in.
 **Docs produced:** `test-plan.md` with results, release package manifest, operations-ownership table.
-**Closes:** G-06, G-08, G-17, G-27, G-28.
+**Closes:** G-06, G-08, G-17, G-28, and **G-27's UI verification half**.
+
+> **Re-scoped 2026-08-31 by ADR-030.** Phase 7 previously also owned the demo rehearsal, training, UAT and sign-off. Those need the same three laptops as Phase 6's carried criteria, so they move to **Phase 8** rather than leaving Phase 7 blocked on borrowed hardware a few cards in. Everything above is provable on the author's laptop and the host, both of which are present. **G-27 splits:** the UI verification report closes here, its UAT half at P8-05. **G-06 closes here** on the profile measured with available clients; P8-04 re-runs it against the real client mix as confirmation, not as its closure.
+
+### Phase 8 — Field deployment and acceptance
+**Entry:** Phase 7 exit **and** the three classmates' laptops physically available. Added 2026-08-31 by **ADR-030**; this is the final phase.
+**Build:** the workstation survey; the demo network brought up from cold; a clean installation performed by someone other than the author from the guide alone; a full timed demo rehearsal with three clients; training; UAT with a real person in each of the five roles; correction of every defect UAT surfaces; sign-off.
+
+**Key design call — the card order is the phase's whole point, not its presentation.** Survey → cold network → clean install → rehearsal → training → UAT → sign-off. ADR-016 rejected carrying this work into a rehearsal phase because a problem found *during* rehearsal has *"no phase left to absorb it"*. Putting the three discovery cards first, inside the same phase as the rehearsal, is what supplies that room. Do not reorder them for convenience on the day.
+
+| Card | Does | Origin |
+|---|---|---|
+| **P8-01** | Every demo workstation captured in `docs/environment-manifest.md` §3.2 — edition, build, architecture, resolution, scaling, **local administrator rights** — by running `scripts/setup-client.ps1 -CaptureOnly` on each, not by asking and transcribing. | P0-02, via ADR-016 |
+| **P8-02** | Mobile Hotspot from cold with nothing to share; adapter sustaining station + Wi-Fi Direct GO concurrently under load, measured; `ping MERCH-HOST` + validated HTTPS round trip from every workstation. | P0-05, via ADR-016 |
+| **P8-03** 🎯 | Clean installation on a machine the author has never configured, from the guide alone, author not touching the keyboard. Time recorded as a number. | `plan.md` §7, promoted by ADR-012 |
+| **P8-04** | Full setup from cold with the host as access point, three clients joined, timed (ADR-015; school Wi-Fi is firewalled and venue Wi-Fi commonly isolates stations, so neither is used). Re-runs P7's load profile against the real client mix. | Phase 7 |
+| **P8-05** | Training, and UAT with a real person in each of the five roles. | Phase 7 |
+| **P8-06** | Defects found in UAT corrected; professor/store sign-off; closure pack. | Phase 7 |
+
+**Two things to do before this phase is scheduled, both needing no machine in the room:**
+
+1. **Ask each classmate whether they hold local administrator rights on their own laptop.** One message. Without it neither the certificate import nor the hosts entry completes, and `scripts/setup-client.ps1` reports it in stage 1 rather than failing halfway through stage 2. It is the only item here that fails late and unfixably — ADR-016 flagged it on 2026-08-22 and it is still open.
+2. **Close P8-02's first two boxes on the author's laptop plus one lab client.** Whether Mobile Hotspot starts from cold and whether this adapter sustains station + GO concurrently are answerable in about fifteen minutes with no classmate present, and a *no* on either means **ADR-015 is wrong** and the demo network needs re-planning — a finding worth having months early rather than on the day.
+
+**Exit:** every demo workstation captured including admin rights; the demo network brought up from cold with a validated HTTPS round trip from every workstation; a clean installation succeeding from the guide alone on a machine the author has never configured, with the time recorded; the rehearsal completed and timed; UAT passed in all five roles; all critical defects closed; sign-off obtained; every document in spec §20 complete.
+**Docs produced:** `environment-manifest.md` §3.2 completed; `installation-guide.md` corrected against every question the installer had to ask; UAT and sign-off records.
+**Closes:** **G-16's clean-machine installation half**, **G-27's UAT half**.
 
 ---
 
@@ -511,11 +544,14 @@ Every gap from spec §23 is assigned to the phase that closes it. Nothing is lef
 | Phase 3 | G-23 (phase ordering itself) |
 | Phase 4 | G-12 extended to receiving/adjustments |
 | Phase 5 | G-24 |
-| Phase 6 | G-22, G-16, G-15 (promoted to production quality) |
-| Phase 7 | G-06, G-08, G-17, G-27, G-28 |
+| Phase 6 | G-22, G-15 (promoted to production quality), G-16 *(release-manifest and runtime-verification half — P6-11)* |
+| Phase 7 | G-06, G-08, G-17, G-28, G-27 *(UI verification half)* |
+| Phase 8 | G-16 *(clean-machine installation half — P8-03)*, G-27 *(UAT half — P8-05)* |
 | Continuous | G-03 (XAMPP hardening re-verified at each deployment rehearsal) |
 
 **G-18** (reference numbering) is already corrected in the current spec revision.
+
+> **Two gaps split across gates, 2026-08-31 by ADR-030 — read the halves, not the phase.** G-16's mitigation names two artifacts (*"Release manifest and clean-machine installation test"*) and G-27's names two (*"UI verification report and UAT"*). In each case one artifact needs only the hardware in hand and the other needs a classmate's laptop. Closing either gap in full at the earlier gate would be a claim outrunning its evidence — the exact defect that failed three gates running. **Each half is recorded closed against its own artifact, and the gap register shows the gap itself closed only once both halves are.**
 
 ---
 

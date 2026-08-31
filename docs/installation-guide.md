@@ -509,5 +509,5 @@ logic, and a normal run immediately after reported `[PASS] .NET Desktop Runtime 
 - ✅ Manifest produced and measured for all five artifacts on this machine
 - ✅ Self-contained artifacts (Api, Maintenance) need no host-runtime check by construction
 - ✅ The framework-dependent client check is proven to fire on a genuine (forced) missing-runtime condition, closing the loose end ADR-010 left open
-- G-16 is now **closed** jointly by this section and P6-16's clean-installation criterion
+- ⚠ **G-16 is half closed, not closed.** Its mitigation names two artifacts — *"Release manifest and clean-machine installation test"*. The **release manifest and runtime verification** half is closed by this section, at P6-11, with the evidence cited above. The **clean-machine installation test** half is **open**, owned by **P8-03**, and needs a machine the author has never configured — see ADR-030 and `plan.md` §7 Phase 8. This line previously claimed G-16 closed outright while the second half had not been performed; that was a claim outrunning its evidence, corrected 2026-08-31.
 
