@@ -372,7 +372,7 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 - [x] Any claim narrower than its wording marked ⚠ and explained; **every quantitative claim checked against the number it cites** — INDEX §4 (six entries) and §5, which corrects Phase 5's 79→82 and Phase 4's 346→348 against their own logs
 - [x] Every ADR this phase owed (ADR-023 – ADR-030, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md` — INDEX §7
 - [x] New ADRs appended **before** the *Template for new entries* section — verified by line number: ADR-023–030 at lines 1109–1324, template at 1375
-- [x] **The deployed service is current**, verified by P6-10's own build-identity check rather than by hand — found **7 commits stale** and caught by the mechanism in seconds rather than by hand (its first real detection); redeployed and re-verified matching. ⚠ Inherently one commit behind at capture — INDEX §4.4
+- [x] **The deployed service is current**, verified by P6-10's own build-identity check rather than by hand — found **7 commits stale** and caught by the mechanism in seconds (its first real detection); republished and reinstalled **after the closure commit**, then re-checked: `git rev-parse HEAD` and `deployed commitSha` both `20479ae`, service Running/Automatic. Not ticked against a superseded commit — INDEX §4.4
 
 **Three findings this card made, all recorded rather than smoothed over:** Phase 6 introduced three
 analyzer warnings that passed through two cards claiming "suites green" (fixed at `af9ef1c`, watched

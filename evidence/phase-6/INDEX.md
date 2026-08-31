@@ -218,13 +218,26 @@ deployed commitSha : 7f7255f
 OK   Deployed build matches the current commit.
 ```
 
-**⚠ This box is inherently one commit behind at capture time.** `af9ef1c` and this pack's own
-closure commit each supersede the verified deployment. A closure pack that commits makes itself
-stale by construction. The honest statement is: *the check was run, it works, it caught a real
-staleness, and the deployment matched `7f7255f` when verified.* Re-running
-`scripts/install-service.ps1 -CheckOnly` after the closure commit is the operator's last step before
-the gate, and P6-18's box is ticked on the mechanism being proven rather than on a timestamp that
-cannot be made permanent.
+**Re-verified after the closure commit, so this box is not one commit behind.** A closure pack that
+commits makes its own deployment stale by construction, and this one did so twice — `af9ef1c` then
+`20479ae`. Rather than tick the box against a superseded commit and caveat it, the build was
+republished and reinstalled by the operator in an elevated session after the closure commit, and
+checked again:
+
+```
+git rev-parse HEAD : 20479ae
+deployed commitSha : 20479ae
+OK   Deployed build matches the current commit.
+```
+
+Service `MerchandisingApi`: Running, StartType Automatic. Published self-contained, 350 files,
+`release-manifest.json` `commitSha` = `20479ae`, staged at
+`C:\MerchandisingService\Api-sc-20479ae`.
+
+**The one thing that remains true and is not claimed away:** any commit made after this line is
+written makes the deployment stale again. That is not a defect to be engineered out — it is why
+P6-10 exists, and `scripts/install-service.ps1 -CheckOnly` is the two-second check that answers it
+at any moment, including at the gate.
 
 ### 4.5 A finding this pack made about its own method, not a defect in the tree
 
