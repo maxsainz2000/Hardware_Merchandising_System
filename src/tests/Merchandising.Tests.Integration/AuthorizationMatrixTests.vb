@@ -589,6 +589,56 @@ Public Class AuthorizationMatrixTests
     End Function
 
     ''' <summary>
+    ''' P6-02's five new Reports.View routes - the four report reads
+    ''' (ReportsController) plus GET /api/v1/sales, the detail endpoint this
+    ''' card added under SalesController rather than a new controller (see
+    ''' that action's own header). No fixture data is needed: an empty
+    ''' result set is still a 200 for an allowed role, and a disallowed role
+    ''' never reaches far enough to compute one.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function ReportsView_MatrixMatchesPolicyRegistry() As Task
+
+        Await EnsureAllFixtureUsersAsync()
+
+        Dim allowedRoles As IReadOnlyList(Of String) = RolesFor(PolicyRegistry.Names.ReportsView)
+        Dim todayText As String = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd")
+
+        Dim routes As (Label As String, Path As String)() = {
+            ("Reports.View (daily-summary)", $"/api/v1/reports/sales/daily-summary?date={todayText}"),
+            ("Reports.View (by-product)", $"/api/v1/reports/sales/by-product?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (by-cashier)", $"/api/v1/reports/sales/by-cashier?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (payment-methods)", $"/api/v1/reports/sales/payment-methods?fromDate={todayText}&toDate={todayText}"),
+            ("Reports.View (sales detail)", $"/api/v1/sales?fromDate={todayText}&toDate={todayText}&pageSize=1")
+        }
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            For Each roleName As String In AllFiveRoles
+
+                Dim token As String = Await LoginAsync(client, roleName)
+
+                For Each route In routes
+                    Using response As HttpResponseMessage =
+                        Await SendAsync(client, HttpMethod.Get, route.Path, token, requestBody:=Nothing)
+                        Await AssertCellAsync(route.Label, roleName, allowedRoles.Contains(roleName), response)
+                    End Using
+                Next
+
+            Next
+
+            For Each route In routes
+                Using anonymousResponse As HttpResponseMessage =
+                    Await SendAsync(client, HttpMethod.Get, route.Path, token:=Nothing, requestBody:=Nothing)
+                    Await AssertUnauthenticatedAsync(route.Label, anonymousResponse)
+                End Using
+            Next
+
+        End Using
+
+    End Function
+
+    ''' <summary>
     ''' P3-04's submit endpoint. Every probed order is created fresh via the
     ''' SuperAdmin fixture (always allowed to create, PurchaseOrders.Create
     ''' being ProcurementAndAbove) rather than via roleName itself - this

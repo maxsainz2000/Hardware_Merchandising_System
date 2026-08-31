@@ -17,6 +17,7 @@ Imports Merchandising.Api.Inventory
 Imports Merchandising.Api.Middleware
 Imports Merchandising.Api.Procurement
 Imports Merchandising.Api.Receiving
+Imports Merchandising.Api.Reporting
 Imports Merchandising.Api.Sales
 Imports Merchandising.Api.Security
 Imports Merchandising.Infrastructure.Data
@@ -310,6 +311,11 @@ Public Module Program
         ' transaction. ApproveExceptional's self-approval veto is enforced
         ' by SalesReturnsController via IAuthorizationService, never here.
         builder.Services.AddScoped(Of SalesReturnService)()
+
+        ' P6-02 / spec section 14: reports - four read-only routes, no
+        ' transaction, connection-per-call, same shape PurchaseOrderService's
+        ' own read methods use.
+        builder.Services.AddScoped(Of ReportService)()
 
         ' P1-18. Scoped rather than singleton: it takes a connection per call
         ' and holds no state between them.

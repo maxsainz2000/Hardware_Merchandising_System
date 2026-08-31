@@ -6,12 +6,17 @@
 ' wording and reports" - the last four words are this file. A wording gap is
 ' invisible to every other kind of test in this suite, so it gets its own.
 '
-' Two things are scanned: Merchandising.POS's XAML (the UI half - today just
+' Four things are scanned: Merchandising.POS's XAML (the UI half - today just
 ' Resources/PaymentWording.xaml, since P5-13 has not built the payment
-' screens yet; this suite will keep scanning whatever XAML that card adds)
-' and Merchandising.Contracts/Sales (the report/response half -
+' screens yet; this suite will keep scanning whatever XAML that card adds),
+' Merchandising.Contracts/Sales (the report/response half -
 ' CashierSessionPaymentTotalResponse, SalePaymentResponse, SalesReturnResponse
-' and friends).
+' and friends), and - widened at P6-02, this card's own Done-when box -
+' Merchandising.Contracts/Reporting and Merchandising.Api/Reporting: the
+' payment-method summary (spec section 14 row 4) is the one report row spec
+' section 14 itself requires an explicit "recorded, not authorised" label
+' on, and its response type (PaymentMethodSummaryResponse) lives in the
+' first of those two directories, not under Contracts/Sales.
 '
 ' The denylist below is P5-12's own list verbatim: approved, authorised,
 ' authorized, accepted, cleared, settled, charged. A bare word boundary match
@@ -76,6 +81,20 @@ Public Class PaymentWordingTests
         Dim salesContractsDirectory As String = Path.Combine(root, "src", "Merchandising.Contracts", "Sales")
         Assert.IsTrue(Directory.Exists(salesContractsDirectory), $"'{salesContractsDirectory}' does not exist.")
         files.AddRange(Directory.GetFiles(salesContractsDirectory, "*.vb", SearchOption.AllDirectories))
+
+        ' P6-02: widened to cover the report contracts and API reporting
+        ' directories this card creates (card's own Done-when box) -
+        ' PaymentMethodSummaryResponse (Contracts/Reporting) and
+        ' ReportsController/ReportService (Api/Reporting) are the new
+        ' report-shaped surfaces spec section 14 row 4's wording requirement
+        ' now reaches.
+        Dim reportingContractsDirectory As String = Path.Combine(root, "src", "Merchandising.Contracts", "Reporting")
+        Assert.IsTrue(Directory.Exists(reportingContractsDirectory), $"'{reportingContractsDirectory}' does not exist.")
+        files.AddRange(Directory.GetFiles(reportingContractsDirectory, "*.vb", SearchOption.AllDirectories))
+
+        Dim apiReportingDirectory As String = Path.Combine(root, "src", "Merchandising.Api", "Reporting")
+        Assert.IsTrue(Directory.Exists(apiReportingDirectory), $"'{apiReportingDirectory}' does not exist.")
+        files.AddRange(Directory.GetFiles(apiReportingDirectory, "*.vb", SearchOption.AllDirectories))
 
         Return files
 

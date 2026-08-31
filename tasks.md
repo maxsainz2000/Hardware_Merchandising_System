@@ -104,17 +104,19 @@ Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 con
 
 *Sequential. One worker, in order — every card shares `ReportsController`/`ReportService`/`ReportRepository`, and each consumes the last. Each card reconciles or it is not done.*
 
-### ⬜ P6-02 · Sales reports, and G-24's denylist widened to cover them
+### ✅ P6-02 · Sales reports, and G-24's denylist widened to cover them
 **Spec:** §14, §23 · **Files:** `src/Merchandising.Api/Controllers/ReportsController.vb`, `src/Merchandising.Api/Reporting/`, `src/Merchandising.Infrastructure/Data/ReportRepository.vb`, `src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb`
 
 **Do:** Daily sales summary, sales by product, sales by cashier, and payment-method summary. The first four of spec §14's twelve, and the ones that carry money.
 
+**Scope addition, per ADR-023 point 6:** no `GET` route existed anywhere for Sales, so this card also adds `GET /api/v1/sales` (`SalesController.SearchSales`) — the detail endpoint all four reports reconcile against — gated by `Reports.View`, not a new `Sales.View` policy.
+
 **Done when:**
-- [ ] All four reconcile to their detail screens through P6-01's harness, each asserted in its own test
-- [ ] Cost basis reads the **captured** `SaleLines.Cost`, never `Products.Cost` — asserted by changing the product's cost after the sale and confirming the report is unmoved, the P5-07 test one layer up
-- [ ] The payment-method summary labels card/e-wallet **recorded, not authorised** (G-24), and **`PaymentWordingTests`' scan set is widened in this card** to the report contracts and API reporting directories this card creates — with the widening watched fail against a planted "Payment approved" label in the new directory
-- [ ] Every report states its selected date range and its returns treatment in the response, per spec §14 — asserted, not assumed
-- [ ] **Matrix suite extended** for every route added; integration suite green
+- [x] All four reconcile to their detail screens through P6-01's harness, each asserted in its own test
+- [x] Cost basis reads the **captured** `SaleLines.Cost`, never `Products.Cost` — asserted by changing the product's cost after the sale and confirming the report is unmoved, the P5-07 test one layer up
+- [x] The payment-method summary labels card/e-wallet **recorded, not authorised** (G-24), and **`PaymentWordingTests`' scan set is widened in this card** to the report contracts and API reporting directories this card creates — with the widening watched fail against a planted "Payment approved" label in the new directory
+- [x] Every report states its selected date range and its returns treatment in the response, per spec §14 — asserted, not assumed
+- [x] **Matrix suite extended** for every route added; integration suite green
 
 **Evidence:** `evidence/phase-6/p6-02-sales-reports.txt`
 

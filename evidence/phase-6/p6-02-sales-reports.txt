@@ -1,0 +1,182 @@
+P6-02 — Sales reports, and G-24's denylist widened to cover them
+=====================================================================
+
+Card: P6-02 (Track B, first card). Spec section 14 rows 1-4. Builds on
+P6-01's docs/report-specification.md and ADR-023.
+Captured 2026-08-31, against master at 2246c35.
+
+---------------------------------------------------------------------
+1. SCOPE ADDITION, RECORDED (ADR-023 point 6)
+---------------------------------------------------------------------
+
+docs/report-specification.md section 7 and ADR-023 point 6 both flagged,
+before this card started, that no GET route existed anywhere for Sales -
+the reconciliation harness (P6-01) needs an independent detail endpoint
+to sum against, and none of the six sales-side reports had one. This
+card adds it: GET /api/v1/sales (SalesController.SearchSales), gated by
+Reports.View rather than a new Sales.View policy (decided with the user
+at this card's scope-confirmation step - the endpoint exists to serve
+report reconciliation, not as a cashier-facing sales-history feature).
+
+---------------------------------------------------------------------
+2. GUARDRAIL RUN
+---------------------------------------------------------------------
+
+Command: pwsh ./scripts/check-no-csharp.ps1
+
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+---------------------------------------------------------------------
+3. CLEAN BUILD
+---------------------------------------------------------------------
+
+Command: dotnet build --nologo -v minimal
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+---------------------------------------------------------------------
+4. WATCHED FAIL — PaymentWordingTests' widened scan (Done-when box 3)
+---------------------------------------------------------------------
+
+Per this card's own acceptance criterion: "the widening watched fail
+against a planted 'Payment approved' label in the new directory."
+src/Merchandising.Contracts/Reporting and src/Merchandising.Api/Reporting
+were added to PaymentWordingTests.ScannedFiles() in the same commit that
+created them. Before removing the planted phrase, the scan was run and
+observed to fail against it:
+
+Command: dotnet test src/tests/Merchandising.Tests.Unit --filter "FullyQualifiedName~PaymentWordingTests"
+(with the literal text "Payment approved." planted inside
+PaymentMethodSummaryResponse.RecordedNotAuthorisedNote)
+
+  Failed PaymentWordingFiles_ContainNoUnnegatedAuthorisingWords [61 ms]
+  Error Message:
+   Assert.IsEmpty failed. Expected collection of size 0. Actual: 1. [...]
+   G-24: card/e-wallet payment must never be described as authorised. These
+   words appear without a preceding 'not'/'never':
+   PaymentMethodSummaryResponse.vb: 'approved' (unnegated) near position 400
+
+  Failed!  - Failed: 1, Passed: 4, Skipped: 0, Total: 5, Duration: 94 ms
+
+The planted phrase was then removed (reverted to the correct wording -
+"not authorised, not cleared, and not settled") and the suite re-run
+green (section 5 below). This is the "prove the detector, not merely
+its existence" technique PaymentWordingTests.Denylist_FiresOnTheExact
+BadPhrase_AndPassesOnTheCorrectedOne (P5-12) and ADR-023's own watched-
+fail proof already use, applied here to the SCAN SET rather than the
+regex - the regex itself was already proven at P5-12 and is unchanged.
+
+---------------------------------------------------------------------
+5. UNIT TEST SUITE
+---------------------------------------------------------------------
+
+Command: dotnet test src/tests/Merchandising.Tests.Unit --no-build --nologo -v minimal
+
+Passed!  - Failed: 0, Passed: 92, Skipped: 0, Total: 92, Duration: 2 s
+
+---------------------------------------------------------------------
+6. A DEFECT FOUND AND FIXED DURING THIS CARD
+---------------------------------------------------------------------
+
+SaleRepository.SearchAsync's header reader called reader.GetString() on
+the CorrelationId column (CHAR(36)). MySqlConnector maps CHAR(36) to
+System.Guid, not String - the exact gotcha StockRepository.
+ReadMovementItem and MaintenanceLockRepository's own headers already
+name for every other CHAR(36) column in this schema, missed here because
+this is the first time SaleRepository reads Sales.CorrelationId back
+(every prior use only ever WROTE it). First surfaced as a live 500
+INTERNAL_ERROR from GET /api/v1/sales during this card's own integration
+test run - never shipped, since P6-02's own tests are what caught it.
+Fixed by reading reader.GetGuid(5).ToString("d") instead, matching the
+established pattern exactly. No error detail leaked to any client at any
+point - ExceptionHandlingMiddleware's controlled 500 held throughout.
+
+---------------------------------------------------------------------
+7. INTEGRATION TEST SUITE — real MariaDB 10.4.32
+---------------------------------------------------------------------
+
+7a. The new tests in isolation:
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --filter "FullyQualifiedName~SalesReportsTests"
+
+Passed!  - Failed: 0, Passed: 8, Skipped: 0, Total: 8, Duration: 3 s
+
+The eight tests, and what each proves:
+  DailySalesSummary_Reconciles_AgainstSalesDetailEndpoint          - box 1: report vs. GET /api/v1/sales, two independent paths (ADR-023 point 3)
+  SalesByProduct_Reconciles_AgainstSalesDetailEndpoint             - box 1, same report, product-scoped
+  SalesByCashier_Reconciles_AgainstSalesDetailEndpoint             - box 1, same report, cashier-scoped
+  PaymentMethodSummary_Reconciles_AgainstSalesDetailEndpoint       - box 1, same report, payment-method-scoped
+  SalesByProduct_CostChangedAfterSale_CapturedCostBasisUnmoved     - box 2: captured SaleLines.Cost, never Products.Cost
+  EveryReport_StatesDateRangeAndReturnsTreatment                   - box 4: Range.FromDate/ToDate/TimeZone/ReturnsTreatment on all four
+  PaymentMethodSummary_Note_StatesRecordedNotAuthorised            - G-24, asserted on the LIVE response, not only the source file
+  GetDailySalesSummary_MissingDate_Refused400                      - the one required, non-range parameter this report takes
+
+7b. The extended authorization matrix (Reports.View's five new routes):
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --filter "FullyQualifiedName~AuthorizationMatrixTests"
+
+Passed!  - Failed: 0, Passed: 26, Skipped: 0, Total: 26, Duration: 25 s
+
+(25 pre-existing + ReportsView_MatrixMatchesPolicyRegistry, new at this
+card, covering GET daily-summary/by-product/by-cashier/payment-methods
+and GET /api/v1/sales across all five roles plus the anonymous case.)
+
+7c. Full suite:
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --nologo -v minimal
+
+Passed!  - Failed: 0, Passed: 480, Skipped: 0, Total: 480, Duration: 1 m 54 s
+
+---------------------------------------------------------------------
+8. WHAT WAS NOT BUILT, AND WHY (scope discipline)
+---------------------------------------------------------------------
+
+Sales-by-product/by-cashier's "returned quantity"/"returns" columns are
+computed correctly in ReportRepository's own SQL (LEFT JOIN against a
+pre-aggregated SalesReturnLines/SalesReturns subquery, never a second
+row-grain join that would fan out and double-count - see
+ReportRepository.vb's own header) but are NOT independently reconciled
+against a second, returns-side detail endpoint in this card's tests -
+no GET exists yet for SalesReturns, and building the "Returns and
+cancellations" report surface is P6-03's own card. This card's
+reconciliation tests instead reconcile the SALES-side figures (gross
+value, quantity sold, per-cashier/per-payment-method totals) against
+GET /api/v1/sales, which is what ADR-023's two named risk classes (the
+day-boundary conversion and the captured-cost join) actually exercise -
+the returns-netting arithmetic is ordinary, already-precedented SQL
+(the identical LEFT-JOIN-a-pre-aggregated-subquery shape P5-11 already
+uses for SalesReturnLines), not one of the two defect classes this
+phase's reconciliation harness exists to catch.
+
+---------------------------------------------------------------------
+9. FILES
+---------------------------------------------------------------------
+
+New:
+  src/Merchandising.Contracts/Sales/SaleSearchResponse.vb
+  src/Merchandising.Contracts/Reporting/PaymentMethodTotalResponse.vb
+  src/Merchandising.Contracts/Reporting/DailySalesSummaryResponse.vb
+  src/Merchandising.Contracts/Reporting/SalesByProductItemResponse.vb
+  src/Merchandising.Contracts/Reporting/SalesByProductResponse.vb
+  src/Merchandising.Contracts/Reporting/SalesByCashierItemResponse.vb
+  src/Merchandising.Contracts/Reporting/SalesByCashierResponse.vb
+  src/Merchandising.Contracts/Reporting/PaymentMethodSummaryResponse.vb
+  src/Merchandising.Infrastructure/Data/ReportRepository.vb
+  src/Merchandising.Api/Reporting/ReportService.vb
+  src/Merchandising.Api/Controllers/ReportsController.vb
+  src/tests/Merchandising.Tests.Integration/SalesReportsTests.vb
+
+Modified:
+  src/Merchandising.Infrastructure/Data/SaleRepository.vb   (SearchAsync, GetLinesForSalesAsync, GetPaymentsForSalesAsync)
+  src/Merchandising.Api/Sales/SaleService.vb                (SearchAsync)
+  src/Merchandising.Api/Controllers/SalesController.vb      (GET /api/v1/sales)
+  src/Merchandising.Api/Program.vb                          (ReportService DI registration)
+  src/tests/Merchandising.Tests.Unit/PaymentWordingTests.vb (scan set widened)
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (ReportsView_MatrixMatchesPolicyRegistry)

@@ -1,0 +1,453 @@
+' Merchandising.Infrastructure.Data.ReportRepository
+'
+' P6-02: spec section 14's first four reports - daily sales summary, sales
+' by product, sales by cashier, payment-method summary. Read-only against
+' Sales, SaleLines, SalePayments (0011_pos.sql) and SalesReturns/
+' SalesReturnLines (0012_sales-returns.sql) - merch_api already holds
+' database-level SELECT (ADR-013), so nothing here needs a new grant
+' (docs/report-specification.md section 8).
+'
+' EVERY DATE FILTER TAKES ALREADY-CONVERTED UTC INSTANTS. The caller
+' (ReportService/ReportsController) does the store-local-to-UTC conversion
+' through Merchandising.Domain.StoreTimeZone - the same layering
+' PurchaseOrderRepository.SearchHistoryAsync already uses. This class never
+' computes DATE(CreatedAtUtc) or any other UTC-calendar-date expression -
+' docs/report-specification.md section 2's whole point.
+'
+' COST/PRICE FIGURES READ CAPTURED SaleLines COLUMNS ONLY - never a join to
+' Products.Price/Products.Cost. docs/report-specification.md section 5.
+'
+' RETURNS ARE JOINED THROUGH A PRE-AGGREGATED DERIVED TABLE, NEVER A SECOND
+' LEFT JOIN AT ROW GRAIN. SaleLines and SalesReturnLines are both one-to-many
+' against a product (or a cashier); joining both directly in one GROUP BY
+' would fan the two out against each other and double-count one side the
+' moment a product/cashier has more than one row on either. Each side is
+' summed in its own subquery first (the same technique
+' PurchaseOrderRepository.SearchHistoryAsync avoids needing only because it
+' has just ONE one-to-many join); the outer query then joins two
+' already-one-row-per-key results, which cannot fan out further.
+
+Imports System.Collections.Generic
+Imports System.Linq
+Imports System.Threading
+Imports System.Threading.Tasks
+Imports MySqlConnector
+
+Namespace Data
+
+    ''' <summary>The sort fields <see cref="ReportRepository.GetSalesByProductAsync"/> will honour.</summary>
+    Public Enum SalesByProductSortField
+        ProductName
+        QuantitySold
+        GrossSalesValue
+    End Enum
+
+    ''' <summary>The sort fields <see cref="ReportRepository.GetSalesByCashierAsync"/> will honour.</summary>
+    Public Enum SalesByCashierSortField
+        CashierUsername
+        CompletedSalesTotal
+    End Enum
+
+    Public NotInheritable Class ReportRepository
+
+        Private Sub New()
+        End Sub
+
+        ''' <summary>
+        ''' Spec section 14 row 1. <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/>
+        ''' bound both the Sales.CreatedAtUtc window (for the sales side) and
+        ''' the SalesReturns.ReturnedAtUtc window (for the returns side) - the
+        ''' same single store-local day, per docs/report-specification.md
+        ''' section 2.
+        ''' </summary>
+        Public Shared Async Function GetDailySalesSummaryAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime,
+            toUtcExclusive As DateTime,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (CompletedSalesCount As Integer, CompletedSalesTotal As Decimal,
+                       CompletedReturnsCount As Integer, CompletedReturnsTotal As Decimal,
+                       PaymentTotals As IReadOnlyList(Of (Method As String, Amount As Decimal))))
+
+            Dim completedSalesCount As Integer
+            Dim completedSalesTotal As Decimal
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*), COALESCE(SUM(Total), 0.0000) " &
+                    "  FROM Sales " &
+                    " WHERE Status = 'Completed' " &
+                    "   AND CreatedAtUtc >= @fromUtc AND CreatedAtUtc < @toUtcExclusive;"
+                command.Parameters.AddWithValue("@fromUtc", fromUtc)
+                command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                    completedSalesCount = reader.GetInt32(0)
+                    completedSalesTotal = reader.GetDecimal(1)
+                End Using
+            End Using
+
+            Dim completedReturnsCount As Integer
+            Dim completedReturnsTotal As Decimal
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*), COALESCE(SUM(RefundAmount), 0.0000) " &
+                    "  FROM SalesReturns " &
+                    " WHERE Status = 'Completed' " &
+                    "   AND ReturnedAtUtc >= @fromUtc AND ReturnedAtUtc < @toUtcExclusive;"
+                command.Parameters.AddWithValue("@fromUtc", fromUtc)
+                command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                    completedReturnsCount = reader.GetInt32(0)
+                    completedReturnsTotal = reader.GetDecimal(1)
+                End Using
+            End Using
+
+            Dim paymentTotals As IReadOnlyList(Of (Method As String, Amount As Decimal)) =
+                Await GetPaymentMethodTotalsAsync(connection, fromUtc, toUtcExclusive, cancellationToken).ConfigureAwait(False)
+
+            Return (CompletedSalesCount:=completedSalesCount, CompletedSalesTotal:=completedSalesTotal,
+                    CompletedReturnsCount:=completedReturnsCount, CompletedReturnsTotal:=completedReturnsTotal,
+                    PaymentTotals:=paymentTotals)
+
+        End Function
+
+        ''' <summary>Spec section 14 row 4 - the standalone payment-method summary. Same underlying query <see cref="GetDailySalesSummaryAsync"/> reuses for its own PaymentTotals.</summary>
+        Public Shared Async Function GetPaymentMethodSummaryAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of IReadOnlyList(Of (Method As String, Amount As Decimal)))
+
+            Return Await GetPaymentMethodTotalsAsync(connection, fromUtc, toUtcExclusive, cancellationToken).ConfigureAwait(False)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 2. Only products with at least one Completed
+        ''' sale line in the window appear (the INNER JOIN to the "sold"
+        ''' subquery) - see this class's header for why returns are joined
+        ''' through a second, separately-aggregated subquery rather than a
+        ''' second LEFT JOIN at line grain.
+        ''' </summary>
+        Public Shared Async Function GetSalesByProductAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As SalesByProductSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (ProductId As Integer, ProductSku As String, ProductName As String,
+                                                    QuantitySold As Decimal, QuantityReturned As Decimal, GrossSalesValue As Decimal,
+                                                    CapturedCostBasis As Decimal)),
+                       TotalCount As Integer))
+
+            Dim soldWhere As String = DateWhereClause("s.CreatedAtUtc", fromUtc, toUtcExclusive)
+            Dim returnedWhere As String = DateWhereClause("sr.ReturnedAtUtc", fromUtc, toUtcExclusive)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) FROM (" &
+                    "  SELECT sl.ProductId" &
+                    "    FROM SaleLines sl JOIN Sales s ON s.Id = sl.SaleId" &
+                    "   WHERE s.Status = 'Completed'" & soldWhere &
+                    "   GROUP BY sl.ProductId" &
+                    ") counted;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim orderBy As String =
+                SalesByProductOrderByColumn(sortField) & If(sortDescending, " DESC", " ASC")
+
+            Dim items As New List(Of (ProductId As Integer, ProductSku As String, ProductName As String,
+                                      QuantitySold As Decimal, QuantityReturned As Decimal, GrossSalesValue As Decimal,
+                                      CapturedCostBasis As Decimal))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT p.Id, p.Sku, p.Name, " &
+                    "       CAST(sold.QuantitySold AS DECIMAL(19,3)), " &
+                    "       CAST(COALESCE(ret.QuantityReturned, 0) AS DECIMAL(19,3)), " &
+                    "       CAST(sold.GrossSalesValue AS DECIMAL(19,4)), " &
+                    "       CAST(sold.CapturedCostBasis AS DECIMAL(19,4)) " &
+                    "  FROM Products p" &
+                    "  JOIN (" &
+                    "        SELECT sl.ProductId," &
+                    "               SUM(sl.Quantity) AS QuantitySold," &
+                    "               SUM(sl.LineTotal) AS GrossSalesValue," &
+                    "               SUM(sl.Cost * sl.Quantity) AS CapturedCostBasis" &
+                    "          FROM SaleLines sl JOIN Sales s ON s.Id = sl.SaleId" &
+                    "         WHERE s.Status = 'Completed'" & soldWhere &
+                    "         GROUP BY sl.ProductId" &
+                    "       ) sold ON sold.ProductId = p.Id" &
+                    "  LEFT JOIN (" &
+                    "        SELECT srl.ProductId, SUM(srl.QuantityReturned) AS QuantityReturned" &
+                    "          FROM SalesReturnLines srl JOIN SalesReturns sr ON sr.Id = srl.SalesReturnId" &
+                    "         WHERE sr.Status = 'Completed'" & returnedWhere &
+                    "         GROUP BY srl.ProductId" &
+                    "       ) ret ON ret.ProductId = p.Id" &
+                    " ORDER BY " & orderBy &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add((ProductId:=reader.GetInt32(0), ProductSku:=reader.GetString(1), ProductName:=reader.GetString(2),
+                                   QuantitySold:=reader.GetDecimal(3), QuantityReturned:=reader.GetDecimal(4),
+                                   GrossSalesValue:=reader.GetDecimal(5), CapturedCostBasis:=reader.GetDecimal(6)))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 3. Only cashiers with at least one Completed
+        ''' sale in the window appear. Payment totals per cashier are fetched
+        ''' in a THIRD query, keyed by the page's own cashier ids - the same
+        ''' "paginate first, fetch children for just this page" shape
+        ''' SaleRepository.GetLinesForSalesAsync uses.
+        ''' </summary>
+        Public Shared Async Function GetSalesByCashierAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As SalesByCashierSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (CashierUserId As Integer, CashierUsername As String,
+                                                    CompletedSalesCount As Integer, CompletedSalesTotal As Decimal,
+                                                    ReturnsCount As Integer, ReturnsTotal As Decimal,
+                                                    PaymentTotals As IReadOnlyList(Of (Method As String, Amount As Decimal)))),
+                       TotalCount As Integer))
+
+            Dim soldWhere As String = DateWhereClause("s.CreatedAtUtc", fromUtc, toUtcExclusive)
+            Dim returnedWhere As String = DateWhereClause("sr.ReturnedAtUtc", fromUtc, toUtcExclusive)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) FROM (" &
+                    "  SELECT s.CashierUserId" &
+                    "    FROM Sales s" &
+                    "   WHERE s.Status = 'Completed'" & soldWhere &
+                    "   GROUP BY s.CashierUserId" &
+                    ") counted;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim orderBy As String =
+                If(sortField = SalesByCashierSortField.CompletedSalesTotal, "sold.CompletedSalesTotal", "u.Username") &
+                If(sortDescending, " DESC", " ASC")
+
+            Dim rows As New List(Of (CashierUserId As Integer, CashierUsername As String,
+                                     CompletedSalesCount As Integer, CompletedSalesTotal As Decimal,
+                                     ReturnsCount As Integer, ReturnsTotal As Decimal))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT u.Id, u.Username, sold.CompletedSalesCount, CAST(sold.CompletedSalesTotal AS DECIMAL(19,4)), " &
+                    "       COALESCE(ret.ReturnsCount, 0), CAST(COALESCE(ret.ReturnsTotal, 0) AS DECIMAL(19,4)) " &
+                    "  FROM Users u" &
+                    "  JOIN (" &
+                    "        SELECT s.CashierUserId, COUNT(*) AS CompletedSalesCount, SUM(s.Total) AS CompletedSalesTotal" &
+                    "          FROM Sales s" &
+                    "         WHERE s.Status = 'Completed'" & soldWhere &
+                    "         GROUP BY s.CashierUserId" &
+                    "       ) sold ON sold.CashierUserId = u.Id" &
+                    "  LEFT JOIN (" &
+                    "        SELECT sr.ReturnedByUserId, COUNT(*) AS ReturnsCount, SUM(sr.RefundAmount) AS ReturnsTotal" &
+                    "          FROM SalesReturns sr" &
+                    "         WHERE sr.Status = 'Completed'" & returnedWhere &
+                    "         GROUP BY sr.ReturnedByUserId" &
+                    "       ) ret ON ret.ReturnedByUserId = u.Id" &
+                    " ORDER BY " & orderBy &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        rows.Add((CashierUserId:=reader.GetInt32(0), CashierUsername:=reader.GetString(1),
+                                  CompletedSalesCount:=reader.GetInt32(2), CompletedSalesTotal:=reader.GetDecimal(3),
+                                  ReturnsCount:=reader.GetInt32(4), ReturnsTotal:=reader.GetDecimal(5)))
+                    End While
+                End Using
+            End Using
+
+            Dim cashierIds As IReadOnlyList(Of Integer) = rows.Select(Function(r) r.CashierUserId).ToList()
+            Dim paymentTotalsByCashier As IReadOnlyDictionary(Of Integer, IReadOnlyList(Of (Method As String, Amount As Decimal))) =
+                Await GetPaymentTotalsByCashierAsync(connection, soldWhere, fromUtc, toUtcExclusive, cashierIds, cancellationToken).ConfigureAwait(False)
+
+            Dim items = rows.Select(
+                Function(r) (CashierUserId:=r.CashierUserId, CashierUsername:=r.CashierUsername,
+                             CompletedSalesCount:=r.CompletedSalesCount, CompletedSalesTotal:=r.CompletedSalesTotal,
+                             ReturnsCount:=r.ReturnsCount, ReturnsTotal:=r.ReturnsTotal,
+                             PaymentTotals:=If(paymentTotalsByCashier.ContainsKey(r.CashierUserId),
+                                                paymentTotalsByCashier(r.CashierUserId),
+                                                CType(Array.Empty(Of (Method As String, Amount As Decimal))(), IReadOnlyList(Of (Method As String, Amount As Decimal)))))).
+                ToList()
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ' --------------------------------------------------------------- helpers
+
+        Private Shared Function SalesByProductOrderByColumn(sortField As SalesByProductSortField) As String
+            Select Case sortField
+                Case SalesByProductSortField.QuantitySold
+                    Return "sold.QuantitySold"
+                Case SalesByProductSortField.GrossSalesValue
+                    Return "sold.GrossSalesValue"
+                Case Else
+                    Return "p.Name"
+            End Select
+        End Function
+
+        ''' <summary>
+        ''' Empty when both bounds are unset, else " AND col &gt;= @fromUtc"
+        ''' and/or " AND col &lt; @toUtcExclusive" - built once per query so
+        ''' the SAME two parameter names (<see cref="AddDateParameters"/>)
+        ''' are reused across every WHERE clause a query needs, whatever
+        ''' column each one filters.
+        ''' </summary>
+        Private Shared Function DateWhereClause(column As String, fromUtc As DateTime?, toUtcExclusive As DateTime?) As String
+
+            Dim clause As String = String.Empty
+
+            If fromUtc.HasValue Then
+                clause &= $" AND {column} >= @fromUtc"
+            End If
+
+            If toUtcExclusive.HasValue Then
+                clause &= $" AND {column} < @toUtcExclusive"
+            End If
+
+            Return clause
+
+        End Function
+
+        Private Shared Sub AddDateParameters(command As MySqlCommand, fromUtc As DateTime?, toUtcExclusive As DateTime?)
+
+            If fromUtc.HasValue Then
+                command.Parameters.AddWithValue("@fromUtc", fromUtc.Value)
+            End If
+
+            If toUtcExclusive.HasValue Then
+                command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive.Value)
+            End If
+
+        End Sub
+
+        ''' <summary>
+        ''' Sums committed SalePayments.Amount by Method for completed sales
+        ''' in the window, one row per Merchandising.Domain.Sales.PaymentMethod
+        ''' name, COALESCEd to 0.0000 for a method with no rows in scope - the
+        ''' same zero-filled shape CashierSessionRepository.GetPaymentTotalsAsync
+        ''' already establishes for a single session, applied here to a date
+        ''' window instead.
+        ''' </summary>
+        Private Shared Async Function GetPaymentMethodTotalsAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            cancellationToken As CancellationToken) As Task(Of IReadOnlyList(Of (Method As String, Amount As Decimal)))
+
+            Dim totals As New Dictionary(Of String, Decimal)(StringComparer.Ordinal)
+            For Each methodName As String In {"Cash", "Card", "EWallet"}
+                totals(methodName) = 0D
+            Next
+
+            Dim whereClause As String = DateWhereClause("s.CreatedAtUtc", fromUtc, toUtcExclusive)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT sp.Method, SUM(sp.Amount) " &
+                    "  FROM SalePayments sp JOIN Sales s ON s.Id = sp.SaleId " &
+                    " WHERE s.Status = 'Completed'" & whereClause &
+                    " GROUP BY sp.Method;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        totals(reader.GetString(0)) = reader.GetDecimal(1)
+                    End While
+                End Using
+            End Using
+
+            Return totals.Select(Function(kvp) (Method:=kvp.Key, Amount:=kvp.Value)).ToList()
+
+        End Function
+
+        ''' <summary>Same shape as <see cref="GetPaymentMethodTotalsAsync"/>, grouped additionally by CashierUserId, restricted to <paramref name="cashierIds"/>. Empty when <paramref name="cashierIds"/> is empty.</summary>
+        Private Shared Async Function GetPaymentTotalsByCashierAsync(
+            connection As MySqlConnection,
+            soldWhere As String,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            cashierIds As IReadOnlyList(Of Integer),
+            cancellationToken As CancellationToken) As Task(Of IReadOnlyDictionary(Of Integer, IReadOnlyList(Of (Method As String, Amount As Decimal))))
+
+            Dim result As New Dictionary(Of Integer, Dictionary(Of String, Decimal))
+
+            If cashierIds.Count = 0 Then
+                Return result.ToDictionary(
+                    Function(kvp) kvp.Key,
+                    Function(kvp) CType(kvp.Value.Select(Function(inner) (Method:=inner.Key, Amount:=inner.Value)).ToList(),
+                                        IReadOnlyList(Of (Method As String, Amount As Decimal))))
+            End If
+
+            For Each cashierId As Integer In cashierIds
+                Dim zeroed As New Dictionary(Of String, Decimal)(StringComparer.Ordinal)
+                For Each methodName As String In {"Cash", "Card", "EWallet"}
+                    zeroed(methodName) = 0D
+                Next
+                result(cashierId) = zeroed
+            Next
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT s.CashierUserId, sp.Method, SUM(sp.Amount) " &
+                    "  FROM SalePayments sp JOIN Sales s ON s.Id = sp.SaleId " &
+                    " WHERE s.Status = 'Completed'" & soldWhere &
+                    "   AND s.CashierUserId IN (" & SaleRepository.InClausePlaceholders(cashierIds.Count) & ") " &
+                    " GROUP BY s.CashierUserId, sp.Method;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                SaleRepository.AddInClauseParameters(command, cashierIds)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        result(reader.GetInt32(0))(reader.GetString(1)) = reader.GetDecimal(2)
+                    End While
+                End Using
+            End Using
+
+            Return result.ToDictionary(
+                Function(kvp) kvp.Key,
+                Function(kvp) CType(kvp.Value.Select(Function(inner) (Method:=inner.Key, Amount:=inner.Value)).ToList(),
+                                    IReadOnlyList(Of (Method As String, Amount As Decimal))))
+
+        End Function
+
+    End Class
+
+End Namespace

@@ -17,6 +17,7 @@
 ' ReceiveGoods.
 
 Imports System.Collections.Generic
+Imports System.Globalization
 Imports System.Linq
 Imports System.Security.Claims
 Imports System.Threading.Tasks
@@ -28,6 +29,7 @@ Imports Merchandising.Contracts.Sales
 Imports Merchandising.Domain
 Imports Merchandising.Domain.Sales
 Imports Merchandising.Domain.Security
+Imports Merchandising.Infrastructure.Data
 Imports Microsoft.AspNetCore.Authorization
 Imports Microsoft.AspNetCore.Mvc
 
@@ -37,6 +39,9 @@ Namespace Controllers
     <Route("api/v1/sales")>
     Public Class SalesController
         Inherits ControllerBase
+
+        Private Const DefaultPageSize As Integer = 25
+        Private Const MaxPageSize As Integer = 100
 
         Private ReadOnly _saleService As SaleService
 
@@ -133,6 +138,93 @@ Namespace Controllers
                     })
 
             End Select
+
+        End Function
+
+        ''' <summary>
+        ''' P6-02: GET /api/v1/sales - the detail endpoint ADR-023 point 6
+        ''' flagged as owed to this card. No GET existed for Sales before
+        ''' this card. Gated by Reports.View, not Sales.Create - this
+        ''' endpoint exists to serve report reconciliation, never as a
+        ''' cashier-facing sales-history feature (confirmed with the user at
+        ''' P6-02; SaleSearchResponse's own header carries the same note).
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ReportsView)>
+        <HttpGet>
+        Public Async Function SearchSales(
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional cashierUserId As Integer? = Nothing,
+            <FromQuery> Optional sort As String = Nothing,
+            <FromQuery> Optional page As Integer = 1,
+            <FromQuery> Optional pageSize As Integer = DefaultPageSize) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim fromLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(fromDate) Then
+                Dim parsedFromDate As DateOnly
+                If DateOnly.TryParseExact(fromDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedFromDate) Then
+                    fromLocalDate = parsedFromDate
+                Else
+                    fieldErrors("fromDate") = {"fromDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            Dim toLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(toDate) Then
+                Dim parsedToDate As DateOnly
+                If DateOnly.TryParseExact(toDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedToDate) Then
+                    toLocalDate = parsedToDate
+                Else
+                    fieldErrors("toDate") = {"toDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            If fromLocalDate.HasValue AndAlso toLocalDate.HasValue AndAlso fromLocalDate.Value > toLocalDate.Value Then
+                fieldErrors("toDate") = {"toDate cannot be before fromDate."}
+            End If
+
+            Dim sortField As SaleSortField = SaleSortField.CreatedAt
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseSaleSort(sort, sortField, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use one of createdAt, total, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim effectivePage As Integer = If(page < 1, 1, page)
+            Dim effectivePageSize As Integer = If(pageSize < 1, DefaultPageSize, Math.Min(pageSize, MaxPageSize))
+
+            Dim fromUtc As DateTime? =
+                If(fromLocalDate.HasValue, CType(StoreTimeZone.StartOfDayUtc(fromLocalDate.Value), DateTime?), Nothing)
+            Dim toUtcExclusive As DateTime? =
+                If(toLocalDate.HasValue, CType(StoreTimeZone.EndOfDayUtcExclusive(toLocalDate.Value), DateTime?), Nothing)
+
+            Dim result =
+                Await _saleService.SearchAsync(
+                    fromUtc, toUtcExclusive, cashierUserId, sortField, sortDescending,
+                    effectivePage, effectivePageSize, HttpContext.RequestAborted)
+
+            Return Ok(New SaleSearchResponse With {
+                .Items = result.Items,
+                .TotalCount = result.TotalCount,
+                .Page = effectivePage,
+                .PageSize = effectivePageSize,
+                .MaxPageSize = MaxPageSize,
+                .Sort = CanonicalSaleSort(sortField, sortDescending),
+                .FromDate = If(fromLocalDate.HasValue, fromLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .ToDate = If(toLocalDate.HasValue, toLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .TimeZone = StoreTimeZone.IanaId
+            })
 
         End Function
 
@@ -262,6 +354,50 @@ Namespace Controllers
 
             Dim parsed As Guid = Guid.Empty
             Return Guid.TryParseExact(value, "D", parsed) AndAlso parsed <> Guid.Empty
+
+        End Function
+
+        ''' <summary>Parses "field" or "field:direction" against SearchSales' own whitelist - the same per-controller-whitelist precedent PurchaseOrdersController.TryParseSort/ReportsController.TrySplitSort establish.</summary>
+        Private Shared Function TryParseSaleSort(value As String, ByRef sortField As SaleSortField, ByRef sortDescending As Boolean) As Boolean
+
+            Dim parts As String() = value.Split(":"c)
+
+            If parts.Length > 2 Then
+                Return False
+            End If
+
+            Dim fieldName As String = parts(0).Trim()
+            Dim descending As Boolean = False
+
+            If parts.Length = 2 Then
+
+                Dim direction As String = parts(1).Trim()
+
+                If String.Equals(direction, "desc", StringComparison.OrdinalIgnoreCase) Then
+                    descending = True
+                ElseIf Not String.Equals(direction, "asc", StringComparison.OrdinalIgnoreCase) Then
+                    Return False
+                End If
+
+            End If
+
+            If String.Equals(fieldName, "createdAt", StringComparison.OrdinalIgnoreCase) Then
+                sortField = SaleSortField.CreatedAt
+            ElseIf String.Equals(fieldName, "total", StringComparison.OrdinalIgnoreCase) Then
+                sortField = SaleSortField.Total
+            Else
+                Return False
+            End If
+
+            sortDescending = descending
+            Return True
+
+        End Function
+
+        Private Shared Function CanonicalSaleSort(sortField As SaleSortField, sortDescending As Boolean) As String
+
+            Dim fieldName As String = If(sortField = SaleSortField.Total, "total", "createdAt")
+            Return fieldName & If(sortDescending, ":desc", ":asc")
 
         End Function
 

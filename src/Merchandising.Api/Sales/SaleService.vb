@@ -394,6 +394,88 @@ Namespace Sales
 
         End Function
 
+        ''' <summary>
+        ''' P6-02: GET /api/v1/sales - a plain, filtered, paginated read, no
+        ''' transaction. <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/>
+        ''' are already-converted UTC instants (SalesController does the
+        ''' store-local-to-UTC conversion, the same layering
+        ''' PurchaseOrdersController.GetPurchaseOrderHistory uses).
+        ''' <paramref name="page"/>/<paramref name="pageSize"/> must already
+        ''' be clamped by the caller.
+        ''' </summary>
+        Public Async Function SearchAsync(
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            cashierUserId As Integer?,
+            sortField As SaleSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of SaleResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await SaleRepository.SearchAsync(
+                        connection, fromUtc, toUtcExclusive, cashierUserId, sortField, sortDescending,
+                        page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim saleIds As IReadOnlyList(Of Integer) = result.Items.Select(Function(s) s.Id).ToList()
+
+                Dim linesBySaleId = Await SaleRepository.GetLinesForSalesAsync(connection, saleIds, cancellationToken).ConfigureAwait(False)
+                Dim paymentsBySaleId = Await SaleRepository.GetPaymentsForSalesAsync(connection, saleIds, cancellationToken).ConfigureAwait(False)
+
+                Dim items As New List(Of SaleResponse)
+
+                For Each header In result.Items
+
+                    Dim lineResponses As New List(Of SaleLineResponse)
+                    For Each line In linesBySaleId(header.Id)
+                        lineResponses.Add(New SaleLineResponse With {
+                            .Id = line.Id,
+                            .ProductId = line.ProductId,
+                            .ProductSku = line.ProductSku,
+                            .ProductName = line.ProductName,
+                            .Quantity = line.Quantity,
+                            .UnitPrice = line.UnitPrice,
+                            .Cost = line.Cost,
+                            .LineTotal = line.LineTotal
+                        })
+                    Next
+
+                    Dim paymentResponse As SalePaymentResponse = Nothing
+                    If paymentsBySaleId.ContainsKey(header.Id) Then
+                        Dim payment = paymentsBySaleId(header.Id)
+                        paymentResponse = New SalePaymentResponse With {
+                            .Id = payment.Id,
+                            .Method = payment.Method,
+                            .Amount = payment.Amount,
+                            .TenderedAmount = payment.TenderedAmount,
+                            .ChangeAmount = payment.ChangeAmount
+                        }
+                    End If
+
+                    items.Add(New SaleResponse With {
+                        .Id = header.Id,
+                        .CashierSessionId = header.CashierSessionId,
+                        .CashierUserId = header.CashierUserId,
+                        .Total = header.Total,
+                        .Status = header.Status,
+                        .CorrelationId = header.CorrelationId,
+                        .CreatedAtUtc = header.CreatedAtUtc,
+                        .Lines = lineResponses,
+                        .Payment = paymentResponse
+                    })
+
+                Next
+
+                Return (Items:=CType(items, IReadOnlyList(Of SaleResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
         ' ----------------------------------------------------------- helpers
 
         ''' <summary>
