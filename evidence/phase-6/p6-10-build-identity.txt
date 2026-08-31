@@ -140,3 +140,69 @@ tree moves without a matching install); and the payload leaks nothing beyond com
 and timestamp (test in section 2).
 
 --- Part 1 ends here. Part 2 follows in a short, immediate follow-up commit. ---
+
+=====================================================================
+PART 2 — the watched-fail rehearsal: the whole point of this card
+=====================================================================
+
+Part 1 left the service installed and matching HEAD `721f2ffe...`, immediately before
+the P6-10 commit. That commit landed as `aad3662607e77f4cbd32d1a195888ef9e8f44fed`,
+moving HEAD with NO redeploy. The service was never touched between these two checks.
+
+6. RED — a real commit landed, nothing was redeployed
+---------------------------------------------------------
+  $ pwsh -File ./scripts/install-service.ps1 -CheckOnly
+  Merchandising System - build identity check (P6-10 / CARRY-05)
+  Read-only: no service, ACL or Event Log change. Does not require elevation.
+
+  === build identity check ===
+    git rev-parse HEAD : aad3662607e77f4cbd32d1a195888ef9e8f44fed
+    deployed commitSha : 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+
+    FAIL STALE DEPLOYMENT: the running service was published from a different commit
+    than the current tree.
+         Republish (scripts/publish-release.ps1) and reinstall
+         (scripts/install-service.ps1 -PublishDir ...) from the current commit.
+  (exit code 1)
+
+This is the card's own acceptance test, exactly as specified: run the comparison
+against the currently-deployed build (Part 1, section 5 — green, matching 721f2ffe...),
+make a source commit without redeploying (the P6-10 commit itself, aad3662...), and
+confirm the check goes red (above) — for the right reason: the two SHAs printed are
+the true HEAD and the true deployed identity, not a fabricated failure. A staleness
+check that had never gone red would have detected nothing; this one goes red on
+command and states exactly what disagrees.
+
+7. HYGIENE — republish and reinstall from the new HEAD, so the demo host is not left
+   knowingly stale as a side effect of proving that it can detect staleness
+---------------------------------------------------------------------------------------
+  $ pwsh -File ./scripts/publish-release.ps1 -Component Api -Mode SelfContained
+  Build identity for this publish: commit aad3662607e77f4cbd32d1a195888ef9e8f44fed
+  at 2026-08-31T08:21:15.9478505Z
+  ... (guardrails pass; 350 files, 107.3 MB; package 2623C671856419AC05E6762C5D4CFF...)
+  Publish complete.
+
+  (elevated, by the operator)
+  Copy-Item -Recurse -Force artifacts\publish\Api-sc  C:\MerchandisingService\Api-sc-aad3662
+  pwsh -File scripts/install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc-aad3662
+
+  $ pwsh -File ./scripts/install-service.ps1 -CheckOnly
+  === build identity check ===
+    git rev-parse HEAD : aad3662607e77f4cbd32d1a195888ef9e8f44fed
+    deployed commitSha : aad3662607e77f4cbd32d1a195888ef9e8f44fed
+    OK   Deployed build matches the current commit.
+  (exit code 0)
+
+Final service registration:
+  Name      : MerchandisingApi
+  State     : Running
+  StartMode : Auto
+  PathName  : "C:\MerchandisingService\Api-sc-aad3662\Merchandising.Api.exe"
+
+CONCLUSION. Every Done-when box on the card is now genuinely met: the endpoint carries
+a publish-time-stamped commit and timestamp that never re-reads the tree; a standalone
+script (-CheckOnly) and the normal install path both run the identical comparison and
+fail loudly with both values printed; the watched-fail rehearsal above shows the check
+actually goes red, from a real commit, with no staged failure; the payload's key set is
+asserted exactly (section 2); and the live demo host ends this card matching HEAD.
+

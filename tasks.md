@@ -250,7 +250,7 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 *Files disjoint from Tracks B, C and D.*
 
-### 🟡 P6-10 · Health endpoint carries build identity — **CARRY-05, found at two gates** 🎯
+### ✅ P6-10 · Health endpoint carries build identity — **CARRY-05, closed**
 **Spec:** §23 (G-16) · **Decides:** ADR-027 · **Files:** `src/Merchandising.Api/Controllers/HealthController.vb`, `scripts/publish-release.ps1`, `scripts/install-service.ps1`
 
 **Do:** The deployed Windows Service was found four weeks stale at the Phase 4 gate and stale again at the Phase 5 gate, and **no mechanism in this repository could have noticed** — the integration suite builds the host in-process, and `install-service.ps1` verifies that *something* is listening on 8443, not that what is listening is current. Put the commit identifier and build timestamp on the health endpoint, and compare it against the tree.
@@ -258,10 +258,10 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 **Done when:**
 - [x] `GET /health` returns the commit SHA and build timestamp of the running binary, stamped at publish time — not read from the working tree at request time, which would always agree with itself
 - [x] A script compares the deployed identity against `git rev-parse HEAD` and **fails loudly** when they differ, with the two values printed
-- [ ] **Watched fail:** run the comparison against the currently-deployed build, then make a source commit without redeploying, and confirm the check goes red. This is the whole card — a staleness check that has never gone red detects nothing — **pending, in the immediate follow-up commit: this is the one box that structurally cannot be true before this card's own commit exists**
+- [x] **Watched fail:** run the comparison against the currently-deployed build, then make a source commit without redeploying, and confirm the check goes red. This is the whole card — a staleness check that has never gone red detects nothing
 - [x] `install-service.ps1` runs the comparison after installing and refuses to report success on a mismatch
 - [x] The endpoint leaks nothing beyond commit and timestamp — no paths, no connection details, no environment (CLAUDE.md §5)
-- [ ] ADR-027 records why in-process integration tests can never catch this class of defect — drafted, **left PENDING until the watched-fail box above is real**
+- [x] ADR-027 records why in-process integration tests can never catch this class of defect
 
 **Evidence:** `evidence/phase-6/p6-10-build-identity.txt`
 

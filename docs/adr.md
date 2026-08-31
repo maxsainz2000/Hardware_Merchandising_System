@@ -1202,7 +1202,7 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ## ADR-027 · Health endpoint build identity, and why in-process tests cannot prove it
 
-**Status:** PENDING
+**Status:** ACCEPTED
 **Date:** 2026-08-31
 **Decides:** how the deployed API's commit and build time are exposed and checked, and why `WebApplicationFactory`-based integration tests are structurally unable to catch a stale deployment - CARRY-05, found at the Phase 4 and Phase 5 gates, both times by hand. Raised and settled at P6-10, Track E.
 
