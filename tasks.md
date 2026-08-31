@@ -151,19 +151,30 @@ Evidence: `evidence/phase-6/p6-04-procurement-reports.txt`. No new detail endpoi
 
 **Evidence:** `evidence/phase-6/p6-04-procurement-reports.txt`
 
-### ⬜ P6-05 · Stock reports
+### ✅ P6-05 · Stock reports
 **Spec:** §14 · **Files:** `src/Merchandising.Api/Reporting/`, `src/Merchandising.Infrastructure/Data/ReportRepository.vb`
 
 **Do:** Current stock, low stock, stock movement, and stock adjustment — the last four of the twelve.
 
 **Done when:**
-- [ ] All four reconcile through the harness
-- [ ] The stock movement report carries the **correlation identifier** spec §14 requires, so a row in a report can be traced to the request that made it
-- [ ] Current stock and the movement report agree with each other for every product — this is P4-01's standing ledger assertion asked as a *report* question, and it must give the same answer
-- [ ] Low stock reuses P4-11's existing logic rather than restating the threshold comparison
-- [ ] **Matrix suite extended**; integration suite green
+- [x] All four reconcile through the harness
+- [x] The stock movement report carries the **correlation identifier** spec §14 requires, so a row in a report can be traced to the request that made it
+- [x] Current stock and the movement report agree with each other for every product — this is P4-01's standing ledger assertion asked as a *report* question, and it must give the same answer
+- [x] Low stock reuses P4-11's existing logic rather than restating the threshold comparison
+- [x] **Matrix suite extended**; integration suite green
 
 **Evidence:** `evidence/phase-6/p6-05-stock-reports.txt`
+
+**Note:** No new detail endpoint was added — docs/report-specification.md §7 names the
+existing `GET /api/v1/inventory/stock` and `GET /api/v1/inventory/stock/movements`
+(both P4-11) as the reconciliation targets for all four reports. Low-stock's own
+report handler calls `StockRepository.SearchLowStockAsync` directly rather than
+adding a second WHERE clause, so its harness comparison is against `/stock`
+filtered client-side by the same threshold, not against `/low-stock` again (which
+would be the same query compared to itself). Stock-adjustment is the first GET
+route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
+`QuantityVariance` against the exact `StockMovements` row it produced, matched by
+`CorrelationId` — two different source tables, never the same query twice.
 
 ---
 

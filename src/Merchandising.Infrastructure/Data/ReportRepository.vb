@@ -72,6 +72,23 @@ Namespace Data
         ReceivedAt
     End Enum
 
+    ''' <summary>The sort fields <see cref="ReportRepository.GetCurrentStockReportAsync"/> will honour - the same three names StockSortField already offers for GET /api/v1/inventory/stock, deliberately kept as a SEPARATE enum (this report's query joins Categories; StockRepository's does not).</summary>
+    Public Enum CurrentStockReportSortField
+        ProductName
+        Quantity
+        ReorderLevel
+    End Enum
+
+    ''' <summary>The one sort field <see cref="ReportRepository.GetStockMovementReportAsync"/> honours - the same single-value shape StockMovementSortField uses for GET /api/v1/inventory/stock/movements.</summary>
+    Public Enum StockMovementReportSortField
+        CreatedAt
+    End Enum
+
+    ''' <summary>The one sort field <see cref="ReportRepository.GetStockAdjustmentReportAsync"/> honours.</summary>
+    Public Enum StockAdjustmentReportSortField
+        CreatedAt
+    End Enum
+
     Public NotInheritable Class ReportRepository
 
         Private Sub New()
@@ -724,6 +741,288 @@ Namespace Data
                                    ProductId:=reader.GetInt32(8), ProductSku:=reader.GetString(9), ProductName:=reader.GetString(10),
                                    OrderedQuantity:=reader.GetDecimal(11), ReceivedQuantity:=reader.GetDecimal(12),
                                    ReceivedByUserId:=reader.GetInt32(13), ReceivedByUsername:=reader.GetString(14)))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 8 - current stock. A point-in-time snapshot
+        ''' (no date filter, matching GET /api/v1/inventory/stock's own
+        ''' contract). DELIBERATELY A SEPARATE QUERY FROM
+        ''' StockRepository.SearchStockAsync, not a call to it: this one joins
+        ''' Categories, which that query has no reason to - genuine, not
+        ''' incidental, independence for the reconciliation harness
+        ''' (docs/report-specification.md section 7), comparing this report's
+        ''' Quantity/ReorderLevel per product against GET /api/v1/inventory/stock's
+        ''' existing, already-shipped answer for the same product.
+        ''' </summary>
+        Public Shared Async Function GetCurrentStockReportAsync(
+            connection As MySqlConnection,
+            includeInactive As Boolean,
+            sortField As CurrentStockReportSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (ProductId As Integer, Sku As String, Name As String, CategoryId As Integer?, CategoryName As String,
+                                                     IsActive As Boolean, Quantity As Decimal, ReorderLevel As Decimal)),
+                        TotalCount As Integer))
+
+            Dim whereClause As String = If(includeInactive, String.Empty, " WHERE p.IsActive = 1")
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM Products p" & whereClause & ";"
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of (ProductId As Integer, Sku As String, Name As String, CategoryId As Integer?, CategoryName As String,
+                                       IsActive As Boolean, Quantity As Decimal, ReorderLevel As Decimal))
+
+            Dim orderByColumn As String
+            Select Case sortField
+                Case CurrentStockReportSortField.Quantity
+                    orderByColumn = "Quantity"
+                Case CurrentStockReportSortField.ReorderLevel
+                    orderByColumn = "p.ReorderLevel"
+                Case Else
+                    orderByColumn = "p.Name"
+            End Select
+            Dim direction As String = If(sortDescending, " DESC", " ASC")
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT p.Id, p.Sku, p.Name, p.CategoryId, c.Name AS CategoryName, p.IsActive, p.ReorderLevel, " &
+                    "       COALESCE(b.Quantity, 0.000) AS Quantity " &
+                    "  FROM Products p" &
+                    "  LEFT JOIN StockBalances b ON b.ProductId = p.Id" &
+                    "  LEFT JOIN Categories c ON c.Id = p.CategoryId" &
+                    whereClause &
+                    " ORDER BY " & orderByColumn & direction & ", p.Id" & direction &
+                    " LIMIT @pageSize OFFSET @offset;"
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+
+                        Dim categoryIdOrdinal As Integer = reader.GetOrdinal("CategoryId")
+                        Dim categoryNameOrdinal As Integer = reader.GetOrdinal("CategoryName")
+
+                        items.Add((
+                            ProductId:=reader.GetInt32(reader.GetOrdinal("Id")),
+                            Sku:=reader.GetString(reader.GetOrdinal("Sku")),
+                            Name:=reader.GetString(reader.GetOrdinal("Name")),
+                            CategoryId:=If(reader.IsDBNull(categoryIdOrdinal), CType(Nothing, Integer?), reader.GetInt32(categoryIdOrdinal)),
+                            CategoryName:=If(reader.IsDBNull(categoryNameOrdinal), Nothing, reader.GetString(categoryNameOrdinal)),
+                            IsActive:=reader.GetBoolean(reader.GetOrdinal("IsActive")),
+                            Quantity:=reader.GetDecimal(reader.GetOrdinal("Quantity")),
+                            ReorderLevel:=reader.GetDecimal(reader.GetOrdinal("ReorderLevel"))))
+
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 10 - stock movement report. UNLIKE
+        ''' StockRepository.SearchMovementsAsync, <paramref name="productId"/>
+        ''' is OPTIONAL: Nothing returns every product's movements in the date
+        ''' window, which this report's own Done-when box needs ("current
+        ''' stock and the movement report agree with each other for EVERY
+        ''' product"). ReturnsTreatment = Included (docs/report-specification.md
+        ''' section 4 row 10) - nothing is excluded, this is a ledger of every
+        ''' movement type.
+        ''' </summary>
+        Public Shared Async Function GetStockMovementReportAsync(
+            connection As MySqlConnection,
+            productId As Integer?,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (Id As Integer, ProductId As Integer, ProductSku As String, ProductName As String,
+                                                     Delta As Decimal, QuantityBefore As Decimal, QuantityAfter As Decimal,
+                                                     Reason As String, ActorUserId As Integer, ActorUsername As String,
+                                                     CorrelationId As String, CreatedAtUtc As DateTime)),
+                        TotalCount As Integer))
+
+            Dim conditions As New List(Of String)
+            If productId.HasValue Then
+                conditions.Add("m.ProductId = @productId")
+            End If
+            If fromUtc.HasValue Then
+                conditions.Add("m.CreatedAtUtc >= @fromUtc")
+            End If
+            If toUtcExclusive.HasValue Then
+                conditions.Add("m.CreatedAtUtc < @toUtcExclusive")
+            End If
+
+            Dim whereClause As String = If(conditions.Count = 0, String.Empty, " WHERE " & String.Join(" AND ", conditions))
+
+            Dim addParameters As Action(Of MySqlCommand) =
+                Sub(command)
+                    If productId.HasValue Then
+                        command.Parameters.AddWithValue("@productId", productId.Value)
+                    End If
+                    AddDateParameters(command, fromUtc, toUtcExclusive)
+                End Sub
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM StockMovements m" & whereClause & ";"
+                addParameters(command)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of (Id As Integer, ProductId As Integer, ProductSku As String, ProductName As String,
+                                       Delta As Decimal, QuantityBefore As Decimal, QuantityAfter As Decimal,
+                                       Reason As String, ActorUserId As Integer, ActorUsername As String,
+                                       CorrelationId As String, CreatedAtUtc As DateTime))
+
+            Dim direction As String = If(sortDescending, "DESC", "ASC")
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT m.Id, m.ProductId, p.Sku, p.Name, m.Delta, m.QuantityBefore, m.QuantityAfter, " &
+                    "       m.Reason, m.ActorUserId, u.Username, m.CorrelationId, m.CreatedAtUtc " &
+                    "  FROM StockMovements m" &
+                    "  JOIN Products p ON p.Id = m.ProductId" &
+                    "  JOIN Users u ON u.Id = m.ActorUserId" &
+                    whereClause &
+                    " ORDER BY m.CreatedAtUtc " & direction & ", m.Id " & direction &
+                    " LIMIT @pageSize OFFSET @offset;"
+                addParameters(command)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add((
+                            Id:=reader.GetInt32(0), ProductId:=reader.GetInt32(1), ProductSku:=reader.GetString(2), ProductName:=reader.GetString(3),
+                            Delta:=reader.GetDecimal(4), QuantityBefore:=reader.GetDecimal(5), QuantityAfter:=reader.GetDecimal(6),
+                            Reason:=reader.GetString(7), ActorUserId:=reader.GetInt32(8), ActorUsername:=reader.GetString(9),
+                            CorrelationId:=reader.GetGuid(10).ToString("d"), CreatedAtUtc:=reader.GetDateTime(11)))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 11 - stock-adjustment report. The FIRST GET
+        ''' route StockAdjustments has ever had (AdjustmentsController's own
+        ''' header - only POST routes existed before this card). ReturnsTreatment
+        ''' = Excluded (docs/report-specification.md section 4 row 11) -
+        ''' adjustments and sales returns are distinct transaction types.
+        ''' <paramref name="productId"/> is optional, the same shape
+        ''' GetStockMovementReportAsync uses.
+        ''' </summary>
+        Public Shared Async Function GetStockAdjustmentReportAsync(
+            connection As MySqlConnection,
+            productId As Integer?,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (Id As Integer, ProductId As Integer, ProductSku As String, ProductName As String,
+                                                     QuantityVariance As Decimal, Reason As String,
+                                                     RequestedByUserId As Integer, RequestedByUsername As String,
+                                                     ApprovedByUserId As Integer?, ApprovedByUsername As String,
+                                                     ExceedsThreshold As Boolean, Status As String,
+                                                     CreatedAtUtc As DateTime, UpdatedAtUtc As DateTime)),
+                        TotalCount As Integer))
+
+            Dim conditions As New List(Of String)
+            If productId.HasValue Then
+                conditions.Add("a.ProductId = @productId")
+            End If
+            If fromUtc.HasValue Then
+                conditions.Add("a.CreatedAtUtc >= @fromUtc")
+            End If
+            If toUtcExclusive.HasValue Then
+                conditions.Add("a.CreatedAtUtc < @toUtcExclusive")
+            End If
+
+            Dim whereClause As String = If(conditions.Count = 0, String.Empty, " WHERE " & String.Join(" AND ", conditions))
+
+            Dim addParameters As Action(Of MySqlCommand) =
+                Sub(command)
+                    If productId.HasValue Then
+                        command.Parameters.AddWithValue("@productId", productId.Value)
+                    End If
+                    AddDateParameters(command, fromUtc, toUtcExclusive)
+                End Sub
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM StockAdjustments a" & whereClause & ";"
+                addParameters(command)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of (Id As Integer, ProductId As Integer, ProductSku As String, ProductName As String,
+                                       QuantityVariance As Decimal, Reason As String,
+                                       RequestedByUserId As Integer, RequestedByUsername As String,
+                                       ApprovedByUserId As Integer?, ApprovedByUsername As String,
+                                       ExceedsThreshold As Boolean, Status As String,
+                                       CreatedAtUtc As DateTime, UpdatedAtUtc As DateTime))
+
+            Dim direction As String = If(sortDescending, "DESC", "ASC")
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT a.Id, a.ProductId, p.Sku, p.Name, a.QuantityVariance, a.Reason, " &
+                    "       a.RequestedByUserId, ru.Username, a.ApprovedByUserId, au.Username, " &
+                    "       a.ExceedsThreshold, a.Status, a.CreatedAtUtc, a.UpdatedAtUtc " &
+                    "  FROM StockAdjustments a" &
+                    "  JOIN Products p ON p.Id = a.ProductId" &
+                    "  JOIN Users ru ON ru.Id = a.RequestedByUserId" &
+                    "  LEFT JOIN Users au ON au.Id = a.ApprovedByUserId" &
+                    whereClause &
+                    " ORDER BY a.CreatedAtUtc " & direction & ", a.Id " & direction &
+                    " LIMIT @pageSize OFFSET @offset;"
+                addParameters(command)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+
+                        ' Positional indices throughout - ru.Username and
+                        ' au.Username both project as column name "Username",
+                        ' so a name-based GetOrdinal("Username")/GetString("Username")
+                        ' would be ambiguous (MySqlConnector resolves it to
+                        ' whichever matches first, silently). Every column in
+                        ' this row is read positionally for exactly that reason.
+                        Const approvedByUserIdOrdinal As Integer = 8
+                        Const approvedByUsernameOrdinal As Integer = 9
+
+                        items.Add((
+                            Id:=reader.GetInt32(0), ProductId:=reader.GetInt32(1), ProductSku:=reader.GetString(2), ProductName:=reader.GetString(3),
+                            QuantityVariance:=reader.GetDecimal(4), Reason:=reader.GetString(5),
+                            RequestedByUserId:=reader.GetInt32(6), RequestedByUsername:=reader.GetString(7),
+                            ApprovedByUserId:=If(reader.IsDBNull(approvedByUserIdOrdinal), CType(Nothing, Integer?), reader.GetInt32(approvedByUserIdOrdinal)),
+                            ApprovedByUsername:=If(reader.IsDBNull(approvedByUsernameOrdinal), Nothing, reader.GetString(approvedByUsernameOrdinal)),
+                            ExceedsThreshold:=reader.GetBoolean(10), Status:=reader.GetString(11),
+                            CreatedAtUtc:=reader.GetDateTime(12), UpdatedAtUtc:=reader.GetDateTime(13)))
+
                     End While
                 End Using
             End Using

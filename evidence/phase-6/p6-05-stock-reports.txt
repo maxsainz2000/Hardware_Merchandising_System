@@ -1,0 +1,209 @@
+P6-05: Stock reports (current stock, low stock, stock movement, stock adjustment)
+===================================================================================
+
+Base commit for this card: a73040148fa14a7818e3b10b7c3cc7543a768b08
+(P6-04: purchase-order history and goods-receiving history reports)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope
+-------------------------------------------------------------------
+
+Spec section 14 rows 8-11, per docs/report-specification.md (the P6-01
+document Track B cards cite instead of re-deciding these questions) - the
+last four of the twelve reports:
+
+  - Current stock report
+    GET /api/v1/reports/inventory/current-stock
+    Product, category, active state, current quantity, reorder level, and
+    stock status. Point-in-time snapshot - no date parameter, matching
+    GET /api/v1/inventory/stock's own contract. ReturnsTreatment = Excluded.
+
+  - Low-stock report
+    GET /api/v1/reports/inventory/low-stock
+    Active products at or below reorder level, with current quantity and
+    reorder level. ReturnsTreatment = Excluded.
+
+  - Stock movement report
+    GET /api/v1/reports/inventory/stock-movements
+    Movement source, product, delta, before/after quantity, user, time,
+    reason, and correlation identifier. ReturnsTreatment = Included.
+
+  - Stock-adjustment report
+    GET /api/v1/reports/inventory/stock-adjustments
+    Count/adjustment, variance, reason, requestor, approver, result, and
+    stock effect. ReturnsTreatment = Excluded.
+
+Per docs/report-specification.md section 7's table, all four reconcile
+against the SAME two existing detail endpoints: GET /api/v1/inventory/stock
+and GET /api/v1/inventory/stock/movements (both P4-11). No new detail
+endpoint was needed for this card, unlike P6-02/P6-03.
+
+Design decisions made in this card, not re-litigated from that document:
+
+  - CURRENT STOCK is a genuinely independent SQL query (joins Categories,
+    which StockRepository.SearchStockAsync has no reason to), reconciled
+    against /api/v1/inventory/stock's Quantity/ReorderLevel per product -
+    a real two-independent-code-paths proof (ADR-023), not the same query
+    called twice.
+
+  - LOW STOCK calls StockRepository.SearchLowStockAsync DIRECTLY through
+    ReportService.GetLowStockReportAsync - P4-11's own threshold comparison,
+    never restated as a second WHERE clause (this card's own Done-when box).
+    Because the report and GET /api/v1/inventory/low-stock would therefore
+    be the identical query, the reconciliation test compares the report's
+    row set against GET /api/v1/inventory/stock filtered CLIENT-SIDE by the
+    same threshold (Quantity <= ReorderLevel) instead - a genuine second
+    computation of the filter, never the report's own query run twice.
+
+  - STOCK MOVEMENT is a new query, structurally close to
+    StockRepository.SearchMovementsAsync but with an OPTIONAL productId
+    (the existing endpoint requires one) - needed for this card's own
+    Done-when box: "current stock and the movement report agree with each
+    other for EVERY product," not one product at a time. Reconciled against
+    the existing, already-shipped GET /api/v1/inventory/stock/movements for
+    one product at a time (still two independent code paths - a NEW query
+    compared to an EXISTING one, the same shape P6-04 used for purchase
+    orders vs. goods receiving).
+
+  - STOCK ADJUSTMENT is the FIRST GET route StockAdjustments has ever had
+    (AdjustmentsController only ever added POST routes at P4-10, confirmed
+    by inspection). "Result" is Status, read and echoed verbatim (ADR-020's
+    sibling status machine, never re-decided here). "Stock effect" is a new
+    derived StockEffectApplied boolean (True only when Status = "Applied"),
+    because StockAdjustments carries no MovementId column - the actual
+    quantity effect, when applied, IS QuantityVariance itself. Reconciled by
+    matching an Applied adjustment's QuantityVariance against the exact
+    StockMovements row it produced (found via CorrelationId, through the
+    stock movement report) - two different source tables, never the same
+    query twice, and the Pending case is proven to leave no matching
+    movement row at all.
+
+-------------------------------------------------------------------
+2. Files changed
+-------------------------------------------------------------------
+
+New:
+  src/Merchandising.Contracts/Reporting/CurrentStockReportItemResponse.vb
+  src/Merchandising.Contracts/Reporting/CurrentStockReportResponse.vb
+  src/Merchandising.Contracts/Reporting/LowStockReportResponse.vb
+  src/Merchandising.Contracts/Reporting/StockMovementReportItemResponse.vb
+  src/Merchandising.Contracts/Reporting/StockMovementReportResponse.vb
+  src/Merchandising.Contracts/Reporting/StockAdjustmentReportItemResponse.vb
+  src/Merchandising.Contracts/Reporting/StockAdjustmentReportResponse.vb
+  src/Merchandising.Api/Controllers/InventoryReportsController.vb
+  src/tests/Merchandising.Tests.Integration/InventoryReportsTests.vb
+
+Modified:
+  src/Merchandising.Infrastructure/Data/ReportRepository.vb
+    - CurrentStockReportSortField, StockMovementReportSortField,
+      StockAdjustmentReportSortField
+    - GetCurrentStockReportAsync (Products/StockBalances/Categories join)
+    - GetStockMovementReportAsync (optional productId, unlike
+      StockRepository.SearchMovementsAsync)
+    - GetStockAdjustmentReportAsync (first GET query over StockAdjustments)
+  src/Merchandising.Api/Reporting/ReportService.vb
+    - GetCurrentStockReportAsync, GetLowStockReportAsync (delegates to
+      StockRepository.SearchLowStockAsync directly), GetStockMovementReportAsync,
+      GetStockAdjustmentReportAsync
+    - DeriveStockStatus ("OutOfStock"/"Low"/"Normal")
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb
+    - Four new routes added to ReportsView_MatrixMatchesPolicyRegistry
+  tasks.md
+
+-------------------------------------------------------------------
+3. Done-when boxes
+-------------------------------------------------------------------
+
+[x] All four reconcile through the harness - InventoryReportsTests:
+    - CurrentStockReport_Reconciles_AgainstStockEndpoint_AndDerivesStockStatus
+      (Quantity/ReorderLevel per product, against GET /api/v1/inventory/stock)
+    - LowStockReport_Reconciles_AgainstStockEndpoint_ByThresholdFilter
+      (row set, against GET /api/v1/inventory/stock filtered client-side)
+    - StockMovementReport_Reconciles_AgainstStockMovementsEndpoint_AndCarriesCorrelationId
+      (row count and delta sum, against GET /api/v1/inventory/stock/movements)
+    - StockAdjustmentReport_Reconciles_AppliedEffect_AndPendingHasNoStockEffect
+      (QuantityVariance against the matching StockMovements row's Delta)
+    All via ReportReconciliationHarness.AssertReconciles (exact Decimal
+    equality, no tolerance).
+
+[x] The stock movement report carries the correlation identifier -
+    StockMovementReportItemResponse.CorrelationId, asserted in
+    StockMovementReport_Reconciles_AgainstStockMovementsEndpoint_AndCarriesCorrelationId
+    against the EXACT value the fixture command supplied (not merely
+    "non-empty"), and used as the join key in the stock-adjustment
+    reconciliation test above.
+
+[x] Current stock and the movement report agree with each other for every
+    product - CurrentStockReport_And_StockMovementReport_AgreeForEveryFixtureProduct:
+    two fixture products, one with an increase-then-decrease, one with two
+    increases; for EACH, CurrentStockReport.Quantity is asserted to equal
+    Sum(StockMovementReport.Delta) for that product, unbounded - P4-01's
+    ledger invariant, asked as a report question, then also asserted
+    against the real expected numbers (5.000 = 9.000 - 4.000;
+    5.000 = 3.000 + 2.000).
+
+[x] Low stock reuses P4-11's existing logic rather than restating the
+    threshold comparison - ReportService.GetLowStockReportAsync calls
+    StockRepository.SearchLowStockAsync directly; no new WHERE clause
+    anywhere in this card's code. LowStockReportResponse.Items is
+    Merchandising.Contracts.Inventory.LowStockItemResponse itself (P4-11's
+    own response type), not a duplicate report-shaped type.
+
+[x] Matrix suite extended (4 new routes: current-stock, low-stock,
+    stock-movements, stock-adjustments, all under Reports.View - now 28 + 4
+    = 32 routes); integration suite green.
+
+-------------------------------------------------------------------
+4. Verification
+-------------------------------------------------------------------
+
+Guardrails:
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+Build: 0 Warning(s), 0 Error(s).
+
+Unit tests: Passed! - Failed: 0, Passed: 92, Skipped: 0, Total: 92.
+
+Integration tests (real MariaDB), run twice for stability:
+
+  Run 1: Passed! - Failed: 0, Passed: 496, Skipped: 0, Total: 496, Duration: 2m 33s
+  Run 2: Passed! - Failed: 0, Passed: 496, Skipped: 0, Total: 496, Duration: 2m 36s
+
+(496 = 490 from P6-04 + 6 new InventoryReportsTests methods.)
+
+-------------------------------------------------------------------
+5. Notes
+-------------------------------------------------------------------
+
+- SHARED, MUTABLE SYSTEM SETTING HAZARD, HANDLED. inventory.adjustmentThreshold
+  (SystemSettings) is shared state that another test class in this suite
+  (AdjustmentTests.vb) writes and does not restore. The first run of this
+  card's tests failed against fixed literal variances for exactly this
+  reason - a prior test class had left the threshold below 8.000, so
+  fixtures expecting "Applied" (below threshold) got "Pending" instead.
+  Fixed by pinning inventory.adjustmentThreshold to a known value
+  (SystemSettingsRepository.UpsertAsync, the identical mechanism
+  AdjustmentTests.vb's own SetThresholdAsync uses) in this class's own
+  TestInitialize - safe because the assembly carries <DoNotParallelize>
+  (AdjustmentTests.vb's own header, ADR-009.2), so no other test class can
+  be running concurrently and observe the pinned value mid-test.
+
+- StockAdjustments carries no MovementId or CorrelationId column - an
+  adjustment's stock effect is traced to its StockMovements row entirely by
+  CorrelationId, which IS available because this card's own fixtures call
+  AdjustmentService.RequestAsync directly (not through HTTP) and therefore
+  control and know the correlation id passed in, the same fixture style
+  P6-04 established for calling PurchaseOrderService/ReceivingService
+  directly.
+
+- StockStatus ("OutOfStock"/"Low"/"Normal") and StockEffectApplied are both
+  derived in ReportService, never stored - the same layering
+  GetProductPerformanceAsync's MarginEstimate already established at P6-03
+  for a report's one genuinely new derived figure.
