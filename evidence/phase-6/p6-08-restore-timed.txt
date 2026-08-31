@@ -1,0 +1,213 @@
+P6-08: Restore, measured against the documented RPO/RTO
+==========================================================
+
+Base commit for this card: 939cdd9782f9fea26ac8fa749329c2a8c8ee3cbc
+(P6-07: retention, off-host rotation, and the unwritable-directory failure gap)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope
+-------------------------------------------------------------------
+
+Spec section 15's seven-step restore procedure and PA-005's targets
+(RPO <= 24h, demonstrated RTO <= 15 min to VERIFIED state), promoted from
+P1-18's one-off manual rehearsal (evidence/phase-1/p1-18-restore-log.txt) to
+a real, automated, committed proof. P1-18 already built RestoreCommand
+(privilege preflight, restore, table/row verification, local log) and the
+MaintenanceController enter/release workflow; this card closes what was
+still missing:
+
+  - An automated end-to-end restore, timed, verified by DATA rather than
+    file existence.
+  - The elapsed time compared against the 15-minute target explicitly.
+  - The real maintenance-mode workflow driving a real restore, with the
+    completed restore event recorded after verification.
+  - The restored copy's ledger reconciling (ADR-021).
+  - A checksum-mismatch refusal, watched fail - RestoreCommand had NO
+    checksum check of any kind before this card.
+
+-------------------------------------------------------------------
+2. Why restores in this card target an isolated scratch schema
+-------------------------------------------------------------------
+
+merch_migrator's grant (db/grants/0001_accounts-and-grants.sql) is scoped to
+the literal `merchandising` schema - it cannot CREATE DATABASE. P1-18 already
+discovered that a --databases dump's own CREATE DATABASE/USE lines override
+any --database= redirect (evidence/phase-1/p1-18-restore-log.txt, section 1),
+and that this system's own restore history includes a real defect where a
+restore that failed partway destroyed a live table (0006_restore-grants.sql:
+the LOCK TABLES gap that once dropped `auditlogs`). Running a real,
+automated, every-commit restore against the LIVE `merchandising` schema -
+which 500+ other integration tests in this suite also depend on - would
+reintroduce exactly that blast radius.
+
+db/grants/0015_restore-rehearsal-grants.sql (run once, as root, like every
+other file in that directory - this is environment setup, not application
+use of root, and does not reopen CLAUDE.md section 6.1's "root used by no
+application, ever") creates one throwaway schema, `merchandising_restoretest`,
+and grants merch_migrator DDL scoped to it alone. RestoreCommandTests runs
+entirely as merch_migrator - the real restore identity - never as root, so
+this proves that identity's grants are sufficient rather than sidestepping
+the question the way a root-run rehearsal would.
+
+Applied on this machine:
+
+    mysql> SHOW GRANTS FOR 'merch_migrator'@'localhost';
+    GRANT USAGE ON *.* TO `merch_migrator`@`localhost` ...
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER, LOCK TABLES
+        ON `merchandising`.* TO `merch_migrator`@`localhost`
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER, LOCK TABLES
+        ON `merchandising_restoretest`.* TO `merch_migrator`@`localhost`
+
+-------------------------------------------------------------------
+3. What was built/changed
+-------------------------------------------------------------------
+
+  - db/grants/0015_restore-rehearsal-grants.sql (NEW)
+      Creates `merchandising_restoretest` and grants merch_migrator DDL on
+      it alone. See section 2.
+
+  - src/Merchandising.Maintenance/Restore/RestoreCommand.vb
+      New checksum preflight, added before the existing privilege preflight:
+      looks up the Sha256 BackupCommand recorded in BackupLogs for the exact
+      dump path (queried against options.Database - the database that
+      actually recorded the backup, never the possibly-redirected restore
+      target), recomputes the dump's actual checksum, and refuses - before
+      mysql.exe is invoked - if they disagree. A dump with no matching
+      BackupLogs row is NOT refused (unrecorded is not the same claim as
+      contradicted): this system must still be able to restore a dump taken
+      by another tool or moved off a decommissioned host.
+
+  - src/tests/Merchandising.Tests.Integration/RestoreCommandTests.vb (NEW)
+      - Backup_ThenRestore_EndToEnd_MeasuresRtoAndVerifiesData: a real
+        backup of the live database, restored end to end (as merch_migrator)
+        into merchandising_restoretest via a filtered copy of the dump (its
+        own CREATE DATABASE/USE lines stripped - see section 2). Asserts
+        Succeeded, zero missing tables, real user/product counts present,
+        the elapsed time measured against PA-005's 900-second target
+        explicitly, and - via LedgerReconciliation.FindDiscrepanciesAsync
+        (ADR-021) against the restored copy - that the ledger reconciles.
+      - Restore_WithMismatchedChecksum_RefusesBeforeTouchingAnything: takes
+        a real backup, corrupts the dump IN PLACE at the exact path
+        BackupLogs recorded, and asserts the restore refuses with a detail
+        naming the checksum mismatch - and that the scratch schema is still
+        completely empty afterward, proving the refusal happened before
+        anything was touched.
+
+  - src/tests/Merchandising.Tests.Integration/MaintenanceModeTests.vb
+      Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent
+      (NEW): drives the real HTTP pipeline through spec section 15's
+      procedure - a Super Admin enters maintenance (steps 1-2), a real
+      timed backup+restore runs into the isolated schema (steps 4-6, the
+      same mechanism RestoreCommandTests proves; not re-measured here),
+      and the release call carries a Detail describing what was verified
+      (step 7). The test then reads MaintenanceLocks back out by SQL rather
+      than trusting the 200 OK, confirming the completed restore event is
+      genuinely RECORDED, not merely accepted.
+
+-------------------------------------------------------------------
+4. Measured timing (real run on this machine)
+-------------------------------------------------------------------
+
+Backup_ThenRestore_EndToEnd_MeasuresRtoAndVerifiesData, against the real
+pinned MariaDB 10.4.32 and the real live `merchandising` database at its
+current size:
+
+    dump size        46,021,159 bytes  (~44 MB)
+    source db version  10.4.32-MariaDB
+    restore elapsed    7.17 seconds  (to VERIFIED state - the clock stops
+                                       after verification, not after the
+                                       data lands, same rule as P1-18)
+    users landed       969
+    products landed    8,676
+    balances landed    6,566
+    movements landed   16,136
+    audit rows landed  72,114
+
+Against PA-005's demonstrated target of <= 15 minutes (900 seconds) to
+verified state: 7.17s is 0.8% of the budget. The target is met with
+substantial margin at this database size.
+
+WHAT THIS DOES NOT COVER, stated as honestly as P1-18 stated it: stopping
+and restarting the API Windows Service, and the operator steps around them,
+are not part of this number. RestoreCommandTests measures the database
+portion of the recovery window (streaming the dump into mysql.exe, plus
+verification); Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent
+proves the surrounding maintenance-mode WORKFLOW is real end to end, but
+does not stop or restart the Windows Service either - that still needs an
+elevated session, the same boundary P1-18 recorded. The remaining risk to
+the 15-minute target lives entirely in service restart time and operator
+steps, not in the restore mechanism measured here.
+
+-------------------------------------------------------------------
+5. Test runs
+-------------------------------------------------------------------
+
+5a. Focused run, the three new tests:
+
+    dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+      -c Debug --no-build --filter "FullyQualifiedName~RestoreCommandTests|FullyQualifiedName~Restore_ThroughRealMaintenanceWorkflow"
+
+    Passed Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent [19 s]
+    Passed Backup_ThenRestore_EndToEnd_MeasuresRtoAndVerifiesData [21 s]
+    Passed Restore_WithMismatchedChecksum_RefusesBeforeTouchingAnything [12 s]
+    Passed!  - Failed: 0, Passed: 3, Skipped: 0, Total: 3
+
+5b. Full guardrails + unit + integration suite (pwsh ./scripts/run-tests.ps1):
+
+    === Guardrails ===
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+
+    All guardrails passed.
+
+    === Build ===
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+
+    === Unit tests ===
+    Passed!  - Failed:     0, Passed:   127, Skipped:     0, Total:   127, Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
+
+    === Integration tests (real MariaDB) ===
+    Passed!  - Failed:     0, Passed:   504, Skipped:     0, Total:   504, Duration: 5 m 17 s - Merchandising.Tests.Integration.dll (net10.0)
+
+    All checks passed.
+
+(504 = the 501 from P6-07's evidence plus this card's 3 new tests:
+Backup_ThenRestore_EndToEnd_MeasuresRtoAndVerifiesData,
+Restore_WithMismatchedChecksum_RefusesBeforeTouchingAnything, and
+Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent.)
+
+-------------------------------------------------------------------
+6. What this does NOT prove
+-------------------------------------------------------------------
+
+  - Service stop/restart timing (the remainder of the real recovery window)
+    is not measured here - it needs an elevated session, same boundary
+    P1-18 recorded and did not close either.
+  - This proves the RESTORE mechanism and the MAINTENANCE WORKFLOW
+    separately end to end, each against real infrastructure; it is not a
+    single combined rehearsal that stops the live Windows Service, restores
+    over the live database, and restarts it. That in-place rehearsal
+    remains `scripts/restore-rehearsal.ps1` (P1-18), still owed an elevated
+    session.
+  - The 7.17s figure is specific to this machine's current database size
+    (~44 MB dump, ~104,000 total rows across the five counted tables) and
+    to this host's disk/CPU. It will differ on the actual demo host.
+  - docs/backup-restore-guide.md (the operator-facing runbook) is P6-09, not
+    this card.
+
+-------------------------------------------------------------------
+7. Files changed
+-------------------------------------------------------------------
+
+    db/grants/0015_restore-rehearsal-grants.sql (new)
+    src/Merchandising.Maintenance/Restore/RestoreCommand.vb
+    src/tests/Merchandising.Tests.Integration/RestoreCommandTests.vb (new)
+    src/tests/Merchandising.Tests.Integration/MaintenanceModeTests.vb
+    tasks.md
+    evidence/phase-6/p6-08-restore-timed.txt (this file)

@@ -2,11 +2,14 @@ Imports System.IO
 Imports System.Net
 Imports System.Net.Http
 Imports System.Net.Http.Json
+Imports System.Text
 Imports System.Threading.Tasks
 Imports Merchandising.Contracts.Errors
 Imports Merchandising.Contracts.Auth
 Imports Merchandising.Contracts.Maintenance
 Imports Merchandising.Infrastructure.Data
+Imports Merchandising.Maintenance.Backup
+Imports Merchandising.Maintenance.Restore
 Imports Merchandising.Maintenance.Users
 Imports Microsoft.VisualStudio.TestTools.UnitTesting
 Imports MySqlConnector
@@ -308,6 +311,144 @@ Public Class MaintenanceModeTests
                     "No client-facing message was returned; clients would have nothing to display.")
             End Using
         End Using
+
+    End Function
+
+    ''' <summary>
+    ''' P6-08: spec section 15's seven-step procedure, exercised through the
+    ''' REAL workflow rather than asserted piecemeal - a Super Admin enters
+    ''' maintenance (steps 1-2), the operator runs the maintenance utility
+    ''' (steps 4-6, a real timed backup and restore into the isolated
+    ''' <c>merchandising_restoretest</c> schema - the restore mechanism
+    ''' itself, including the RTO measurement, is <see cref="RestoreCommandTests"/>'s
+    ''' job, not re-proven here), and the API records the completed restore
+    ''' event and releases maintenance only after verification (step 7).
+    ''' </summary>
+    ''' <remarks>
+    ''' "Recorded" means findable afterwards, not merely accepted: this test
+    ''' reads the release detail back out of <c>MaintenanceLocks</c> rather
+    ''' than trusting the 200 OK the release call returned.
+    ''' </remarks>
+    <TestMethod>
+    Public Async Function Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent() As Task
+
+        Await EnsureSuperAdminFixtureAsync()
+
+        Dim reason As String = "P6-08 restore rehearsal " & Guid.NewGuid().ToString("n").Substring(0, 8)
+        Dim workDirectory As String = Path.Combine(Path.GetTempPath(), "merch-restore-workflow-" & Guid.NewGuid().ToString("n"))
+        Directory.CreateDirectory(workDirectory)
+
+        Try
+
+            Using client As HttpClient = _factory.CreateClient()
+
+                Await AuthenticateAsync(client)
+
+                ' Steps 1-2: a Super Admin requests maintenance mode through
+                ' the authorized administrative workflow, with a reason.
+                Using enterResponse As HttpResponseMessage =
+                    Await client.PostAsJsonAsync("/api/v1/admin/maintenance/enter",
+                                                 New EnterMaintenanceRequest With {.Reason = reason})
+                    Assert.AreEqual(HttpStatusCode.OK, enterResponse.StatusCode,
+                        "Could not enter maintenance mode. Body: " & Await enterResponse.Content.ReadAsStringAsync())
+                End Using
+
+                ' Steps 4-6: the operator runs the maintenance utility with a
+                ' real backup file - a real timed backup and restore into the
+                ' isolated scratch schema, the same mechanism
+                ' RestoreCommandTests proves end to end.
+                Dim restoreResult As RestoreResult = Await RunBackupThenRestoreIntoScratchAsync(workDirectory)
+
+                Assert.IsTrue(restoreResult.Succeeded,
+                    $"The restore run during this maintenance window did not succeed. Detail: {restoreResult.Detail}")
+
+                ' Step 7: the completed restore event is recorded, and
+                ' maintenance is released only after verification succeeds.
+                Dim releaseDetail As String =
+                    $"P6-08 restore rehearsal verified: elapsed={restoreResult.ElapsedSeconds:F1}s " &
+                    $"users={restoreResult.UserCount} products={restoreResult.ProductCount} " &
+                    $"balances={restoreResult.StockBalanceCount} movements={restoreResult.StockMovementCount} " &
+                    $"audit={restoreResult.AuditLogCount}."
+
+                Using releaseResponse As HttpResponseMessage =
+                    Await client.PostAsJsonAsync("/api/v1/admin/maintenance/release",
+                                                 New ReleaseMaintenanceRequest With {.VerificationPassed = True,
+                                                                                     .Detail = releaseDetail})
+                    Assert.AreEqual(HttpStatusCode.OK, releaseResponse.StatusCode,
+                        "A verified release was refused. Body: " & Await releaseResponse.Content.ReadAsStringAsync())
+                End Using
+
+            End Using
+
+            ' The event is RECORDED, not merely accepted: read it back from
+            ' MaintenanceLocks rather than trusting the 200 OK above.
+            Using connection As MySqlConnection = Await _connectionFactory.CreateOpenConnectionAsync()
+                Using command As MySqlCommand = connection.CreateCommand()
+                    command.CommandText = "SELECT Detail FROM MaintenanceLocks WHERE Reason = @reason ORDER BY Id DESC LIMIT 1;"
+                    command.Parameters.AddWithValue("@reason", reason)
+                    Dim recordedDetail As String = CStr(Await command.ExecuteScalarAsync())
+                    StringAssert.Contains(recordedDetail, "elapsed=",
+                        "The completed restore event was not recorded in the release detail.")
+                End Using
+            End Using
+
+        Finally
+            If Directory.Exists(workDirectory) Then
+                Directory.Delete(workDirectory, recursive:=True)
+            End If
+        End Try
+
+    End Function
+
+    ''' <summary>
+    ''' Runs one real backup of the live database and restores it into the
+    ''' isolated <c>merchandising_restoretest</c> schema - never the live one.
+    ''' See <see cref="RestoreCommandTests"/>'s class remarks for why a
+    ''' filtered copy is required: a <c>--databases</c> dump's own
+    ''' <c>CREATE DATABASE</c>/<c>USE</c> lines override any <c>--database=</c>
+    ''' redirect otherwise.
+    ''' </summary>
+    Private Async Function RunBackupThenRestoreIntoScratchAsync(workDirectory As String) As Task(Of RestoreResult)
+
+        Const ScratchDatabaseName As String = "merchandising_restoretest"
+        Const MysqlDumpPath As String = "C:\xampp\mysql\bin\mysqldump.exe"
+        Const MysqlClientPath As String = "C:\xampp\mysql\bin\mysql.exe"
+
+        Dim backupOptions As DatabaseOptions = DatabaseOptionsLoader.Load(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "MerchandisingSystem", "config", "database.backup.json"))
+
+        Dim backupSettings As New BackupSettings With {.Directory = workDirectory, .RetentionCount = 99}
+
+        Dim backupResult As BackupResult =
+            Await BackupCommand.ExecuteAsync(backupOptions, backupSettings, MysqlDumpPath, Guid.NewGuid().ToString("d"))
+
+        If backupResult.Outcome = BackupOutcome.Failed Then
+            Assert.Fail($"The backup this workflow test depends on failed: {backupResult.Detail}")
+        End If
+
+        Dim filteredDumpPath As String = Path.Combine(workDirectory, "filtered-" & Path.GetFileName(backupResult.FilePath))
+
+        Using reader As New StreamReader(backupResult.FilePath)
+            Using writer As New StreamWriter(filteredDumpPath, append:=False, New UTF8Encoding(encoderShouldEmitUTF8Identifier:=False))
+                Dim line As String = reader.ReadLine()
+                While line IsNot Nothing
+                    If Not (line.StartsWith("CREATE DATABASE", StringComparison.OrdinalIgnoreCase) OrElse
+                            line.StartsWith("USE ", StringComparison.OrdinalIgnoreCase)) Then
+                        writer.WriteLine(line)
+                    End If
+                    line = reader.ReadLine()
+                End While
+            End Using
+        End Using
+
+        Dim migratorOptions As DatabaseOptions = DatabaseOptionsLoader.Load(
+            Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), "database.migrator.json"))
+
+        Return Await RestoreCommand.ExecuteAsync(
+            MysqlClientPath, migratorOptions, filteredDumpPath,
+            targetDatabase:=ScratchDatabaseName, logDirectory:=workDirectory)
 
     End Function
 

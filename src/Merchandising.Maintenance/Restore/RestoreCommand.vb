@@ -24,6 +24,14 @@
 ' releasing maintenance mode conditional on it. A restore command that
 ' reported success on "mysql.exe exited 0" would be making exactly the claim
 ' P1-17 was careful not to make about backups.
+'
+' CHECKSUM PREFLIGHT (P6-08). A dump whose bytes no longer match the Sha256
+' BackupCommand recorded for it in BackupLogs is refused before mysql.exe is
+' ever invoked - a corrupted or tampered dump must not be given the chance to
+' half-restore before anyone notices. A dump with no matching BackupLogs row
+' at all is NOT refused: that is "unrecorded", not "contradicted", and this
+' system must still be able to restore a dump taken by another tool or moved
+' off a decommissioned host.
 
 Imports System.Collections.Generic
 Imports System.Diagnostics
@@ -34,6 +42,7 @@ Imports System.Text
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
+Imports Merchandising.Maintenance.Migrations
 Imports MySqlConnector
 
 Namespace Restore
@@ -108,6 +117,36 @@ Namespace Restore
             ' the restore. "Restored" and "confirmed usable" are different
             ' claims, and PA-005's target is to a VERIFIED state.
             Dim clock As Stopwatch = Stopwatch.StartNew()
+
+            ' CHECKSUM PREFLIGHT (P6-08). Looked up against options.Database -
+            ' the database that actually recorded the backup - never the
+            ' (possibly redirected) restore target, so redirecting into an
+            ' isolated database cannot be used to dodge this check. A dump
+            ' with no matching BackupLogs row (taken by another tool, or
+            ' moved off a decommissioned host) has nothing recorded to
+            ' contradict, so it is not refused here - this check catches
+            ' TAMPERING OR CORRUPTION of a dump this system itself vouched
+            ' for, not the absence of a vouching record.
+            Dim recordedSha256 As String =
+                Await FindRecordedChecksumAsync(options, dumpPath, cancellationToken).ConfigureAwait(False)
+
+            If recordedSha256 IsNot Nothing Then
+
+                Dim actualSha256 As String = ChecksumCalculator.ComputeSha256Hex(dumpPath)
+
+                If Not String.Equals(recordedSha256, actualSha256, StringComparison.OrdinalIgnoreCase) Then
+                    clock.Stop()
+                    result.CompletedAtUtc = Date.UtcNow
+                    result.ElapsedSeconds = clock.Elapsed.TotalSeconds
+                    result.Detail =
+                        $"Refused before starting: the checksum BackupCommand recorded for '{dumpPath}' " &
+                        $"({recordedSha256}) does not match the file's current bytes ({actualSha256}). " &
+                        "The dump may be corrupted or tampered with. Nothing was changed."
+                    WriteMaintenanceLog(logDirectory, result)
+                    Return result
+                End If
+
+            End If
 
             ' PREFLIGHT, AND THE REASON IT EXISTS.
             ' A dump restores tables alphabetically and mysql.exe executes it
@@ -269,6 +308,35 @@ Namespace Restore
                         $"WARNING: could not delete temporary credential file '{defaultsFile}': {ex.Message}")
                 End Try
             End Try
+
+        End Function
+
+        ''' <summary>
+        ''' The Sha256 <c>BackupCommand</c> recorded for this exact file path,
+        ''' or Nothing if no <c>BackupLogs</c> row names it (or the row exists
+        ''' but never recorded a checksum, e.g. a failed run).
+        ''' </summary>
+        Private Shared Async Function FindRecordedChecksumAsync(
+            options As DatabaseOptions,
+            dumpPath As String,
+            cancellationToken As CancellationToken) As Task(Of String)
+
+            Dim factory As New ConnectionFactory(options)
+
+            Using connection As MySqlConnection = Await factory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+                Using command As MySqlCommand = connection.CreateCommand()
+
+                    command.CommandText =
+                        "SELECT Sha256 FROM BackupLogs " &
+                        "WHERE FilePath = @filePath AND Sha256 IS NOT NULL " &
+                        "ORDER BY Id DESC LIMIT 1;"
+                    command.Parameters.AddWithValue("@filePath", dumpPath)
+
+                    Dim value As Object = Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False)
+                    Return If(value Is Nothing OrElse value Is DBNull.Value, Nothing, CStr(value))
+
+                End Using
+            End Using
 
         End Function
 

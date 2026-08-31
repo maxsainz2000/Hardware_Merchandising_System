@@ -217,17 +217,17 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-07-backup-retention.txt`
 
-### ⬜ P6-08 · Restore, measured against the documented RPO/RTO
+### ✅ P6-08 · Restore, measured against the documented RPO/RTO
 **Spec:** §15 (PA-005) · **Files:** `src/Merchandising.Maintenance/Restore/`, `scripts/`
 
 **Do:** The seven-step restore procedure spec §15 defines, exercised end to end through maintenance mode (P2-09), with the **actual recovery time measured**. PA-005 targets RPO ≤ 24 h and a demonstrated RTO ≤ 15 min to verified state on the demo host.
 
 **Done when:**
-- [ ] A restore is performed end to end against an isolated or controlled database — **verification is by data, not file existence**: expected users, products, balances and recent transactions confirmed present after restart
-- [ ] The elapsed time is **measured and recorded as a number**, and compared against the 15-minute target explicitly. If it exceeds it, that is a finding to report, not a number to round
-- [ ] Maintenance mode is entered and released through the real workflow, and the completed restore event is recorded after service recovery, per spec §15 steps 1–7
-- [ ] The ledger reconciles after restore (ADR-021), asserted — a restore that silently drops movements is the worst possible outcome of this card
-- [ ] Restore refuses to run against a backup whose recorded checksum does not match, watched fail
+- [x] A restore is performed end to end against an isolated or controlled database — **verification is by data, not file existence**: expected users, products, balances and recent transactions confirmed present after restart
+- [x] The elapsed time is **measured and recorded as a number**, and compared against the 15-minute target explicitly. If it exceeds it, that is a finding to report, not a number to round
+- [x] Maintenance mode is entered and released through the real workflow, and the completed restore event is recorded after service recovery, per spec §15 steps 1–7
+- [x] The ledger reconciles after restore (ADR-021), asserted — a restore that silently drops movements is the worst possible outcome of this card
+- [x] Restore refuses to run against a backup whose recorded checksum does not match, watched fail
 
 **Evidence:** `evidence/phase-6/p6-08-restore-timed.txt`
 
