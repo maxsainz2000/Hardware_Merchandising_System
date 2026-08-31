@@ -1,10 +1,11 @@
 ' Merchandising.Maintenance.Program
 '
 ' CLI entry point for the maintenance utility. Wires up "migrate" (P1-06),
-' "create-user" (P1-08, account bootstrap - see CreateUserCommand.vb) and
-' "seed-demo" (P1-15, the one product the client spike decrements).
-' Backup/restore/schema-verification join them in later Phase 1/6 tasks per
-' spec section 7.
+' "create-user" (P1-08, account bootstrap - see CreateUserCommand.vb),
+' "seed-demo" (P1-15, the one product the client spike decrements), and
+' "reset-password"/"unlock-user" (P6-12, account recovery - see
+' ResetPasswordCommand.vb / UnlockUserCommand.vb). Backup/restore/
+' schema-verification join them in later Phase 1/6 tasks per spec section 7.
 
 Imports System
 Imports System.Globalization
@@ -80,6 +81,12 @@ Module Program
             Case "create-user"
                 Await RunCreateUserAsync(args)
 
+            Case "reset-password"
+                Await RunResetPasswordAsync(args)
+
+            Case "unlock-user"
+                Await RunUnlockUserAsync(args)
+
             Case "seed-demo"
                 Await RunSeedDemoAsync(args)
 
@@ -103,6 +110,8 @@ Module Program
     Private Sub PrintUsage()
         Console.Error.WriteLine("Usage: Merchandising.Maintenance.exe migrate [--config <path>] [--migrations-dir <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe create-user <username> <password> <role> [--config <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe reset-password <operator-username> <target-username> <new-password> [--config <path>]")
+        Console.Error.WriteLine("       Merchandising.Maintenance.exe unlock-user <operator-username> <target-username> [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe seed-demo <actor-username> [--sku <sku>] [--quantity <n>] [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe seed [--seed-file <path>] [--config <path>]")
         Console.Error.WriteLine("       Merchandising.Maintenance.exe backup [--config <path>] [--mysqldump <path>] [--directory <path>] [--retention <n>]")
@@ -506,6 +515,149 @@ Module Program
         Catch ex As MySqlException
 
             Console.Error.WriteLine($"create-user failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    ''' <summary>
+    ''' P6-12 / ADR-028: account recovery, half one. Sets a new password for
+    ''' an existing account through the same hashing path create-user uses.
+    ''' </summary>
+    Private Async Function RunResetPasswordAsync(args As String()) As Task
+
+        If args.Length < 4 Then
+            PrintUsage()
+            Environment.ExitCode = 1
+            Return
+        End If
+
+        Dim operatorUsername As String = args(1)
+        Dim targetUsername As String = args(2)
+        Dim newPassword As String = args(3)
+        Dim configPath As String = Nothing
+
+        Dim i As Integer = 4
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--config requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    configPath = args(i)
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        ' Same identity as "migrate"/"create-user" - resetting a password is
+        ' a host-side bootstrap operation, never something merch_api does for
+        ' itself (ADR-017 section 4: no Users HTTP surface exists).
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+            Dim factory As New ConnectionFactory(options)
+
+            Dim userId As Integer = Await ResetPasswordCommand.RunAsync(factory, operatorUsername, targetUsername, newPassword)
+
+            Console.WriteLine($"Password reset for user '{targetUsername}' (Id {userId}).")
+            Environment.ExitCode = 0
+
+        Catch ex As ResetPasswordCommandException
+
+            Console.Error.WriteLine($"reset-password failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        Catch ex As MySqlException
+
+            Console.Error.WriteLine($"reset-password failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        End Try
+
+    End Function
+
+    ''' <summary>
+    ''' P6-12 / ADR-028: account recovery, half two. Clears lockout state
+    ''' early rather than making an operator wait out
+    ''' AuthenticationPolicy.LockoutDuration.
+    ''' </summary>
+    Private Async Function RunUnlockUserAsync(args As String()) As Task
+
+        If args.Length < 3 Then
+            PrintUsage()
+            Environment.ExitCode = 1
+            Return
+        End If
+
+        Dim operatorUsername As String = args(1)
+        Dim targetUsername As String = args(2)
+        Dim configPath As String = Nothing
+
+        Dim i As Integer = 3
+        While i < args.Length
+
+            Select Case args(i)
+
+                Case "--config"
+                    i += 1
+                    If i >= args.Length Then
+                        Console.Error.WriteLine("--config requires a path argument.")
+                        Environment.ExitCode = 1
+                        Return
+                    End If
+                    configPath = args(i)
+
+                Case Else
+                    Console.Error.WriteLine($"Unrecognized argument '{args(i)}'.")
+                    Environment.ExitCode = 1
+                    Return
+
+            End Select
+
+            i += 1
+
+        End While
+
+        Dim resolvedConfigPath As String =
+            If(configPath,
+               Path.Combine(Path.GetDirectoryName(DatabaseOptionsLoader.DefaultConfigPath), MigratorConfigFileName))
+
+        Try
+
+            Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(resolvedConfigPath)
+            Dim factory As New ConnectionFactory(options)
+
+            Dim userId As Integer = Await UnlockUserCommand.RunAsync(factory, operatorUsername, targetUsername)
+
+            Console.WriteLine($"Unlocked user '{targetUsername}' (Id {userId}).")
+            Environment.ExitCode = 0
+
+        Catch ex As UnlockUserCommandException
+
+            Console.Error.WriteLine($"unlock-user failed: {ex.Message}")
+            Environment.ExitCode = 1
+
+        Catch ex As MySqlException
+
+            Console.Error.WriteLine($"unlock-user failed: {ex.Message}")
             Environment.ExitCode = 1
 
         End Try

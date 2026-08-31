@@ -1,9 +1,11 @@
 ' Merchandising.Infrastructure.Data.UserRepository
 '
 ' Reads and writes Users, plus the lockout state added at P1-08
-' (FailedLoginAttempts, LockedUntilUtc). Every method takes an already-open
-' MySqlConnection rather than owning one, matching MigrationRunner's shape -
-' callers control the connection lifetime and any surrounding transaction.
+' (FailedLoginAttempts, LockedUntilUtc) and the password-hash update added at
+' P6-12 for the Maintenance CLI's reset-password/unlock-user commands. Every
+' method takes an already-open MySqlConnection rather than owning one,
+' matching MigrationRunner's shape - callers control the connection lifetime
+' and any surrounding transaction.
 
 Imports Merchandising.Domain.Entities
 Imports Merchandising.Domain.Security
@@ -124,14 +126,28 @@ Namespace Data
         End Function
 
         ''' <summary>
-        ''' Resets lockout state after a successful login.
+        ''' Resets lockout state after a successful login, or (P6-12) as the
+        ''' effect of the Maintenance CLI's <c>unlock-user</c> command.
         ''' </summary>
+        ''' <param name="transaction">
+        ''' Optional, added at P6-12 so <c>UnlockUserCommand</c> can commit
+        ''' this update and its AuditLogs row atomically - the same reason
+        ''' <see cref="AuditLogWriter.WriteAsync"/> carries the identical
+        ''' parameter (P1-11). Nothing (the default) keeps every pre-existing
+        ''' call site - AuthService's post-login reset - unchanged: it runs
+        ''' outside any explicit transaction, exactly as before this
+        ''' parameter existed.
+        ''' </param>
         Public Shared Async Function RecordSuccessfulLoginAsync(
             connection As MySqlConnection,
             userId As Integer,
-            Optional cancellationToken As CancellationToken = Nothing) As Task
+            Optional cancellationToken As CancellationToken = Nothing,
+            Optional transaction As MySqlTransaction = Nothing) As Task
 
             Using command As MySqlCommand = connection.CreateCommand()
+                If transaction IsNot Nothing Then
+                    command.Transaction = transaction
+                End If
                 command.CommandText =
                     "UPDATE Users " &
                     "   SET FailedLoginAttempts = 0, " &
@@ -141,6 +157,37 @@ Namespace Data
                 command.Parameters.AddWithValue("@userId", userId)
 
                 Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Sets a new password hash for an existing account - the Maintenance
+        ''' CLI's <c>reset-password</c> command (P6-12). The caller hashes the
+        ''' new password through the same <c>PasswordHashingService</c>
+        ''' <c>create-user</c> already uses; this method only persists the
+        ''' result. Runs inside <paramref name="transaction"/> so the update
+        ''' and the caller's AuditLogs row commit or roll back together.
+        ''' </summary>
+        ''' <returns>The number of rows affected - callers verify this is 1.</returns>
+        Public Shared Async Function UpdatePasswordHashAsync(
+            connection As MySqlConnection,
+            transaction As MySqlTransaction,
+            userId As Integer,
+            passwordHash As String,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of Integer)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.Transaction = transaction
+                command.CommandText =
+                    "UPDATE Users " &
+                    "   SET PasswordHash = @passwordHash, " &
+                    "       UpdatedAtUtc = UTC_TIMESTAMP(6) " &
+                    " WHERE Id = @userId;"
+                command.Parameters.AddWithValue("@passwordHash", passwordHash)
+                command.Parameters.AddWithValue("@userId", userId)
+
+                Return Await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(False)
             End Using
 
         End Function

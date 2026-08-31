@@ -284,18 +284,18 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 *Files disjoint from Track D's backup subdirectories. Carried since Phase 2 — this is its fourth carry and its last.*
 
-### ⬜ P6-12 · `reset-password` and `unlock-user` on the Maintenance CLI — **CARRY-01**
+### ✅ P6-12 · `reset-password` and `unlock-user` on the Maintenance CLI — **CARRY-01, closed**
 **Spec:** §23 (G-19) · **Decides:** ADR-028 · **Files:** `src/Merchandising.Maintenance/Users/`, `docs/user-guide.md`
 
 **Do:** Spec §23's G-19 remediation names *account recovery* among seven components; six are proven. Lockout self-recovers (`LockedUntilUtc` = now + 15 min), but **a forgotten password has no route at all**. ADR-017 §4 puts user management on this CLI, and the CLI has `create-user` with neither `reset-password` nor `unlock-user`. **Surfaced at the Phase 2 gate and carried through 2 → 3 → 4 → 5.** A classmate who forgets a password on demo day currently has no way back in.
 
 **Done when:**
-- [ ] `reset-password` sets a new password through the same hashing path `create-user` uses — never a second implementation, and never a plaintext column
-- [ ] `unlock-user` clears `LockedUntilUtc` and the failed-attempt counter, and is distinct from `reset-password` because the two failures are different
-- [ ] Both write an `AuditLogs` row naming the operator and the target account — an out-of-band credential change that leaves no trace is worse than no feature
-- [ ] Both run **only** as the maintenance identity on the host, never through an API route — asserted by confirming no route reaches them
-- [ ] The user guide documents both, in the words an operator would search for ("forgot password", "locked out")
-- [ ] ADR-028 records why recovery is CLI-only and what that costs on demo day
+- [x] `reset-password` sets a new password through the same hashing path `create-user` uses — never a second implementation, and never a plaintext column
+- [x] `unlock-user` clears `LockedUntilUtc` and the failed-attempt counter, and is distinct from `reset-password` because the two failures are different
+- [x] Both write an `AuditLogs` row naming the operator and the target account — an out-of-band credential change that leaves no trace is worse than no feature
+- [x] Both run **only** as the maintenance identity on the host, never through an API route — asserted by confirming no route reaches them
+- [x] The user guide documents both, in the words an operator would search for ("forgot password", "locked out")
+- [x] ADR-028 records why recovery is CLI-only and what that costs on demo day
 
 **Evidence:** `evidence/phase-6/p6-12-account-recovery.txt`
 

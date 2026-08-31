@@ -1,0 +1,178 @@
+P6-12 / CARRY-01 — reset-password and unlock-user on the Maintenance CLI
+==========================================================================
+Spec section 23 (gap register row G-19, "account recovery"). Decides ADR-028. Surfaced
+at the Phase 2 gate and carried through Phases 2 -> 3 -> 4 -> 5; closed here.
+Machine: this laptop, doubling as MERCH-HOST (API service already running at
+https://127.0.0.1:8443, published before this task).
+
+DONE-WHEN BOXES, MAPPED TO PROOF
+---------------------------------
+1. reset-password sets a new password through the same hashing path create-user
+   uses, never a second implementation, never a plaintext column.
+   -> ResetPasswordCommand.vb calls the SAME Merchandising.Infrastructure.Security.
+      PasswordHashingService.HashPassword CreateUserCommand.vb already calls.
+      Proven live in PART 2 below (old password rejected, new password accepted)
+      and by AccountRecoveryTests.ResetPassword_ValidTarget_ChangesPasswordAndAuditsIt.
+
+2. unlock-user clears LockedUntilUtc and the failed-attempt counter, distinct from
+   reset-password because the two failures are different.
+   -> UnlockUserCommand.vb reuses UserRepository.RecordSuccessfulLoginAsync's existing
+      clear-lockout UPDATE (given an Optional transaction parameter, P1-11's own
+      pattern) rather than a second copy of that SQL. Proven live in PART 2 (a real
+      423-locked account, unlocked, login succeeds again) and by
+      AccountRecoveryTests.UnlockUser_LockedAccount_ClearsLockoutAndAuditsIt.
+
+3. Both write an AuditLogs row naming the operator and the target account.
+   -> Proven live in PART 2 by querying AuditLogs directly after both commands ran
+      against real accounts, and by AccountRecoveryTests' before/after audit-count
+      deltas (ResetPassword_ValidTarget_ChangesPasswordAndAuditsIt,
+      UnlockUser_LockedAccount_ClearsLockoutAndAuditsIt).
+
+4. Both run ONLY as the maintenance identity on the host, never through an API route
+   - asserted by confirming no route reaches them.
+   -> AccountRecoveryTests.NoHttpRoute_ReachesResetPasswordOrUnlockUser enumerates
+      every ControllerActionDescriptor in the API assembly (18 controllers) and fails
+      if any action name or route template names either command, or if a
+      UsersController exists at all. Passes because there is no such controller
+      (ADR-017 section 4).
+
+5. The user guide documents both, in the words an operator would search for
+   ("forgot password", "locked out").
+   -> docs/user-guide.md, section "Account recovery", subsections "I forgot my
+      password" and "My account is locked out" (those exact phrases, as headings).
+
+6. ADR-028 records why recovery is CLI-only and what that costs on demo day.
+   -> docs/adr.md, ADR-028 (inserted before "Template for new entries").
+
+
+PART 1 — guardrails and the full suite
+=======================================
+
+1. GUARDRAILS (pwsh ./scripts/check-no-csharp.ps1)
+---------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+2. FULL SUITE (pwsh ./scripts/run-tests.ps1)
+---------------------------------------------
+=== Guardrails ===   All guardrails passed.
+=== Build ===         Build succeeded. 0 Error(s), 1 pre-existing unrelated warning
+                       (MSTEST0037 in CsvExporterTests.vb, not touched by this card).
+=== Unit tests ===     Passed! Failed: 0, Passed: 133, Skipped: 0, Total: 133
+=== Integration tests (real MariaDB) ===
+                       Passed! Failed: 0, Passed: 512, Skipped: 0, Total: 512,
+                       Duration: 5 m 13 s
+All checks passed.
+
+512 = the 505 recorded at P6-10/ADR-027 plus this card's own 7 new
+AccountRecoveryTests methods.
+
+3. AccountRecoveryTests IN ISOLATION (dotnet test --filter FullyQualifiedName~AccountRecoveryTests)
+-----------------------------------------------------------------------------------------------------
+  Passed ResetPassword_ValidTarget_ChangesPasswordAndAuditsIt [741 ms]
+  Passed ResetPassword_UnknownTarget_ThrowsResetPasswordCommandException [157 ms]
+  Passed ResetPassword_UnknownOperator_ThrowsResetPasswordCommandException [151 ms]
+  Passed UnlockUser_LockedAccount_ClearsLockoutAndAuditsIt [216 ms]
+  Passed UnlockUser_AlreadyUnlockedAccount_SucceedsAndAuditsIt [88 ms]
+  Passed UnlockUser_UnknownTarget_ThrowsUnlockUserCommandException [81 ms]
+  Passed NoHttpRoute_ReachesResetPasswordOrUnlockUser [376 ms]
+
+Test Run Successful. Total tests: 7, Passed: 7
+
+
+PART 2 — real, watched proof against the running API and MariaDB (not the test harness)
+==========================================================================================
+Two throwaway accounts created via the CLI's own create-user, exactly as an operator
+would on demo day:
+
+  $ Merchandising.Maintenance.exe create-user p6_12_demo_operator "P6-12 Demo Passw0rd!" SuperAdmin
+  Created user 'p6_12_demo_operator' (Id 20490) with role 'SuperAdmin'.
+  $ Merchandising.Maintenance.exe create-user p6_12_demo_target "P6-12 Demo Passw0rd!" Cashier
+  Created user 'p6_12_demo_target' (Id 20491) with role 'Cashier'.
+
+--- Lockout half: real 5-bad-password lockout against the live API, then unlock-user ---
+
+  $ for i in 1 2 3 4 5; do curl -X POST https://127.0.0.1:8443/api/v1/auth/login \
+      -d '{"username":"p6_12_demo_target","password":"WrongPassword!"}'; done
+   [http 401]
+   [http 401]
+   [http 401]
+   [http 401]
+   [http 423]                          <- crosses AuthenticationPolicy.MaxFailedLoginAttempts
+
+  $ curl -X POST .../auth/login -d '{"username":"p6_12_demo_target","password":"P6-12 Demo Passw0rd!"}'
+  {"errorCode":"ACCOUNT_LOCKED","message":"This account is temporarily locked after too
+  many failed sign-in attempts. Try again later.", ...}
+  [http 423]                           <- CORRECT password still rejected while locked
+
+  $ Merchandising.Maintenance.exe unlock-user p6_12_no_such_operator p6_12_demo_target
+  unlock-user failed: No operator account named 'p6_12_no_such_operator'.
+                                        <- controlled failure, unknown operator refused
+
+  $ Merchandising.Maintenance.exe unlock-user p6_12_demo_operator p6_12_demo_target
+  Unlocked user 'p6_12_demo_target' (Id 20491).
+
+  $ curl -X POST .../auth/login -d '{"username":"p6_12_demo_target","password":"P6-12 Demo Passw0rd!"}'
+  {"token":"Ih1KGKJ8...","expiresAtUtc":"2026-08-31T17:27:51...","username":"p6_12_demo_target",
+   "roles":["Cashier"]}
+  [http 200]                           <- correct password works again, unaided by any wait
+
+--- Password half: reset-password against the live API ---
+
+  $ Merchandising.Maintenance.exe reset-password p6_12_demo_operator p6_12_no_such_target "New Passw0rd!"
+  reset-password failed: No user named 'p6_12_no_such_target'.
+                                        <- controlled failure, unknown target refused
+
+  $ Merchandising.Maintenance.exe reset-password p6_12_demo_operator p6_12_demo_target "P6-12 Demo NEW Passw0rd!"
+  Password reset for user 'p6_12_demo_target' (Id 20491).
+
+  $ curl -X POST .../auth/login -d '{"username":"p6_12_demo_target","password":"P6-12 Demo Passw0rd!"}'
+  {"errorCode":"INVALID_CREDENTIALS", ...}
+  [http 401]                           <- OLD password now rejected, not a second credential
+
+  $ curl -X POST .../auth/login -d '{"username":"p6_12_demo_target","password":"P6-12 Demo NEW Passw0rd!"}'
+  {"token":"KRjc2_fy...","expiresAtUtc":"2026-08-31T17:28:00...","username":"p6_12_demo_target",
+   "roles":["Cashier"]}
+  [http 200]                           <- NEW password accepted
+
+--- AuditLogs, queried directly (mysql.exe, real database, not the test harness) ---
+
+  SELECT a.ActorUserId, u.Username AS Actor, a.Action, a.Target, a.Result, a.Detail, a.CreatedAtUtc
+  FROM merchandising.AuditLogs a JOIN merchandising.Users u ON u.Id = a.ActorUserId
+  WHERE a.Action IN ('ResetPassword','UnlockUser') AND a.Target = 'p6_12_demo_target'
+  ORDER BY a.Id;
+
+  ActorUserId  Actor                Action         Target               Result   Detail                                                                                                              CreatedAtUtc
+  20490        p6_12_demo_operator  UnlockUser     p6_12_demo_target    Success  Account unlocked for 'p6_12_demo_target' by operator 'p6_12_demo_operator' (was locked until 2026-08-31T09:42:41..., 5 failed attempts).   2026-08-31 09:27:50.901200
+  20490        p6_12_demo_operator  ResetPassword  p6_12_demo_target    Success  Password reset for 'p6_12_demo_target' by operator 'p6_12_demo_operator'.                                            2026-08-31 09:27:59.938080
+
+Both rows name the real operator (ActorUserId resolves to p6_12_demo_operator, not the
+target) and the real target, contain no password of any kind in Detail, and are
+append-only by grant (CLAUDE.md section 5) - the same guarantee every other AuditLogs
+row in this system carries.
+
+A REAL MISTAKE MADE WHILE CAPTURING THIS EVIDENCE, RECORDED RATHER THAN QUIETLY FIXED
+-----------------------------------------------------------------------------------------
+The plan was to delete both throwaway demo accounts after capturing their transcript,
+the same disposable-fixture cleanup SeedCommandTests already uses for its own fixture
+rows. That plan was wrong for these two specifically: by the time cleanup ran, both
+accounts were named as ActorUserId on real AuditLogs rows (the ResetPassword/UnlockUser
+rows above), and AuditLogs is append-only with a foreign key to Users - deleting the
+Users row would require deleting the audit trail first, which CLAUDE.md section 5
+forbids outright. The DELETE statements for UserRoles and Sessions had already run
+(autocommit, no wrapping transaction) before the Users DELETE failed on the foreign-key
+constraint, leaving both accounts orphaned - present in Users, absent from UserRoles.
+Fixed by re-inserting the same role assignment each account was given at creation
+(UserId 20490 -> RoleId 1 SuperAdmin, UserId 20491 -> RoleId 5 Cashier), confirmed by
+re-querying UserRoles joined to Roles. Both accounts now stay as permanent rows, the
+same category AuthenticationTests' and AuthorizationMatrixTests' own fixture accounts
+already occupy for the identical reason - this is the same lesson those suites'
+comments already state, re-learned by hand rather than read: "AuditLogs.ActorUserId is
+a foreign key to Users, and AuditLogs is append-only - a test/demo account is never
+scratch data to delete." The automated suite's own fixtures (p6_12_fixture_operator,
+p6_12_fixture_target, created idempotently by AccountRecoveryTests.SetUpAsync) were
+never at risk - only these two manually-created demo accounts.

@@ -1259,6 +1259,38 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-028 · Account recovery stays CLI-only, and what that costs on demo day
+
+**Status:** ACCEPTED
+**Date:** 2026-08-31
+**Decides:** how a forgotten password and an early lockout clear are recovered — spec §9's "Super Admin recovery procedure must be documented and tested without directly editing production transactional data" (G-19) — given lockout already self-recovers after 15 minutes but a forgotten password had no route at all. CARRY-01, surfaced at the Phase 2 gate and carried through Phases 2 → 3 → 4 → 5. Settled at P6-12, Track F.
+
+**Decision.**
+
+1. **Two new Maintenance CLI commands, `reset-password` and `unlock-user`, both merch_migrator-identity, both host-only — no HTTP route added.** ADR-017 §4 already decided user/role management gets no HTTP policy at all ("accounts are created exclusively through the `Merchandising.Maintenance` CLI's `create-user`, never over HTTP... A future card that adds a Users HTTP surface adds its own policy and reargues this note"). This card is that reasoning applied a second time rather than reopened: recovery is two more verbs on the same CLI, not a new surface. `AccountRecoveryTests.NoHttpRoute_ReachesResetPasswordOrUnlockUser` asserts this mechanically — it enumerates every `ControllerActionDescriptor` in the API assembly and fails if any action name or route template names either command, and separately fails if a `UsersController` exists at all.
+2. **`reset-password` hashes through the exact same `PasswordHashingService.HashPassword` call `create-user` already uses — never a second hashing implementation, never a plaintext column.** The command only adds a new `UserRepository.UpdatePasswordHashAsync`, a plain conditional `UPDATE ... WHERE Id = @userId`.
+3. **`unlock-user` reuses `UserRepository.RecordSuccessfulLoginAsync`'s existing clear-lockout `UPDATE`** (`FailedLoginAttempts = 0, LockedUntilUtc = NULL`) rather than writing a second copy of that statement, by giving it an `Optional transaction` parameter — the same shape `AuditLogWriter.WriteAsync` already carries for the identical reason (P1-11). It is distinct from `reset-password` because the two failures are genuinely different: a locked-out account still has a perfectly good password, and a forgotten password does not by itself imply a lock. Running `unlock-user` against an already-unlocked account is a no-op that still succeeds and still audits — there is no reason to make an operator check state first.
+4. **Both commands take an *operator* username, resolved to a real `Users.Id` and never optional.** The operator is the person running the CLI, not the account being recovered — the two are different identities, unlike `AuthService`'s own audit calls where actor and target coincide. An unresolvable operator username fails loudly (`ResetPasswordCommandException` / `UnlockUserCommandException`) rather than falling back to a null actor, because an audit row that cannot name who made an out-of-band credential change is worse than refusing the change. This mirrors `SeedDemoCommand`'s existing actor-resolution requirement ("every movement names who caused it").
+5. **Both write an `AuditLogs` row inside the same transaction as their `UPDATE`** — `Action` = `"ResetPassword"` / `"UnlockUser"`, `Target` = the target account's username (matching `AuthService`'s own `LoginFailed`/`AccountLocked`/`LoginSucceeded` convention, not `SeedDemoCommand`'s `"Product:{id}"` shape — the closer precedent here is another user-identity audit row, not a stock movement), `ActorUserId` = the operator's `Users.Id`, detail text naming both usernames and, for `unlock-user`, the prior lock state. Never the password itself, in either direction.
+6. **Nothing verifies the operator holds any particular role.** The CLI has no session and no policy engine to check one against — the control is host access to `merch_migrator`'s configuration file, the same boundary `create-user` has always relied on. Spec §9's "Super Admin recovery procedure" reads as a *procedural* expectation (who is supposed to run this), not a mechanism this command can enforce; enforcing it would require the CLI to authenticate its own operator, which is a materially larger feature this card's done-when boxes did not ask for and Phase 6 does not need.
+
+**Reasoning.**
+
+- **A second HTTP surface for the same recovery actions was the obvious alternative and was rejected for the same reason ADR-017 §4 already gave.** Two paths to the same effect — one gated by ASP.NET Core policy, one gated only by host access — would mean the CLI path always exists as an unpoliced bypass of whatever the HTTP path enforces, so the HTTP path buys no real safety, only the appearance of it. One path, plainly documented as host-only, is honest about where the actual boundary is.
+- **Reusing the exact hashing call and the exact lockout-clear `UPDATE`** is what makes "never a second implementation" true by construction rather than by review discipline — a future change to either mechanism (a rehash-on-verify policy, a different lockout window) only has one place to change.
+- **The cost, recorded because the card asked for it plainly.** On demo day, a classmate who is locked out or has forgotten a password cannot recover on their own from their own laptop — someone with host access has to run one of these two commands. There is no email reset, no SMS code, no self-service flow of any kind, and the guide (`docs/user-guide.md` §"Account recovery") says so in those words rather than implying a convenience that does not exist.
+
+**Rejected.**
+
+- **A `POST /api/v1/users/{id}/reset-password` endpoint gated by a new `Users.ManageAccounts` policy.** Exactly the "design for a hypothetical future requirement" `CLAUDE.md` and ADR-017 §4 both rule out — spec §13's API-area table has no Users row, and adding one now, for a card whose actual ask is "give the CLI two more verbs", would be scope creep the card never asked for.
+- **A single combined `recover-account` command that does both a password reset and an unlock.** The card's own done-when boxes require the two to stay distinct "because the two failures are different" — a combined command would force every password reset to also silently clear a lock (or vice versa) regardless of whether the operator meant that, hiding one effect inside another.
+- **Falling back to `ActorUserId = NULL` when the operator username does not resolve**, so the command "succeeds anyway" and only the detail text names them. Rejected because `AuditLogs.ActorUserId` existing specifically to answer "who did this" is the entire point of G-19's audit requirement; a row that cannot answer that for an out-of-band credential change is a worse outcome than the command refusing to run.
+- **Checking the operator's role against `RoleNames.SuperAdmin`/`Admin` before proceeding.** The CLI has no authenticated session to check a role against in the first place — inventing one (a login prompt, a second credential) is a materially larger feature than this card's done-when boxes ask for, and it would still be enforced only by the same host-access boundary underneath it, so it adds ceremony without adding a real second control.
+
+**Evidence.** `evidence/phase-6/p6-12-account-recovery.txt`.
+
+---
+
 ## Template for new entries
 
 ```markdown
