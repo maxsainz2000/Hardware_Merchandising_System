@@ -263,11 +263,11 @@ Public NotInheritable Class UserGuideDocumentationTests
 
             Dim text As String = File.ReadAllText(filePath)
 
-            Assert.IsFalse(text.Contains("Names.AuditReview"),
+            Assert.DoesNotContain("Names.AuditReview", text,
                 $"'{Path.GetFileName(filePath)}' now references PolicyRegistry.Names.AuditReview - " &
                 "docs/user-guide.md section 8 claims this policy has no consuming endpoint; update the document, this test, and section 8's known-gap wording together.")
 
-            Assert.IsFalse(text.Contains("Names.ReceivingPrepare"),
+            Assert.DoesNotContain("Names.ReceivingPrepare", text,
                 $"'{Path.GetFileName(filePath)}' now references PolicyRegistry.Names.ReceivingPrepare - " &
                 "docs/user-guide.md section 6.2 claims this policy has no consuming endpoint; update the document and this test together.")
 

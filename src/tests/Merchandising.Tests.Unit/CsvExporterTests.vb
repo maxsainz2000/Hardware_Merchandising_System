@@ -391,8 +391,8 @@ Public Class CsvExporterTests
 
             Next
 
-            Assert.AreEqual(
-                viewRoutes.Count, exportRoutes.Count,
+            Assert.HasCount(
+                viewRoutes.Count, exportRoutes,
                 $"{controllerType.Name}: expected exactly one CSV export route per JSON view route.")
 
             For Each pair As KeyValuePair(Of String, MethodInfo) In viewRoutes
