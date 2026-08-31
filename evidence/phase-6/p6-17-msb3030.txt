@@ -1,0 +1,264 @@
+P6-17 - MSB3030 under deep build paths (CARRY-04, second sighting met).
+
+Captured 2026-08-31 on this workstation (box1). Base commit before this card:
+a791d88 (P6-15: docs/user-guide.md written in full).
+
+===============================================================================
+0. What this card built
+===============================================================================
+
+CARRY-04 was a watch item since the Phase 3 gate: a single MSB3030 "Could not
+copy ... because it was not found" on a runtimeconfig.json copy, seen once,
+not reproduced across eleven further clean-clone builds, filed as "raise a
+card only on a second sighting." The Phase 5 gate met that threshold under
+that session's own deep AppData\Local\Temp\claude scratchpad path (9/9
+failures) and additionally confirmed the referenced file was present on disk
+at the moment the copy claimed it missing - ruling out the original "the
+generating task had not run yet" theory, but leaving the actual mechanism
+unnamed. This card names it, confirms it by controlled test, and closes it
+with a guard rather than a machine-wide fix. No spec section is cited on the
+card; this is a build-tooling defect, not a business rule.
+
+===============================================================================
+1. Root cause, confirmed by controlled test
+===============================================================================
+
+MECHANISM: Windows' classic 260-character MAX_PATH limit on the Win32 file
+APIs MSBuild's Copy task still uses, on a machine where
+HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled is 0 (long
+path support off - the ordinary state of a fresh Windows install, confirmed
+on this machine):
+
+  Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem
+    -Name LongPathsEnabled
+    -> LongPathsEnabled : 0
+
+THREE clones were built, at the same commit (a791d88), to isolate the
+variable:
+
+  Location                                    Root chars  Result
+  ------------------------------------------  ----------  ------------------
+  AppData\Local\Temp\claude\...\p6-17-deep\    159         MSB3030, 1st try
+  Temp\claude\p6-17-shortprobe\repo            62          Clean, 1st try
+  Documents\cc-p6-17-shallow\repo              46          Clean, 1st try
+
+The deep clone (159-char root) failed on the FIRST attempt with:
+
+  error MSB3030: Could not copy the file "...\p6-17-deep\repo\src\
+  Merchandising.Procurement\bin\Debug\net10.0-windows\
+  Merchandising.Procurement.runtimeconfig.json" because it was not found.
+  [...\src\tests\Merchandising.Tests.Unit\Merchandising.Tests.Unit.vbproj]
+
+The exact source path MSBuild claimed missing was measured at that moment:
+
+  $src.Length -> 260
+  Test-Path $src -> True
+
+260 characters, confirmed present. This matches the Phase-5 finding's own
+"confirmed present on disk" observation and rules out "the generating task
+had not run yet" as the mechanism, exactly as that log already concluded -
+this card's contribution is naming what it is instead: the source path sits
+exactly at the classic MAX_PATH boundary, and the intended destination copy
+(inside Merchandising.Tests.Unit's own output) is 265 characters, further
+past it.
+
+THE CONTROLLED PART, not present in the Phase-5 finding: a second clone was
+made at Temp\claude\p6-17-shortprobe\repo - under the IDENTICAL
+AppData\Local\Temp\claude tree as the failing clone (same Windows Defender
+real-time-scanning scope, which the Phase-5 log named as its own best guess
+for the mechanism, explicitly unconfirmed: "most plausibly Windows Defender
+... though this was not directly instrumented"). Only the root's length
+changed - 62 characters instead of 159, giving a resulting source path of
+163 characters instead of 260. That clone built clean on the first attempt,
+zero errors. A third clone, outside Temp entirely (Documents\
+cc-p6-17-shallow\repo, 46-char root), also built clean.
+
+Holding the directory tree constant while shortening only the path length
+removed the failure. This is what turns "correlated and repeatable" into
+"path length is the mechanism, not merely something that happens to sit
+under Temp\claude" - the same tree, scanned by the same tools, produced
+opposite results purely as a function of path length.
+
+===============================================================================
+2. The coupling reviewed - three WinExe references, not two
+===============================================================================
+
+CARRY-04's carried wording (tasks.md, going into this card) read
+"Merchandising.Tests.Unit's references to two OutputType=WinExe projects
+reviewed." Reading Merchandising.Tests.Unit.vbproj directly found THREE:
+
+  <ProjectReference Include="..\..\Merchandising.Inventory\...vbproj" />     WinExe
+  <ProjectReference Include="..\..\Merchandising.Procurement\...vbproj" />   WinExe
+  <ProjectReference Include="..\..\Merchandising.POS\...vbproj" />          WinExe
+
+Merchandising.Tests.Integration.vbproj separately references
+Merchandising.Maintenance.vbproj (OutputType=Exe, not WinExe, but the same
+runtimeconfig-copy mechanism applies to any Exe-shaped OutputType).
+
+Each one's runtimeconfig.json is a copy-local item in the referencing test
+project's own output because referencing an executable project (rather than
+a library) pulls its runtime config along. The four measured suffixes, from
+repository root to the copied file's own destination path:
+
+  Project                     Suffix (destination side)   Length
+  ---------------------------------------------------------------
+  Merchandising.Procurement   \src\tests\Merchandising.Tests.Unit\
+                               bin\Debug\net10.0-windows\
+                               Merchandising.Procurement.runtimeconfig.json   106
+  Merchandising.Maintenance   \src\tests\Merchandising.Tests.Integration\
+                               bin\Debug\net10.0\
+                               Merchandising.Maintenance.runtimeconfig.json   105
+  Merchandising.Inventory     \src\tests\Merchandising.Tests.Unit\
+                               bin\Debug\net10.0-windows\
+                               Merchandising.Inventory.runtimeconfig.json     104
+  Merchandising.POS           \src\tests\Merchandising.Tests.Unit\
+                               bin\Debug\net10.0-windows\
+                               Merchandising.POS.runtimeconfig.json            98
+
+This session's reproduction (section 1) only ever reported Procurement,
+never Inventory, POS or Maintenance in the same run - consistent with, not
+contradicting, the Phase-5 log's report of three names (Procurement,
+Inventory, Maintenance) failing together in a different run: MSBuild's Copy
+task aborts its target after the first failed item in a batch rather than
+enumerating every remaining one, so which name is reported is a function of
+enumeration order on that run, not evidence that the others are safe.
+
+NOT done, and why: removing any of the three client references from
+Merchandising.Tests.Unit to shrink the copy set. ProcurementLayoutTests,
+InventoryLayoutTests and POSLayoutTests each reflect over that client's real
+MainWindow through this exact reference - removing one removes that client's
+layout test coverage, a materially larger regression than the marginal risk
+reduction (POS, the shortest suffix, was never the one observed to fail
+first anyway).
+
+===============================================================================
+3. The fix: a guard, not a registry change - and why
+===============================================================================
+
+scripts/run-tests.ps1 now checks, before it builds, whether the resolved
+repository root is long enough to be at risk AND long-path support is off:
+
+  $msb3030LongestKnownSuffix = 106   (Procurement's own suffix, the longest
+                                      of the four measured in section 2)
+  $msb3030SafeRootLength = 259 - 106 = 153
+
+If LongPathsEnabled != 1 and the root exceeds 153 characters, it prints a
+named warning before the Guardrails/Build steps run, citing docs/adr.md
+ADR-029 and stating the fix (build from a shorter path).
+
+WATCHED FIRE FOR THE RIGHT REASON, in the same run that produced the
+deep-path failure in section 1:
+
+  pwsh ./scripts/run-tests.ps1 -RepoRoot '...\p6-17-deep\repo' -SkipIntegration
+
+    === WARNING: this repository root may trigger MSB3030 ===
+    Root (159 chars): ...\p6-17-deep\repo
+    Long path support is OFF on this machine (LongPathsEnabled != 1) and this root
+    is long enough that a referenced project runtimeconfig.json copy can land at or
+    past Windows' 260-character MAX_PATH limit. If the build below fails with
+    MSB3030 'could not copy ... because it was not found' even though the file
+    exists, this is why - see docs/adr.md ADR-029. Fix: build from a shorter path,
+    outside AppData\Local\Temp.
+
+    === Guardrails ===
+    ... All guardrails passed.
+
+    === Build ===
+    ...
+    error MSB3030: Could not copy the file "...\Merchandising.Procurement.
+    runtimeconfig.json" because it was not found. [...\Merchandising.Tests.Unit.vbproj]
+    Build FAILED.
+
+The warning printed, and the exact failure it named followed immediately -
+in one real run of the real script, not staged separately.
+
+CONFIRMED NOT firing on a safe root: the same script, run from this
+repository's own actual location (C:\Users\Admin\Documents\
+Hardware_Merchandising_System, 44 characters), printed no warning - see
+section 4's clean run.
+
+WHY A WARNING, NOT A REGISTRY CHANGE. HKLM:\SYSTEM\CurrentControlSet\
+Control\FileSystem\LongPathsEnabled = 1 would remove the limit entirely, and
+was deliberately not set. It is an elevated, persistent, whole-machine
+change with effects on every other application on the box, not something
+this session takes unilaterally mid-task - and three classmates' laptops are
+not this session's to configure at all, so a fix that depends on it is not a
+fix this project can rely on. A guard that works with zero elevated or
+system-wide change is the one every machine this system will ever run on can
+actually use. Full reasoning, including the rejected alternatives (registry
+change, relocating BaseOutputPath/BaseIntermediateOutputPath repo-wide,
+removing a project reference, a hard failure instead of a warning): docs/
+adr.md ADR-029.
+
+docs/installation-guide.md new section 0 documents the constraint in the
+place a grader running P6-18's own clean-clone check, or a classmate, or a
+future maintainer, would read it before cloning.
+
+===============================================================================
+4. Everything still green - the guard adds a warning, changes nothing else
+===============================================================================
+
+  pwsh ./scripts/check-no-csharp.ps1   -> All guardrails passed (G-A..G-D).
+  pwsh ./scripts/run-tests.ps1         -> No MSB3030 warning printed (root is
+                                           44 characters, well under the
+                                           153-character ceiling).
+                                           Build: 0 errors (3 pre-existing
+                                           MSTEST0037 analyzer suggestions,
+                                           unrelated to this card, not
+                                           escalated by Directory.Build.
+                                           props' WarningsAsErrors list).
+                                           Unit tests:        140 passed, 0 failed.
+                                           Integration tests: 512 passed, 0 skipped.
+
+===============================================================================
+5. Done-when boxes - status
+===============================================================================
+
+  [x] Root cause identified: Windows MAX_PATH (260 chars) on MSBuild's Copy
+      task, given LongPathsEnabled=0 on this machine - confirmed by a
+      controlled test (section 1) that isolates path length from the
+      Phase-5 log's own unconfirmed Defender-scanning theory, not merely
+      the path-length hypothesis stated again. A card closed on "we avoid
+      that directory now" without knowing why does not apply here - the
+      why is measured, in section 1.
+  [x] Either a fix, or a documented constraint in the installation guide AND
+      a check in run-tests.ps1 that warns before building from a path that
+      triggers it: docs/installation-guide.md section 0, and the
+      run-tests.ps1 guard proven to fire (section 3) and not to false-fire
+      (section 4).
+  [x] Merchandising.Tests.Unit's references to two OutputType=WinExe
+      projects reviewed - and corrected: three (Inventory, Procurement,
+      POS), not two, plus Merchandising.Maintenance (Exe) referenced
+      separately by Merchandising.Tests.Integration. Section 2.
+
+===============================================================================
+6. What this card does NOT claim
+===============================================================================
+
+NOT claimed: that LongPathsEnabled=1 would not also fix this. It plausibly
+would - that mechanism is exactly what the flag exists for - but flipping it
+was deliberately not attempted, for the reasons in section 3 and ADR-029.
+
+NOT claimed: that 153 characters is a proven-exact safe/unsafe boundary
+under every configuration. It is a measured-safe ceiling computed from the
+longest of four known offending suffixes (106 characters) with the standard
+MAX_PATH arithmetic (259 usable characters, one held back for the path
+separator/terminator convention every prior clean-clone log in this project
+has used) - not a proof that a 154-character root is provably safe, only
+that no known offender crosses the ceiling below it. A fifth WinExe/Exe
+project reference added later would need remeasuring, and the guard's own
+comment in scripts/run-tests.ps1 says so.
+
+NOT claimed: that this is the only build-path fragility in the repository.
+It is the one CARRY-04 named and this card was raised to close.
+
+===============================================================================
+7. Temporary artifacts, cleaned up
+===============================================================================
+
+Three throwaway clones were used for this investigation and deleted after
+capture, referenced by nothing and shipped with nothing:
+
+  C:\Users\Admin\AppData\Local\Temp\claude\...\scratchpad\p6-17-deep\repo
+  C:\Users\Admin\AppData\Local\Temp\claude\p6-17-shortprobe\repo
+  C:\Users\Admin\Documents\cc-p6-17-shallow\repo

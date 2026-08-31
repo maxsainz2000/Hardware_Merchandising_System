@@ -45,6 +45,39 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 
 function Write-Step { param([string] $Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
+# P6-17 / ADR-029: MSB3030 ("Could not copy ... because it was not found") on
+# Merchandising.Procurement/Inventory/POS/Maintenance's runtimeconfig.json is
+# not a build race - it is Windows' 260-character MAX_PATH limit on the Win32
+# file APIs MSBuild's Copy task still uses. Confirmed by controlled test at
+# P6-17 (evidence/phase-6/p6-17-msb3030.txt): a repository root long enough
+# that the longest of those four copies (106 characters, Procurement's own
+# runtimeconfig.json landing in Merchandising.Tests.Unit's output) pushes the
+# full path to 260 or more fails deterministically, on a machine where
+# LongPathsEnabled is not 1 - which is the ordinary state of a fresh Windows
+# install. This warns rather than blocks: the ceiling below is a measured-safe
+# estimate from four known offenders, not a proof every shorter path is safe.
+$msb3030LongestKnownSuffix = 106
+$msb3030SafeRootLength = 259 - $msb3030LongestKnownSuffix
+
+$longPathsEnabled = $false
+try {
+    $longPathsValue = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -ErrorAction Stop
+    $longPathsEnabled = ($longPathsValue -eq 1)
+} catch {
+    $longPathsEnabled = $false
+}
+
+if (-not $longPathsEnabled -and $RepoRoot.Length -gt $msb3030SafeRootLength) {
+    Write-Host "`n=== WARNING: this repository root may trigger MSB3030 ===" -ForegroundColor Yellow
+    Write-Host "Root ($($RepoRoot.Length) chars): $RepoRoot" -ForegroundColor Yellow
+    Write-Host 'Long path support is OFF on this machine (LongPathsEnabled != 1) and this root' -ForegroundColor Yellow
+    Write-Host 'is long enough that a referenced project runtimeconfig.json copy can land at or' -ForegroundColor Yellow
+    Write-Host "past Windows' 260-character MAX_PATH limit. If the build below fails with" -ForegroundColor Yellow
+    Write-Host "MSB3030 'could not copy ... because it was not found' even though the file" -ForegroundColor Yellow
+    Write-Host 'exists, this is why - see docs/adr.md ADR-029. Fix: build from a shorter path,' -ForegroundColor Yellow
+    Write-Host 'outside AppData\Local\Temp.' -ForegroundColor Yellow
+}
+
 Push-Location $RepoRoot
 try {
     Write-Step 'Guardrails'

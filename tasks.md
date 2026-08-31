@@ -355,15 +355,15 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-16-clean-install.txt`
 
-### ⬜ P6-17 · `MSB3030` under deep build paths — **CARRY-04, second sighting met**
+### ✅ P6-17 · `MSB3030` under deep build paths — **CARRY-04, second sighting met**
 **Spec:** — · **Files:** `Directory.Build.props`, `scripts/run-tests.ps1`, `docs/adr.md`
 
 **Do:** Reproduced deterministically (9 consecutive failures) under a deep `AppData\Local\Temp\claude\...` path while the identical commit built clean at a plain path. The `runtimeconfig.json` was confirmed **present on disk** at the moment the copy claimed it missing, which rules out the original theory. Either fix it or record the constraint where someone will hit it.
 
 **Done when:**
-- [ ] Root cause identified, or the path-length hypothesis confirmed or refuted by test — a card closed on "we avoid that directory now" without knowing why is a card that reopens in Phase 7
-- [ ] Either a fix, or a documented constraint in the installation guide **and** a check in `run-tests.ps1` that warns before building from a path that triggers it
-- [ ] `Merchandising.Tests.Unit`'s references to two `OutputType=WinExe` projects reviewed — that coupling is the thing that makes the copy race possible at all
+- [x] Root cause identified, or the path-length hypothesis confirmed or refuted by test — a card closed on "we avoid that directory now" without knowing why is a card that reopens in Phase 7
+- [x] Either a fix, or a documented constraint in the installation guide **and** a check in `run-tests.ps1` that warns before building from a path that triggers it
+- [x] `Merchandising.Tests.Unit`'s references to two `OutputType=WinExe` projects reviewed — that coupling is the thing that makes the copy race possible at all
 
 **Evidence:** `evidence/phase-6/p6-17-msb3030.txt`
 

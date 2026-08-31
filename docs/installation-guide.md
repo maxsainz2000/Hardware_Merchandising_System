@@ -14,6 +14,21 @@
 
 ---
 
+## 0. Before building from a clone: a path-length constraint (P6-17, ADR-029)
+
+**Do not `git clone` this repository under a deeply nested path — especially not under `AppData\Local\Temp`.** Cloning it under a root longer than roughly 150 characters can make the build fail with:
+
+```
+error MSB3030: Could not copy the file "...\Merchandising.Procurement.runtimeconfig.json"
+because it was not found.
+```
+
+**This is not a missing file.** The file is present on disk at the moment the error fires — confirmed directly, twice, at two different sessions (see `evidence/phase-6/p6-17-msb3030.txt`). It is Windows' classic 260-character `MAX_PATH` limit on the Win32 file APIs the MSBuild `Copy` task still uses: `Merchandising.Tests.Unit.vbproj` references three `OutputType=WinExe` projects (Inventory, Procurement, POS) and `Merchandising.Tests.Integration.vbproj` references one `OutputType=Exe` project (Maintenance), and each one's `runtimeconfig.json` gets copied into the referencing test project's own output — a copy whose full path can land at or past 260 characters once the repository root itself is long. This machine has `HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 0` (long-path support off), which is the ordinary state for a fresh Windows installation, so assume the same is true on a classmate's or a grader's machine unless proven otherwise.
+
+`pwsh ./scripts/run-tests.ps1` warns, before it builds, if the resolved repository root is long enough to be at risk and long-path support is not enabled. **The fix is to clone or build from a short path** — `C:\src\Hardware_Merchandising_System`, not a nested Downloads or Temp folder — not to change any Windows-wide setting. Full measurement and reasoning: `docs/adr.md` ADR-029.
+
+---
+
 ## 1. `MERCH-HOST` name resolution
 
 The API is reached by name, not by IP address, because the HTTPS certificate's subject/SAN is issued for the name (ADR-011). A client that connects to `https://192.168.100.165:8443` instead of `https://MERCH-HOST:8443` will get a certificate warning even when everything is configured correctly.

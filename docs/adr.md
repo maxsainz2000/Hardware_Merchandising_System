@@ -1291,6 +1291,36 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-029 · MSB3030 root cause: MAX_PATH, not a build race — checked, not fixed at the OS level
+
+**Status:** ACCEPTED
+**Date:** 2026-08-31
+**Decides:** CARRY-04's own named mechanism — a copy race raised once at the Phase 3 gate, narrowed at the Phase 5 gate to "the file is present but the copy still fails" — closed at P6-17 by identifying the actual mechanism and choosing a mitigation that needs no elevated, machine-wide change.
+
+**Decision.**
+
+1. **Root cause: Windows' classic 260-character `MAX_PATH` limit on the Win32 file APIs MSBuild's `Copy` task still uses, combined with this machine's `HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 0`.** Confirmed by a controlled test, not only argued. Cloning this repository to a 159-character root produced a `Merchandising.Procurement.runtimeconfig.json` source copy path of exactly 260 characters — confirmed present on disk via `Test-Path` at the moment of failure, matching the Phase-5 finding's own "confirmed present" observation — and failed `MSB3030` on the first attempt. Cloning to a 62-character root under the identical `AppData\Local\Temp\claude` tree (same Windows Defender scanning scope as the failing case, which isolates path length from the Phase-5 log's own Defender speculation as the operative variable) produced a 163-character copy path and built clean on the first attempt. A 46-character root outside `Temp` entirely also built clean. Path length is both necessary and sufficient to reproduce this at this location.
+2. **`Merchandising.Tests.Unit.vbproj` references three `OutputType=WinExe` projects, not two.** CARRY-04's carried wording named "two `OutputType=WinExe` projects"; reading the `.vbproj` directly at P6-17 found Inventory, Procurement, **and POS**. `Merchandising.Tests.Integration.vbproj` separately references `Merchandising.Maintenance` (`OutputType=Exe`). Any of the four can be the one whose `runtimeconfig.json` copy trips first — this session's reproduction only ever reported `Procurement`, because MSBuild's `Copy` task aborts its target after the first failed item in the batch rather than continuing to enumerate the rest, which is consistent with, not a correction of, the Phase-5 log's report of three names failing together in a different run.
+3. **The fix is a guard in `scripts/run-tests.ps1`, not a registry change.** It checks the resolved repository root's path length against a measured-safe ceiling — root length plus the longest known offending suffix (`Merchandising.Procurement.runtimeconfig.json` copied into `Merchandising.Tests.Unit`'s own output, 106 characters) — before it builds, and warns by name if long-path support is off and the root is long enough to be at risk, rather than letting the build fail with a message that reads exactly like a missing file. It also reads `LongPathsEnabled` itself, so the warning does not fire on a machine that already has long paths turned on.
+4. **`docs/installation-guide.md` §0 documents the constraint plainly** for whoever next clones this repository — a grader running P6-18's own clean-clone check, a classmate, or a future maintainer — before they lose the same hour the Phase 5 session did.
+
+**Reasoning.**
+
+- **Flipping `LongPathsEnabled` to `1` machine-wide is the fix that actually removes the limit, and is exactly the class of action this project's own working practice holds should be asked about, not taken unilaterally mid-task:** it is elevated, persistent, and affects every other application on the machine, and three classmates' laptops are not this session's to configure at all. A guard that works with no elevated or system-wide change is the one every machine this system will ever run on can actually rely on.
+- **The controlled short-root-under-`Temp\claude` test is what turns "correlated and repeatable" (the Phase 5 log's own honest phrasing) into "confirmed."** Holding the directory tree — and therefore Windows Defender's scanning scope — constant while only shortening the root path removed the failure, which isolates path length as the mechanism rather than leaving it as one of several plausible correlated factors.
+- **The 106-character ceiling is the longest of the four measured suffixes** (Procurement 106, Inventory 104, Maintenance 105, POS 98 — all measured from each project's own output back to the referencing test project's output folder); a ceiling computed from the worst of the four covers the rest, with the stated caveat that a fifth `WinExe`/`Exe` reference added later needs remeasuring.
+
+**Rejected.**
+
+- **Enabling `LongPathsEnabled` system-wide.** Rejected for the reason above — the fix this project can rely on has to work without an elevated, one-time change on someone else's laptop, and this session has no laptop to make that change on besides its own.
+- **Redirecting `BaseOutputPath`/`BaseIntermediateOutputPath` repo-wide to a short root (e.g. `C:\mbld\`) to shorten every build output path structurally.** Considered and rejected: it would work, but relocating where every project's `bin`/`obj` lives is a materially larger change than this card's done-when boxes ask for, needs testing against the WPF designer, Visual Studio's own build (invisible to Claude Code — the exact reason `check-no-csharp.ps1`'s L4 git hook exists), and the P6-11 publish path, for the same practical outcome the guard already achieves without touching build layout.
+- **Removing `Merchandising.Tests.Unit`'s reference to one or more of the three client projects to shrink the copy set.** Rejected: those references exist so `ProcurementLayoutTests`, `InventoryLayoutTests` and `POSLayoutTests` can reflect over each client's real `MainWindow` — removing one removes the ability to test that client's layout, a materially larger regression than the marginal risk reduction, and POS (the shortest of the three suffixes) was never the one observed to fail first anyway.
+- **A hard failure (`throw` / non-zero exit) in `run-tests.ps1` instead of a warning.** The card's own wording asks for a warning, and a warning that still lets the build attempt run is honest about what is actually known: the ceiling is a measured-safe estimate from four known offenders, not a proof that every path under it is safe, so refusing to even try would claim more certainty than the measurement supports.
+
+**Evidence.** `evidence/phase-6/p6-17-msb3030.txt`.
+
+---
+
 ## Template for new entries
 
 ```markdown

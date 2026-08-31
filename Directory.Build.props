@@ -38,6 +38,22 @@
     <MerchWindowsTfm>net10.0-windows</MerchWindowsTfm>
   </PropertyGroup>
 
+  <!--
+    P6-17 / ADR-029, recorded here because this is where the coupling that
+    makes it possible lives. Merchandising.Tests.Unit references three
+    OutputType=WinExe projects (Inventory, Procurement, POS) so their layout
+    tests can reflect over each client's real MainWindow; Merchandising.Tests.
+    Integration references Merchandising.Maintenance (OutputType=Exe). Each
+    one's runtimeconfig.json gets copy-local'd into the referencing test
+    project's own output, and on a machine without Windows long-path support
+    enabled, a deep enough repository root pushes that copy past the
+    260-character MAX_PATH limit and fails MSB3030 - not a missing file, not a
+    build race. scripts/run-tests.ps1 warns before building if the resolved
+    root is at risk. Do not "fix" this by removing a project reference; it
+    removes that client's layout test coverage instead of fixing anything.
+  -->
+
+
   <PropertyGroup Label="Visual Basic language options">
     <!--
       Option Strict On turns a class of late-binding runtime surprises into
