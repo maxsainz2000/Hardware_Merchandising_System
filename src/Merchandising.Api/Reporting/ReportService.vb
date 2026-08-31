@@ -238,6 +238,78 @@ Namespace Reporting
 
         End Function
 
+        ''' <summary>Spec section 14 row 6. Returns treatment: Excluded (docs/report-specification.md section 4 row 6). See ReportRepository.GetPurchaseOrderHistoryReportAsync's header for why ReceivedQuantity/Value/OutstandingQuantity are computed from committed ReceiptLines rather than the PurchaseOrderLines accumulator.</summary>
+        Public Async Function GetPurchaseOrderHistoryReportAsync(
+            fromDate As String, toDate As String, fromUtc As DateTime?, toUtcExclusive As DateTime?,
+            sortField As PurchaseOrderHistoryReportSortField, sortDescending As Boolean, page As Integer, pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of PurchaseOrderHistoryReportItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await ReportRepository.GetPurchaseOrderHistoryReportAsync(
+                        connection, fromUtc, toUtcExclusive, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim items = result.Items.Select(
+                    Function(r) New PurchaseOrderHistoryReportItemResponse With {
+                        .Id = r.Id,
+                        .OrderNumber = r.OrderNumber,
+                        .SupplierId = r.SupplierId,
+                        .SupplierName = r.SupplierName,
+                        .Status = r.Status,
+                        .CreatedAtUtc = r.CreatedAtUtc,
+                        .OrderedQuantity = r.OrderedQuantity,
+                        .OrderedValue = r.OrderedValue,
+                        .ReceivedQuantity = r.ReceivedQuantity,
+                        .ReceivedValue = r.ReceivedValue,
+                        .OutstandingQuantity = r.OutstandingQuantity
+                    }).ToList()
+
+                Return (Items:=CType(items, IReadOnlyList(Of PurchaseOrderHistoryReportItemResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
+        ''' <summary>Spec section 14 row 7. Returns treatment: Excluded (docs/report-specification.md section 4 row 7). OrderedQuantity is the receipt line's own purchase-order line total (GoodsReceivingHistoryItemResponse's header).</summary>
+        Public Async Function GetGoodsReceivingHistoryAsync(
+            fromDate As String, toDate As String, fromUtc As DateTime?, toUtcExclusive As DateTime?,
+            sortDescending As Boolean, page As Integer, pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of GoodsReceivingHistoryItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await ReportRepository.GetGoodsReceivingHistoryAsync(
+                        connection, fromUtc, toUtcExclusive, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim items = result.Items.Select(
+                    Function(r) New GoodsReceivingHistoryItemResponse With {
+                        .ReceiptId = r.ReceiptId,
+                        .ReceiptLineId = r.ReceiptLineId,
+                        .ReferenceNumber = r.ReferenceNumber,
+                        .PurchaseOrderId = r.PurchaseOrderId,
+                        .OrderNumber = r.OrderNumber,
+                        .SupplierId = r.SupplierId,
+                        .SupplierName = r.SupplierName,
+                        .ReceivedAtUtc = r.ReceivedAtUtc,
+                        .ProductId = r.ProductId,
+                        .ProductSku = r.ProductSku,
+                        .ProductName = r.ProductName,
+                        .OrderedQuantity = r.OrderedQuantity,
+                        .ReceivedQuantity = r.ReceivedQuantity,
+                        .ReceivedByUserId = r.ReceivedByUserId,
+                        .ReceivedByUsername = r.ReceivedByUsername
+                    }).ToList()
+
+                Return (Items:=CType(items, IReadOnlyList(Of GoodsReceivingHistoryItemResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
         Private Shared Function ToPaymentTotalResponses(
             totals As IReadOnlyList(Of (Method As String, Amount As Decimal))) As IReadOnlyList(Of PaymentMethodTotalResponse)
 

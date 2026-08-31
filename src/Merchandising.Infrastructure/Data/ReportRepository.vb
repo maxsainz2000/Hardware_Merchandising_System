@@ -60,6 +60,18 @@ Namespace Data
         NetQuantity
     End Enum
 
+    ''' <summary>The sort fields <see cref="ReportRepository.GetPurchaseOrderHistoryReportAsync"/> will honour - the same three P3-06's PurchaseOrderSortField already offers.</summary>
+    Public Enum PurchaseOrderHistoryReportSortField
+        CreatedAt
+        OrderNumber
+        Status
+    End Enum
+
+    ''' <summary>The one sort field <see cref="ReportRepository.GetGoodsReceivingHistoryAsync"/> honours - the same single-value shape ReturnsAndCancellationsSortField uses.</summary>
+    Public Enum GoodsReceivingHistorySortField
+        ReceivedAt
+    End Enum
+
     Public NotInheritable Class ReportRepository
 
         Private Sub New()
@@ -519,6 +531,199 @@ Namespace Data
                                    GrossSalesValue:=reader.GetDecimal(5), ReturnedValue:=reader.GetDecimal(6),
                                    CapturedCostBasis:=reader.GetDecimal(7), ReturnedCostBasis:=reader.GetDecimal(8),
                                    CurrentStockQuantity:=reader.GetDecimal(9)))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 6. Ordered quantity/value are pre-aggregated
+        ''' over PurchaseOrderLines, the same figure P3-06's SearchHistoryAsync
+        ''' computes. Received quantity/value are DELIBERATELY NOT read from
+        ''' PurchaseOrderLines.ReceivedQuantity (the accumulator column P3-06
+        ''' reads) - they are pre-aggregated over ReceiptLines directly, "from
+        ''' committed receipt rows" (this card's own Done-when box), so the
+        ''' reconciliation test comparing this report's numbers against P3-06's
+        ''' genuinely exercises two independently-written queries rather than
+        ''' one query compared to itself (docs/report-specification.md
+        ''' section 7). Both subqueries are pre-aggregated to one row per
+        ''' order BEFORE the outer join, the same fan-out avoidance this
+        ''' class's header requires for combining two one-to-many
+        ''' relationships (here: order-to-lines and order-to-receipt-lines).
+        ''' ReceivedValue prices the received quantity at the ORDER's captured
+        ''' PurchaseCost, never the receipt's own (possibly different)
+        ''' invoiced Cost - matching P3-06's ReceivedValue definition exactly,
+        ''' which is what makes the two numbers comparable at all.
+        ''' </summary>
+        Public Shared Async Function GetPurchaseOrderHistoryReportAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As PurchaseOrderHistoryReportSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (Id As Integer, OrderNumber As String, SupplierId As Integer, SupplierName As String,
+                                                    Status As String, CreatedAtUtc As DateTime,
+                                                    OrderedQuantity As Decimal, OrderedValue As Decimal,
+                                                    ReceivedQuantity As Decimal, ReceivedValue As Decimal,
+                                                    OutstandingQuantity As Decimal)),
+                       TotalCount As Integer))
+
+            Dim whereClause As String = DateWhereClause("o.CreatedAtUtc", fromUtc, toUtcExclusive)
+            Dim trimmedWhereClause As String =
+                If(whereClause.Length > 0, " WHERE " & whereClause.Substring(" AND ".Length), String.Empty)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM PurchaseOrders o" & trimmedWhereClause & ";"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim orderBy As String
+            Select Case sortField
+                Case PurchaseOrderHistoryReportSortField.OrderNumber
+                    orderBy = "o.OrderNumber"
+                Case PurchaseOrderHistoryReportSortField.Status
+                    orderBy = "o.Status"
+                Case Else
+                    orderBy = "o.CreatedAtUtc"
+            End Select
+            orderBy &= If(sortDescending, " DESC", " ASC") & ", o.Id " & If(sortDescending, "DESC", "ASC")
+
+            Dim items As New List(Of (Id As Integer, OrderNumber As String, SupplierId As Integer, SupplierName As String,
+                                      Status As String, CreatedAtUtc As DateTime,
+                                      OrderedQuantity As Decimal, OrderedValue As Decimal,
+                                      ReceivedQuantity As Decimal, ReceivedValue As Decimal,
+                                      OutstandingQuantity As Decimal))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT o.Id, o.OrderNumber, o.SupplierId, s.Name, o.Status, o.CreatedAtUtc, " &
+                    "       CAST(COALESCE(ordered.OrderedQuantity, 0) AS DECIMAL(19,3)), " &
+                    "       CAST(COALESCE(ordered.OrderedValue, 0) AS DECIMAL(19,4)), " &
+                    "       CAST(COALESCE(received.ReceivedQuantity, 0) AS DECIMAL(19,3)), " &
+                    "       CAST(COALESCE(received.ReceivedValue, 0) AS DECIMAL(19,4)), " &
+                    "       CAST(COALESCE(ordered.OrderedQuantity, 0) - COALESCE(received.ReceivedQuantity, 0) AS DECIMAL(19,3)) " &
+                    "  FROM PurchaseOrders o" &
+                    "  JOIN Suppliers s ON s.Id = o.SupplierId" &
+                    "  LEFT JOIN (" &
+                    "        SELECT pol.PurchaseOrderId," &
+                    "               SUM(pol.OrderedQuantity) AS OrderedQuantity," &
+                    "               SUM(pol.OrderedQuantity * pol.PurchaseCost) AS OrderedValue" &
+                    "          FROM PurchaseOrderLines pol" &
+                    "         GROUP BY pol.PurchaseOrderId" &
+                    "       ) ordered ON ordered.PurchaseOrderId = o.Id" &
+                    "  LEFT JOIN (" &
+                    "        SELECT pol.PurchaseOrderId," &
+                    "               SUM(rl.QuantityReceived) AS ReceivedQuantity," &
+                    "               SUM(rl.QuantityReceived * pol.PurchaseCost) AS ReceivedValue" &
+                    "          FROM ReceiptLines rl JOIN PurchaseOrderLines pol ON pol.Id = rl.PurchaseOrderLineId" &
+                    "         GROUP BY pol.PurchaseOrderId" &
+                    "       ) received ON received.PurchaseOrderId = o.Id" &
+                    trimmedWhereClause &
+                    " ORDER BY " & orderBy &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add((Id:=reader.GetInt32(0), OrderNumber:=reader.GetString(1), SupplierId:=reader.GetInt32(2),
+                                   SupplierName:=reader.GetString(3), Status:=reader.GetString(4), CreatedAtUtc:=reader.GetDateTime(5),
+                                   OrderedQuantity:=reader.GetDecimal(6), OrderedValue:=reader.GetDecimal(7),
+                                   ReceivedQuantity:=reader.GetDecimal(8), ReceivedValue:=reader.GetDecimal(9),
+                                   OutstandingQuantity:=reader.GetDecimal(10)))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 7. A FLAT per-receipt-line listing - one row
+        ''' per ReceiptLines row, no GROUP BY, the same shape
+        ''' GetReturnsAndCancellationsAsync uses for the identical reason
+        ''' (this class's header). Filtered on Receipts.ReceivedAtUtc, the
+        ''' report's own natural date dimension - deliberately NOT
+        ''' PurchaseOrders.CreatedAtUtc, which is what
+        ''' GetPurchaseOrderHistoryReportAsync filters on; the reconciliation
+        ''' test therefore reconciles the two reports UNBOUNDED (see that
+        ''' test's own comment) rather than under one shared date filter.
+        ''' </summary>
+        Public Shared Async Function GetGoodsReceivingHistoryAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (ReceiptId As Integer, ReceiptLineId As Integer, ReferenceNumber As String,
+                                                    PurchaseOrderId As Integer, OrderNumber As String,
+                                                    SupplierId As Integer, SupplierName As String, ReceivedAtUtc As DateTime,
+                                                    ProductId As Integer, ProductSku As String, ProductName As String,
+                                                    OrderedQuantity As Decimal, ReceivedQuantity As Decimal,
+                                                    ReceivedByUserId As Integer, ReceivedByUsername As String)),
+                       TotalCount As Integer))
+
+            Dim whereClause As String = DateWhereClause("r.ReceivedAtUtc", fromUtc, toUtcExclusive)
+            Dim trimmedWhereClause As String =
+                If(whereClause.Length > 0, " WHERE " & whereClause.Substring(" AND ".Length), String.Empty)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) FROM ReceiptLines rl JOIN Receipts r ON r.Id = rl.ReceiptId" &
+                    trimmedWhereClause & ";"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of (ReceiptId As Integer, ReceiptLineId As Integer, ReferenceNumber As String,
+                                      PurchaseOrderId As Integer, OrderNumber As String,
+                                      SupplierId As Integer, SupplierName As String, ReceivedAtUtc As DateTime,
+                                      ProductId As Integer, ProductSku As String, ProductName As String,
+                                      OrderedQuantity As Decimal, ReceivedQuantity As Decimal,
+                                      ReceivedByUserId As Integer, ReceivedByUsername As String))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT r.Id, rl.Id, r.ReferenceNumber, o.Id, o.OrderNumber, o.SupplierId, s.Name, r.ReceivedAtUtc, " &
+                    "       rl.ProductId, p.Sku, p.Name, pol.OrderedQuantity, rl.QuantityReceived, " &
+                    "       r.ReceivedByUserId, u.Username " &
+                    "  FROM ReceiptLines rl" &
+                    "  JOIN Receipts r ON r.Id = rl.ReceiptId" &
+                    "  JOIN PurchaseOrderLines pol ON pol.Id = rl.PurchaseOrderLineId" &
+                    "  JOIN PurchaseOrders o ON o.Id = r.PurchaseOrderId" &
+                    "  JOIN Suppliers s ON s.Id = o.SupplierId" &
+                    "  JOIN Products p ON p.Id = rl.ProductId" &
+                    "  JOIN Users u ON u.Id = r.ReceivedByUserId" &
+                    trimmedWhereClause &
+                    " ORDER BY r.ReceivedAtUtc " & If(sortDescending, "DESC", "ASC") & ", rl.Id " & If(sortDescending, "DESC", "ASC") &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add((ReceiptId:=reader.GetInt32(0), ReceiptLineId:=reader.GetInt32(1), ReferenceNumber:=reader.GetString(2),
+                                   PurchaseOrderId:=reader.GetInt32(3), OrderNumber:=reader.GetString(4),
+                                   SupplierId:=reader.GetInt32(5), SupplierName:=reader.GetString(6), ReceivedAtUtc:=reader.GetDateTime(7),
+                                   ProductId:=reader.GetInt32(8), ProductSku:=reader.GetString(9), ProductName:=reader.GetString(10),
+                                   OrderedQuantity:=reader.GetDecimal(11), ReceivedQuantity:=reader.GetDecimal(12),
+                                   ReceivedByUserId:=reader.GetInt32(13), ReceivedByUsername:=reader.GetString(14)))
                     End While
                 End Using
             End Using

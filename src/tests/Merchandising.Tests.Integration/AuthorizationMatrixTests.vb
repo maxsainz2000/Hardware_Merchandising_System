@@ -612,7 +612,9 @@ Public Class AuthorizationMatrixTests
             ("Reports.View (sales detail)", $"/api/v1/sales?fromDate={todayText}&toDate={todayText}&pageSize=1"),
             ("Reports.View (returns-and-cancellations)", $"/api/v1/reports/sales/returns?fromDate={todayText}&toDate={todayText}&pageSize=1"),
             ("Reports.View (product-performance)", $"/api/v1/reports/sales/product-performance?fromDate={todayText}&toDate={todayText}&pageSize=1"),
-            ("Reports.View (sales returns detail)", $"/api/v1/sales/returns?fromDate={todayText}&toDate={todayText}&pageSize=1")
+            ("Reports.View (sales returns detail)", $"/api/v1/sales/returns?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (purchase-order history)", $"/api/v1/reports/procurement/purchase-orders?fromDate={todayText}&toDate={todayText}&pageSize=1"),
+            ("Reports.View (goods-receiving history)", $"/api/v1/reports/procurement/goods-receiving?fromDate={todayText}&toDate={todayText}&pageSize=1")
         }
 
         Using client As HttpClient = _factory.CreateClient()

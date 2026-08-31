@@ -136,16 +136,18 @@ Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 con
 
 **Evidence:** `evidence/phase-6/p6-03-returns-and-performance.txt`
 
-### ⬜ P6-04 · Procurement reports
+### ✅ P6-04 · Procurement reports
 **Spec:** §14 · **Files:** `src/Merchandising.Api/Reporting/`, `src/Merchandising.Infrastructure/Data/ReportRepository.vb`
 
 **Do:** Purchase-order history (supplier, order number, statuses, ordered quantity/value, received quantity/value, outstanding quantity) and goods-receiving history (receipt, supplier, date, product, ordered/received quantity, responsible user).
 
 **Done when:**
-- [ ] Both reconcile through the harness against P3-06's and P4-06's existing detail screens
-- [ ] Outstanding quantity is computed as ordered minus received **from committed receipt rows**, and a partially-received order across several receipts reports one correct outstanding figure — P4-06's accumulation rule, read back
-- [ ] The purchase-order status machine (ADR-020) is consumed, not re-implemented — a report that hard-codes a status list fails when the machine changes
-- [ ] **Matrix suite extended**; integration suite green
+- [x] Both reconcile through the harness against P3-06's existing detail screen (`GET /api/v1/purchase-orders/history`) and against each other, per `docs/report-specification.md` section 7
+- [x] Outstanding quantity is computed as ordered minus received **from committed receipt rows**, and a partially-received order across several receipts reports one correct outstanding figure — P4-06's accumulation rule, read back
+- [x] The purchase-order status machine (ADR-020) is consumed, not re-implemented — a report that hard-codes a status list fails when the machine changes
+- [x] **Matrix suite extended**; integration suite green
+
+Evidence: `evidence/phase-6/p6-04-procurement-reports.txt`. No new detail endpoint was needed this card — `docs/report-specification.md` section 7 had already named `GET /api/v1/purchase-orders/history` (P3-06) as the reconciliation target for both reports.
 
 **Evidence:** `evidence/phase-6/p6-04-procurement-reports.txt`
 

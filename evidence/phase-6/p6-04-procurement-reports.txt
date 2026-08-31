@@ -1,0 +1,146 @@
+P6-04: Purchase-order history and goods-receiving history reports
+===================================================================
+
+Base commit for this card: 912ae618fe21269ef775fb49d8a2c57d21bc8e59
+(P6-03: returns and cancellations, product performance summary)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope, as confirmed with the user (Auto Mode session)
+-------------------------------------------------------------------
+
+Spec section 14 rows 6-7, per docs/report-specification.md (the P6-01
+document Track B cards cite instead of re-deciding these questions):
+
+  - Purchase-order history report
+    GET /api/v1/reports/procurement/purchase-orders
+    Supplier, order number, statuses, ordered quantity/value, received
+    quantity/value, outstanding quantity.
+
+  - Goods-receiving history report
+    GET /api/v1/reports/procurement/goods-receiving
+    Receipt, supplier, date, product, ordered quantity, received quantity,
+    responsible user.
+
+Both are ReturnsTreatment = Excluded (docs/report-specification.md section
+4 rows 6-7 - no sales-returns dimension applies to procurement).
+
+Per docs/report-specification.md section 7's table, BOTH reports reconcile
+against the SAME existing detail endpoint: GET /api/v1/purchase-orders/
+history (P3-06). The design decision made in this card, not re-litigated
+from that document: MY new purchase-order-history-report query computes
+ReceivedQuantity/ReceivedValue/OutstandingQuantity by summing ReceiptLines
+directly ("from committed receipt rows" - this card's own Done-when box),
+DELIBERATELY NOT reading PurchaseOrderLines.ReceivedQuantity, the
+accumulator column P3-06's endpoint reads. This makes the reconciliation
+test a genuine two-independent-code-paths proof (ADR-023/report-spec
+section 7), rather than the same query compared to itself, and
+simultaneously proves the accumulator column is trustworthy across
+multiple separate receipts - "P4-06's accumulation rule, read back",
+exactly the task card's second Done-when box.
+
+The goods-receiving history report then reconciles its own summed
+ReceivedQuantity (grouped by purchase order) against the purchase-order
+history report's ReceivedQuantity for that order - a THIRD independently-
+written query agreeing with the other two.
+
+-------------------------------------------------------------------
+2. Files changed
+-------------------------------------------------------------------
+
+New:
+  src/Merchandising.Contracts/Reporting/PurchaseOrderHistoryReportItemResponse.vb
+  src/Merchandising.Contracts/Reporting/PurchaseOrderHistoryReportResponse.vb
+  src/Merchandising.Contracts/Reporting/GoodsReceivingHistoryItemResponse.vb
+  src/Merchandising.Contracts/Reporting/GoodsReceivingHistoryResponse.vb
+  src/Merchandising.Api/Controllers/ProcurementReportsController.vb
+  src/tests/Merchandising.Tests.Integration/ProcurementReportsTests.vb
+
+Modified:
+  src/Merchandising.Infrastructure/Data/ReportRepository.vb
+    - PurchaseOrderHistoryReportSortField, GoodsReceivingHistorySortField
+    - GetPurchaseOrderHistoryReportAsync (fresh SQL over PurchaseOrderLines
+      + a pre-aggregated ReceiptLines subquery, avoiding the fan-out this
+      file's header requires guarding against)
+    - GetGoodsReceivingHistoryAsync (flat per-ReceiptLines-row listing)
+  src/Merchandising.Api/Reporting/ReportService.vb
+    - GetPurchaseOrderHistoryReportAsync, GetGoodsReceivingHistoryAsync
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb
+    - Two new routes added to ReportsView_MatrixMatchesPolicyRegistry
+  tasks.md
+
+-------------------------------------------------------------------
+3. Done-when boxes
+-------------------------------------------------------------------
+
+[x] Both reconcile through the harness against P3-06's existing detail
+    screen (GET /api/v1/purchase-orders/history), and against each other -
+    ProcurementReportsTests.PurchaseOrderHistoryReport_Reconciles_
+    AgainstPurchaseOrdersHistoryEndpoint_AcrossMultipleReceipts and
+    GoodsReceivingHistory_Reconciles_ReceivedQuantityAgainstPurchase
+    OrderHistoryReport, both via ReportReconciliationHarness.AssertReconciles
+    (exact Decimal equality, no tolerance).
+
+[x] Outstanding quantity is computed as ordered minus received FROM
+    COMMITTED RECEIPT ROWS - ReportRepository.GetPurchaseOrderHistoryReportAsync
+    sums ReceiptLines.QuantityReceived via a pre-aggregated subquery, never
+    PurchaseOrderLines.ReceivedQuantity. A partially-received order across
+    TWO separate receipts (4.000 then 3.000 on the same line) reports one
+    correct outstanding figure (6.000 = 15.000 - 9.000), asserted directly
+    and via reconciliation against P3-06's accumulator-column figure -
+    "P4-06's accumulation rule, read back."
+
+[x] The purchase-order status machine (ADR-020) is consumed, not
+    reimplemented - Status is read and echoed verbatim from
+    PurchaseOrders.Status; no status list is hard-coded anywhere in the new
+    code. PurchaseOrderHistoryReport_CancelledOrder_AppearsLabelledNot
+    Excluded proves a Cancelled order stays in the report, labelled.
+
+[x] Matrix suite extended (2 new routes: purchase-order history, goods-
+    receiving history, both under Reports.View); integration suite green.
+
+-------------------------------------------------------------------
+4. Verification
+-------------------------------------------------------------------
+
+Guardrails:
+
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  All guardrails passed.
+
+Build: 0 Warning(s), 0 Error(s).
+
+Unit tests: Passed! - Failed: 0, Passed: 92, Skipped: 0, Total: 92.
+
+Integration tests (real MariaDB), run twice for stability:
+
+  Run 1: Passed! - Failed: 0, Passed: 490, Skipped: 0, Total: 490, Duration: 2m 11s
+  Run 2: Passed! - Failed: 0, Passed: 490, Skipped: 0, Total: 490, Duration: 2m 25s
+
+(490 = 486 from P6-03 + 4 new ProcurementReportsTests methods.)
+
+-------------------------------------------------------------------
+5. Notes
+-------------------------------------------------------------------
+
+- No new detail endpoint was added this card (unlike P6-02/P6-03, which
+  each had to add one). docs/report-specification.md section 7 had already
+  named GET /api/v1/purchase-orders/history (P3-06) as the reconciliation
+  target for both of this card's reports, so no scope addition was needed
+  here.
+
+- ReceivedValue on the purchase-order-history report prices at the ORDER's
+  captured PurchaseOrderLines.PurchaseCost, never the receipt's own
+  (possibly different) invoiced ReceiptLines.Cost - matching P3-06's
+  ReceivedValue definition exactly, which is what makes the two numbers
+  directly comparable. Asserted in the fixture by deliberately using a
+  different receipt cost on every line.
+
+- New ORDER BY clauses in this card's two new queries carry an explicit
+  tie-break column (o.Id / rl.Id) - the gap named but deliberately left
+  open in P6-03's evidence file (missing tie-break in the OLDER
+  ReportRepository queries) is not reintroduced by this card's NEW queries.
