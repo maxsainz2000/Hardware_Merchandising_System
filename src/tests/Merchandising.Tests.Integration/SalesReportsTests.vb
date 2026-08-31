@@ -167,11 +167,10 @@ Public Class SalesReportsTests
 
             Dim token As String = Await LoginAsync(client, AdminUsername)
 
-            Dim byCashier As SalesByCashierResponse =
-                Await GetJsonAsync(Of SalesByCashierResponse)(
-                    client, token, $"/api/v1/reports/sales/by-cashier?fromDate={_todayText}&toDate={_todayText}&pageSize=100")
+            Dim byCashier As IReadOnlyList(Of SalesByCashierItemResponse) =
+                Await FetchAllByCashierAsync(client, token, _todayText, _todayText)
 
-            Dim item As SalesByCashierItemResponse = byCashier.Items.Single(Function(i) i.CashierUserId = _cashierUserId)
+            Dim item As SalesByCashierItemResponse = byCashier.Single(Function(i) i.CashierUserId = _cashierUserId)
 
             Dim detail As IReadOnlyList(Of SaleResponse) =
                 Await FetchAllSalesAsync(client, token, _todayText, _todayText, cashierUserId:=_cashierUserId)
@@ -493,6 +492,37 @@ Public Class SalesReportsTests
             Dim result As SalesByProductResponse =
                 Await GetJsonAsync(Of SalesByProductResponse)(
                     client, token, $"/api/v1/reports/sales/by-product?fromDate={fromDate}&toDate={toDate}&page={page}&pageSize=100")
+
+            items.AddRange(result.Items)
+
+            If items.Count >= result.TotalCount OrElse result.Items.Count = 0 Then
+                Exit Do
+            End If
+
+            page += 1
+
+        Loop
+
+        Return items
+
+    End Function
+
+    ''' <summary>
+    ''' Pages through GET /api/v1/reports/sales/by-cashier until every item is collected -
+    ''' the same fix P6-03 already made for FetchAllByProductAsync, needed here once the
+    ''' shared dev database's same-day cashier count crossed the page size too.
+    ''' </summary>
+    Private Async Function FetchAllByCashierAsync(
+        client As HttpClient, token As String, fromDate As String, toDate As String) As Task(Of IReadOnlyList(Of SalesByCashierItemResponse))
+
+        Dim items As New List(Of SalesByCashierItemResponse)
+        Dim page As Integer = 1
+
+        Do
+
+            Dim result As SalesByCashierResponse =
+                Await GetJsonAsync(Of SalesByCashierResponse)(
+                    client, token, $"/api/v1/reports/sales/by-cashier?fromDate={fromDate}&toDate={toDate}&page={page}&pageSize=100")
 
             items.AddRange(result.Items)
 
