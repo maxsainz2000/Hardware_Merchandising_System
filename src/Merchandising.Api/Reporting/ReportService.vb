@@ -151,6 +151,93 @@ Namespace Reporting
 
         End Function
 
+        ''' <summary>Spec section 14 row 5. Returns treatment: Included (the report's whole subject is return rows - docs/report-specification.md section 4 row 5).</summary>
+        Public Async Function GetReturnsAndCancellationsAsync(
+            fromDate As String, toDate As String, fromUtc As DateTime?, toUtcExclusive As DateTime?,
+            sortDescending As Boolean, page As Integer, pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of ReturnsAndCancellationsItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await ReportRepository.GetReturnsAndCancellationsAsync(
+                        connection, fromUtc, toUtcExclusive, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim items = result.Items.Select(
+                    Function(r) New ReturnsAndCancellationsItemResponse With {
+                        .SalesReturnId = r.SalesReturnId,
+                        .SalesReturnLineId = r.SalesReturnLineId,
+                        .SaleId = r.SaleId,
+                        .ProductId = r.ProductId,
+                        .ProductSku = r.ProductSku,
+                        .ProductName = r.ProductName,
+                        .QuantityReturned = r.QuantityReturned,
+                        .Reason = r.Reason,
+                        .ReturnedByUserId = r.ReturnedByUserId,
+                        .ReturnedByUsername = r.ReturnedByUsername,
+                        .ApprovedByUserId = r.ApprovedByUserId,
+                        .ApprovedByUsername = r.ApprovedByUsername,
+                        .Status = r.Status,
+                        .RestocksItem = r.RestocksItem,
+                        .ReturnedAtUtc = r.ReturnedAtUtc
+                    }).ToList()
+
+                Return (Items:=CType(items, IReadOnlyList(Of ReturnsAndCancellationsItemResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 12. Returns treatment: Included.
+        ''' NetQuantity/NetSalesValue/RecordedCostEstimate respect
+        ''' fromUtc/toUtcExclusive; CurrentStockQuantity never does - it is
+        ''' read live by ReportRepository regardless of the window
+        ''' (ProductPerformanceItemResponse's own header). MarginEstimate is
+        ''' the one NEW derived figure this phase computes (docs/report-
+        ''' specification.md section 6) - rounded once, here, through
+        ''' DecimalScaleGuard.RoundMoney.
+        ''' </summary>
+        Public Async Function GetProductPerformanceAsync(
+            fromDate As String, toDate As String, fromUtc As DateTime?, toUtcExclusive As DateTime?,
+            sortField As ProductPerformanceSortField, sortDescending As Boolean, page As Integer, pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of ProductPerformanceItemResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await ReportRepository.GetProductPerformanceAsync(
+                        connection, fromUtc, toUtcExclusive, sortField, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim items = result.Items.Select(
+                    Function(r)
+                        Dim netQuantity As Decimal = r.QuantitySold - r.QuantityReturned
+                        Dim netSalesValue As Decimal = r.GrossSalesValue - r.ReturnedValue
+                        Dim recordedCostEstimate As Decimal = r.CapturedCostBasis - r.ReturnedCostBasis
+                        Dim marginEstimate As Decimal = DecimalScaleGuard.RoundMoney(netSalesValue - recordedCostEstimate)
+
+                        Return New ProductPerformanceItemResponse With {
+                            .ProductId = r.ProductId,
+                            .ProductSku = r.ProductSku,
+                            .ProductName = r.ProductName,
+                            .QuantitySold = r.QuantitySold,
+                            .QuantityReturned = r.QuantityReturned,
+                            .NetQuantity = netQuantity,
+                            .NetSalesValue = netSalesValue,
+                            .RecordedCostEstimate = recordedCostEstimate,
+                            .MarginEstimate = marginEstimate,
+                            .CurrentStockQuantity = r.CurrentStockQuantity
+                        }
+                    End Function).ToList()
+
+                Return (Items:=CType(items, IReadOnlyList(Of ProductPerformanceItemResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
         Private Shared Function ToPaymentTotalResponses(
             totals As IReadOnlyList(Of (Method As String, Amount As Decimal))) As IReadOnlyList(Of PaymentMethodTotalResponse)
 

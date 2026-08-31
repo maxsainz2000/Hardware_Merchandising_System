@@ -1,0 +1,260 @@
+P6-03 — Returns, cancellations, and product performance
+=========================================================
+
+Card: P6-03 (Track B, second card). Spec section 14 rows 5 and 12. Builds on
+P6-01's docs/report-specification.md/ADR-023 and P6-02's ReportsController/
+ReportService/ReportRepository, the same shared surface P6-02's own header
+says every Track B card consumes.
+Captured 2026-08-31, against master at b69de6d.
+
+---------------------------------------------------------------------
+1. SCOPE ADDITION, RECORDED (docs/report-specification.md section 7)
+---------------------------------------------------------------------
+
+docs/report-specification.md section 7's own table flagged, before this
+card started, that no GET route existed for SalesReturns - both reports
+this card builds need an independent detail endpoint to reconcile against,
+and the section 7 table names this as P6-02 AND P6-03's shared scope
+addition. This card adds it: GET /api/v1/sales/returns
+(SalesReturnsController.GetReturns), gated by Reports.View, not a new
+Sales.View/SalesReturns.View policy - the identical reasoning P6-02
+recorded for GET /api/v1/sales (this endpoint exists to serve report
+reconciliation, never as a cashier- or approver-facing feature; those are
+already served by SalesReturnsController's existing POST routes), applied
+here rather than re-decided with the user a second time. Every status
+appears in this endpoint's results (PendingApproval, Completed, Rejected) -
+there is no status filter, because the report it serves lists every status
+too (docs/report-specification.md section 4 row 5: "there is nothing to
+exclude").
+
+---------------------------------------------------------------------
+2. GUARDRAIL RUN
+---------------------------------------------------------------------
+
+Command: pwsh ./scripts/check-no-csharp.ps1
+
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+---------------------------------------------------------------------
+3. CLEAN BUILD
+---------------------------------------------------------------------
+
+Command: dotnet build --nologo -v minimal
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+---------------------------------------------------------------------
+4. G-24 - NO WIDENING OWED BY THIS CARD, VERIFIED
+---------------------------------------------------------------------
+
+P6-02 already widened PaymentWordingTests' scan to cover the whole
+src/Merchandising.Contracts/Reporting and src/Merchandising.Api/Reporting
+directories, recursively - this card's new files
+(ReturnsAndCancellationsItemResponse.vb, ReturnsAndCancellationsResponse.vb,
+ProductPerformanceItemResponse.vb, ProductPerformanceResponse.vb) land
+inside directories already in scope, so no new directory needed adding.
+The unit suite run below (section 6) includes
+PaymentWordingFiles_ContainNoUnnegatedAuthorisingWords and it is green,
+confirming these new files were actually scanned and contain no unnegated
+denylist word - in particular:
+  - ReturnsAndCancellationsItemResponse.Status carries SalesReturnStatus's
+    own names (PendingApproval/Completed/Rejected) verbatim - never a bare
+    "Approved" (PaymentWordingTests' own header already explains why
+    "ApprovedByUserId"-shaped identifiers never match the \b-bounded regex;
+    this card adds "ApprovedByUsername" as a second instance of the exact
+    same shape).
+  - ProductPerformanceItemResponse.MarginEstimateLabel contains
+    "Informational", not a denylist word.
+
+---------------------------------------------------------------------
+5. WHAT THE TWO REPORTS QUERY, AND HOW FAN-OUT WAS AVOIDED
+---------------------------------------------------------------------
+
+Returns and cancellations (ReportRepository.GetReturnsAndCancellationsAsync):
+a FLAT per-line listing - SalesReturnLines JOIN SalesReturns JOIN Products
+JOIN Users (actor) LEFT JOIN Users (approver). No GROUP BY anywhere, so this
+is a plain multi-table join, not the pre-aggregated-subquery shape P6-02's
+ReportRepository header requires for a SUM() over more than one one-to-many
+relation - that concern does not apply to a row-per-line listing.
+
+Product performance (ReportRepository.GetProductPerformanceAsync): the
+SAME shape GetSalesByProductAsync (P6-02) already establishes - Products
+JOIN a pre-aggregated "sold" subquery (SaleLines/Sales, Completed, in
+window) LEFT JOIN a pre-aggregated "returned" subquery (SalesReturnLines/
+SalesReturns/SaleLines, Completed, in window) - extended here so the
+returned subquery ALSO computes ReturnedValue and ReturnedCostBasis (both
+via the same join to SaleLines.UnitPrice/Cost SalesReturnLineResponse's own
+header already establishes as the captured, never-recomputed source). A
+THIRD join, to StockBalances, is added directly and unaggregated - safe
+because StockBalances is 1:1 per product, never one-to-many, so it cannot
+fan out anything the first two subqueries already collapsed to one row per
+product. That join deliberately carries no date predicate at all - see
+section 7 below.
+
+---------------------------------------------------------------------
+6. UNIT TEST SUITE
+---------------------------------------------------------------------
+
+Command: dotnet test src/tests/Merchandising.Tests.Unit --no-build --nologo -v minimal
+
+Passed!  - Failed: 0, Passed: 92, Skipped: 0, Total: 92, Duration: 2 s
+
+---------------------------------------------------------------------
+7. INTEGRATION TEST SUITE — real MariaDB 10.4.32
+---------------------------------------------------------------------
+
+7a. The new tests in isolation:
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --filter "FullyQualifiedName~ReturnsAndPerformanceReportsTests"
+
+Passed!  - Failed: 0, Passed: 6, Skipped: 0, Total: 6, Duration: 5 s
+
+The six tests, and what each proves:
+  ReturnsAndCancellations_Reconciles_AgainstSalesReturnsDetailEndpoint
+        - box "both reconcile": report vs. GET /api/v1/sales/returns, two
+          independent code paths (ADR-023 point 3)
+  ProductPerformance_Reconciles_AgainstSalesAndReturnsDetailEndpoints
+        - box "both reconcile": net quantity AND net sales value, each
+          against GET /api/v1/sales netted with GET /api/v1/sales/returns
+          (Completed only) for the same window - two independent code paths
+  ProductPerformance_MarginEstimate_IsLabelledInformational
+        - box "margin estimate labelled informational wherever it appears" -
+          asserted on the LIVE response, not only the source file
+  ReturnsAndCancellations_DistinguishesRestockingFromNonRestocking
+        - box "distinguishes a return that restocked from one that did not" -
+          one return, two lines, one RestocksItem=True and one False,
+          confirmed both survive to the report distinctly
+  ProductPerformance_CurrentStockReadsLiveWhileSalesRespectPeriod
+        - box "current stock position reads StockBalances live while sales
+          figures respect the selected period" - "the mixed-temporality
+          trap": a SECOND stock movement is applied AFTER the sale (a
+          simulated receiving), and the report's CurrentStockQuantity is
+          asserted to equal the LIVE GET /api/v1/inventory/stock balance
+          (18.0000) and explicitly NOT the naive period-only arithmetic a
+          wrong implementation would show (20 seeded - 5 sold = 15.0000)
+  BothReports_StateDateRangeAndReturnsTreatment
+        - spec section 14's universal per-report requirement, for both new
+          reports (not a Done-when box of its own, but the same pattern
+          P6-02 already proves for its four - checked here rather than
+          assumed to carry over silently)
+
+7b. A LATENT FRAGILITY FOUND AND FIXED IN P6-02's OWN TESTS
+    (see section 8 for the full account) - re-run after the fix:
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --filter "FullyQualifiedName~SalesReportsTests|FullyQualifiedName~ReturnsAndPerformanceReportsTests|FullyQualifiedName~AuthorizationMatrixTests"
+
+Passed!  - Failed: 0, Passed: 40, Skipped: 0, Total: 40, Duration: 29 s
+
+7c. The extended authorization matrix (Reports.View's three new routes,
+added to P6-02's existing ReportsView_MatrixMatchesPolicyRegistry test
+rather than a new test method - the identical five-role-plus-anonymous
+matrix, just three more routes in the same table):
+
+Passed!  - Failed: 0, Passed: 26, Skipped: 0, Total: 26, Duration: 23 s
+
+(GET /api/v1/reports/sales/returns, GET /api/v1/reports/sales/product-
+performance, and GET /api/v1/sales/returns, each checked across all five
+roles plus the anonymous case, alongside the five routes P6-02 already
+covers.)
+
+7d. Full suite, twice in a row (to confirm the section 8 fix actually
+holds under real concurrent load, not merely on a quiet retry):
+
+Command: dotnet test src/tests/Merchandising.Tests.Integration --no-build --nologo -v minimal
+
+Run 1: Passed!  - Failed: 0, Passed: 486, Skipped: 0, Total: 486, Duration: 1 m 56 s
+Run 2: Passed!  - Failed: 0, Passed: 486, Skipped: 0, Total: 486, Duration: 1 m 57 s
+
+---------------------------------------------------------------------
+8. A LATENT FRAGILITY FOUND AND FIXED DURING THIS CARD
+    (in P6-02's own, already-committed test file)
+---------------------------------------------------------------------
+
+The FIRST full-suite run attempted for this card (486 tests, up from
+P6-02's 480) failed 4 - not in this card's own new file, but in
+SalesReportsTests.vb (P6-02): SalesByProduct_Reconciles_
+AgainstSalesDetailEndpoint and SalesByProduct_CostChangedAfterSale_
+CapturedCostBasisUnmoved, plus two of THIS card's own new product-
+performance tests.
+
+Root cause, confirmed directly against the shared database rather than
+guessed: every one of these fixture tests creates a brand-new Products row
+with a freshly-generated random SKU on every run, and this session alone
+had by then run the full suite and these specific test classes many times
+over the course of Phase 6. A direct query against the live database
+confirmed 191 DISTINCT products had a completed sale line dated "today" -
+comfortably past the by-product/product-performance reports' own
+pageSize=100 ceiling (P3-03's inherited contract). Both failing tests
+fetched only PAGE 1 of the by-product report and called
+.Single(Function(i) i.ProductId = productId) against it - a call that fails
+whenever the fixture product's name ("P6-02 Fixture Product"/"P6-03
+Fixture Product", identical across every run of a given test file, so
+products from the SAME file all sort adjacently) happens to land past page
+1's ordinal ProductName-ascending cutoff, which by the time of this card's
+first run it usually did. By-cashier tests never showed this, because their
+fixture cashier USERNAME is reused across runs (not regenerated), so the
+distinct-cashier count for "today" was a stable 27, never close to 100.
+
+This bug pre-dates this card (P6-02 shipped it, ticked green, because the
+database had not yet grown past the threshold) and is not something this
+card's own Done-when boxes name - but "integration suite green" (both this
+card's own box and, retroactively, P6-02's already-ticked one) cannot be
+honestly claimed while it stands, so it was fixed here rather than deferred.
+
+FIX: three "fetch every page" helpers were added -
+SalesReportsTests.FetchAllByProductAsync (P6-02's file, fixing its own two
+affected tests), and this card's own
+ReturnsAndPerformanceReportsTests.FetchAllReturnsAndCancellationsAsync /
+FetchAllProductPerformanceAsync / FetchAllStockAsync - the identical
+"page until TotalCount is reached" shape FetchAllSalesAsync/
+FetchAllReturnsAsync already use for detail-endpoint sums, now applied to
+the REPORT'S OWN paginated response too wherever a test needs to find one
+specific fixture row rather than sum everything. Not fixed, and explicitly
+out of this card's scope: ReportRepository's by-product/by-cashier/product-
+performance ORDER BY clauses carry no secondary tie-break column (unlike
+SalesReturnRepository.SearchAsync's ReturnedAtUtc-then-Id shape, added at
+this same card for the new detail endpoint) - two consecutive full-suite
+runs (section 7d) both went green, so this was not chased further here,
+but it is a real, named gap for a future card to close if a genuine
+concurrent-pagination flake is ever observed.
+
+---------------------------------------------------------------------
+9. WHAT WAS NOT BUILT, AND WHY (scope discipline)
+---------------------------------------------------------------------
+
+No status filter on GET /api/v1/sales/returns or the returns-and-
+cancellations report - every status is always returned (section 1). A
+future card could add one; spec section 14 does not ask for it and this
+card's own Done-when boxes do not either.
+
+Product performance's ORDER BY tie-break gap (section 8's final paragraph)
+is named, not closed, in this card.
+
+---------------------------------------------------------------------
+10. FILES
+---------------------------------------------------------------------
+
+New:
+  src/Merchandising.Contracts/Sales/SalesReturnSearchResponse.vb
+  src/Merchandising.Contracts/Reporting/ReturnsAndCancellationsItemResponse.vb
+  src/Merchandising.Contracts/Reporting/ReturnsAndCancellationsResponse.vb
+  src/Merchandising.Contracts/Reporting/ProductPerformanceItemResponse.vb
+  src/Merchandising.Contracts/Reporting/ProductPerformanceResponse.vb
+  src/tests/Merchandising.Tests.Integration/ReturnsAndPerformanceReportsTests.vb
+
+Modified:
+  src/Merchandising.Infrastructure/Data/SalesReturnRepository.vb   (SalesReturnSortField, SearchAsync, GetLinesForReturnsAsync)
+  src/Merchandising.Infrastructure/Data/ReportRepository.vb        (ReturnsAndCancellationsSortField, ProductPerformanceSortField, GetReturnsAndCancellationsAsync, GetProductPerformanceAsync)
+  src/Merchandising.Api/Sales/SalesReturnService.vb                (SearchAsync)
+  src/Merchandising.Api/Controllers/SalesReturnsController.vb      (GET returns)
+  src/Merchandising.Api/Reporting/ReportService.vb                 (GetReturnsAndCancellationsAsync, GetProductPerformanceAsync)
+  src/Merchandising.Api/Controllers/ReportsController.vb           (GET returns, GET product-performance)
+  src/tests/Merchandising.Tests.Integration/SalesReportsTests.vb   (FetchAllByProductAsync fragility fix, section 8)
+  src/tests/Merchandising.Tests.Integration/AuthorizationMatrixTests.vb (3 routes added to ReportsView_MatrixMatchesPolicyRegistry)

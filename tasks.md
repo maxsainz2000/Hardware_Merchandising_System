@@ -120,17 +120,19 @@ Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 con
 
 **Evidence:** `evidence/phase-6/p6-02-sales-reports.txt`
 
-### ⬜ P6-03 · Returns, cancellations, and product performance
+### ✅ P6-03 · Returns, cancellations, and product performance
 **Spec:** §14 · **Files:** `src/Merchandising.Api/Reporting/`, `src/Merchandising.Infrastructure/Data/ReportRepository.vb`
 
 **Do:** Returns and cancellations (identifiers, source sale, product, quantity, reason, actor, approval, stock effect) and the product performance summary (net quantity, net sales value, recorded cost estimate, informational margin estimate, current stock position).
 
+**Scope addition, per docs/report-specification.md §7:** no `GET` route existed for SalesReturns, so this card also adds `GET /api/v1/sales/returns` (`SalesReturnsController.GetReturns`) — the detail endpoint both reports reconcile against — gated by `Reports.View`, the identical reasoning P6-02 recorded for `GET /api/v1/sales`.
+
 **Done when:**
-- [ ] Both reconcile through the harness
-- [ ] The margin estimate is labelled **informational** wherever it appears, per spec §14's own wording — this is a merchandising prototype, not an accounting statement, and the label is the whole mitigation
-- [ ] The returns report distinguishes a return that **restocked** from one that did not (P5-11's `RestocksItem`), because a stock effect of zero is a fact about the item, not a missing row
-- [ ] Product performance's "current stock position" reads `StockBalances` live while its sales figures respect the selected period — the mixed-temporality trap, asserted
-- [ ] **Matrix suite extended**; integration suite green
+- [x] Both reconcile through the harness
+- [x] The margin estimate is labelled **informational** wherever it appears, per spec §14's own wording — this is a merchandising prototype, not an accounting statement, and the label is the whole mitigation
+- [x] The returns report distinguishes a return that **restocked** from one that did not (P5-11's `RestocksItem`), because a stock effect of zero is a fact about the item, not a missing row
+- [x] Product performance's "current stock position" reads `StockBalances` live while its sales figures respect the selected period — the mixed-temporality trap, asserted
+- [x] **Matrix suite extended**; integration suite green
 
 **Evidence:** `evidence/phase-6/p6-03-returns-and-performance.txt`
 

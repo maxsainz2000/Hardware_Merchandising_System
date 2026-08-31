@@ -132,11 +132,10 @@ Public Class SalesReportsTests
 
             Dim token As String = Await LoginAsync(client, AdminUsername)
 
-            Dim byProduct As SalesByProductResponse =
-                Await GetJsonAsync(Of SalesByProductResponse)(
-                    client, token, $"/api/v1/reports/sales/by-product?fromDate={_todayText}&toDate={_todayText}&pageSize=100")
+            Dim byProduct As IReadOnlyList(Of SalesByProductItemResponse) =
+                Await FetchAllByProductAsync(client, token, _todayText, _todayText)
 
-            Dim item As SalesByProductItemResponse = byProduct.Items.Single(Function(i) i.ProductId = productId)
+            Dim item As SalesByProductItemResponse = byProduct.Single(Function(i) i.ProductId = productId)
 
             Dim detail As IReadOnlyList(Of SaleResponse) =
                 Await FetchAllSalesAsync(client, token, _todayText, _todayText, cashierUserId:=Nothing)
@@ -237,18 +236,16 @@ Public Class SalesReportsTests
 
             Dim token As String = Await LoginAsync(client, AdminUsername)
 
-            Dim before As SalesByProductResponse =
-                Await GetJsonAsync(Of SalesByProductResponse)(
-                    client, token, $"/api/v1/reports/sales/by-product?fromDate={_todayText}&toDate={_todayText}&pageSize=100")
-            Dim itemBefore As SalesByProductItemResponse = before.Items.Single(Function(i) i.ProductId = productId)
+            Dim before As IReadOnlyList(Of SalesByProductItemResponse) =
+                Await FetchAllByProductAsync(client, token, _todayText, _todayText)
+            Dim itemBefore As SalesByProductItemResponse = before.Single(Function(i) i.ProductId = productId)
             Assert.AreEqual(18.0000D, itemBefore.CapturedCostBasis, "2 * 9.0000, the cost captured at sale time.")
 
             Await ChangeCostDirectlyAsync(productId, newCost:=50.0000D)
 
-            Dim after As SalesByProductResponse =
-                Await GetJsonAsync(Of SalesByProductResponse)(
-                    client, token, $"/api/v1/reports/sales/by-product?fromDate={_todayText}&toDate={_todayText}&pageSize=100")
-            Dim itemAfter As SalesByProductItemResponse = after.Items.Single(Function(i) i.ProductId = productId)
+            Dim after As IReadOnlyList(Of SalesByProductItemResponse) =
+                Await FetchAllByProductAsync(client, token, _todayText, _todayText)
+            Dim itemAfter As SalesByProductItemResponse = after.Single(Function(i) i.ProductId = productId)
 
             Assert.AreEqual(
                 18.0000D, itemAfter.CapturedCostBasis,
@@ -460,6 +457,42 @@ Public Class SalesReportsTests
             Dim result As SaleSearchResponse =
                 Await GetJsonAsync(Of SaleSearchResponse)(
                     client, token, $"/api/v1/sales?fromDate={fromDate}&toDate={toDate}{cashierFilter}&page={page}&pageSize=100")
+
+            items.AddRange(result.Items)
+
+            If items.Count >= result.TotalCount OrElse result.Items.Count = 0 Then
+                Exit Do
+            End If
+
+            page += 1
+
+        Loop
+
+        Return items
+
+    End Function
+
+    ''' <summary>
+    ''' Pages through GET /api/v1/reports/sales/by-product until every row
+    ''' for the filter is fetched - P6-03 found this necessary once the
+    ''' shared database accumulated more than 100 distinct products sold
+    ''' "today" across this whole session's test runs (every fixture product
+    ''' here gets a brand new random SKU, so this list is genuinely
+    ''' unbounded across repeated runs, unlike by-cashier's small, reused
+    ''' fixture set). A single pageSize=100 fetch is no longer guaranteed to
+    ''' contain this test's own fixture row.
+    ''' </summary>
+    Private Async Function FetchAllByProductAsync(
+        client As HttpClient, token As String, fromDate As String, toDate As String) As Task(Of IReadOnlyList(Of SalesByProductItemResponse))
+
+        Dim items As New List(Of SalesByProductItemResponse)
+        Dim page As Integer = 1
+
+        Do
+
+            Dim result As SalesByProductResponse =
+                Await GetJsonAsync(Of SalesByProductResponse)(
+                    client, token, $"/api/v1/reports/sales/by-product?fromDate={fromDate}&toDate={toDate}&page={page}&pageSize=100")
 
             items.AddRange(result.Items)
 

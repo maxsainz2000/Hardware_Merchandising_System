@@ -480,6 +480,43 @@ Namespace Sales
 
         End Function
 
+        ''' <summary>
+        ''' P6-03: paginated, plain (non-locking) read of return headers plus
+        ''' their lines - GET /api/v1/sales/returns, the detail endpoint the
+        ''' returns-and-cancellations and product-performance reports
+        ''' reconcile against. No transaction: every read here is a plain
+        ''' SELECT, the same connection-per-call shape SaleService.SearchAsync
+        ''' already establishes for GET /api/v1/sales.
+        ''' </summary>
+        Public Async Function SearchAsync(
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of (Items As IReadOnlyList(Of SalesReturnResponse), TotalCount As Integer))
+
+            Using connection As MySqlConnection =
+                Await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(False)
+
+                Dim result =
+                    Await SalesReturnRepository.SearchAsync(
+                        connection, fromUtc, toUtcExclusive, sortDescending, page, pageSize, cancellationToken).ConfigureAwait(False)
+
+                Dim returnIds As IReadOnlyList(Of Integer) = result.Items.Select(Function(r) r.Id).ToList()
+
+                Dim linesByReturnId As ILookup(Of Integer, SalesReturnLine) =
+                    Await SalesReturnRepository.GetLinesForReturnsAsync(connection, returnIds, cancellationToken).ConfigureAwait(False)
+
+                Dim items = result.Items.Select(
+                    Function(r) ToResponse(r, linesByReturnId(r.Id).ToList())).ToList()
+
+                Return (Items:=CType(items, IReadOnlyList(Of SalesReturnResponse)), TotalCount:=result.TotalCount)
+
+            End Using
+
+        End Function
+
         ' ----------------------------------------------------------- helpers
 
         Private Shared Async Function ReadRoundingPolicyAsync(

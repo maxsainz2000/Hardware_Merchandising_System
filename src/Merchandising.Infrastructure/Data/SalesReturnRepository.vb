@@ -31,8 +31,19 @@
 ' EVERY WRITE HERE TAKES A TRANSACTION, WITH NO OPTIONAL OVERLOAD -
 ' SalesReturnService owns it (ADR-006), the same arrangement every other
 ' repository in this solution uses.
+'
+' P6-03: SearchAsync/GetLinesForReturnsAsync are the first PLAIN, NON-LOCKING
+' reads this class carries - GET /api/v1/sales/returns, the detail endpoint
+' the returns-and-cancellations and product-performance reports reconcile
+' against (docs/report-specification.md section 7), the same scope addition
+' P6-02 made for GET /api/v1/sales. Lines are fetched in a SECOND query,
+' keyed by the page's own return ids, rather than one JOIN across the
+' one-to-many SalesReturnLines table - SaleRepository.GetLinesForSalesAsync's
+' identical "paginate the header, then fetch children for just this page"
+' shape.
 
 Imports System.Collections.Generic
+Imports System.Linq
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports Merchandising.Domain.Entities
@@ -40,6 +51,11 @@ Imports Merchandising.Domain.Sales
 Imports MySqlConnector
 
 Namespace Data
+
+    ''' <summary>The one sort field <see cref="SalesReturnRepository.SearchAsync"/> honours - kept as an enum, not a bare "always ReturnedAt", the same StockMovementSortField precedent ReportRepository's header names.</summary>
+    Public Enum SalesReturnSortField
+        ReturnedAt
+    End Enum
 
     Public NotInheritable Class SalesReturnRepository
 
@@ -375,6 +391,132 @@ Namespace Data
 
                 Return lines.AsReadOnly()
             End Using
+
+        End Function
+
+        ''' <summary>
+        ''' Paginated, filtered, sorted list of return HEADERS only - lines
+        ''' are fetched separately by <see cref="GetLinesForReturnsAsync"/>
+        ''' once the page's own ids are known (this class's own header
+        ''' explains why). <paramref name="fromUtc"/>/<paramref name="toUtcExclusive"/>
+        ''' are already-converted UTC instants filtering ReturnedAtUtc - the
+        ''' caller does the store-local-to-UTC conversion. Every status
+        ''' appears (PendingApproval, Completed, Rejected) - this is a plain
+        ''' list, never filtered to only-committed rows (docs/report-
+        ''' specification.md section 4 row 5). <paramref name="page"/>/
+        ''' <paramref name="pageSize"/> must already be clamped by the
+        ''' caller.
+        ''' </summary>
+        Public Shared Async Function SearchAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of SalesReturn), TotalCount As Integer))
+
+            Dim conditions As New List(Of String)
+
+            If fromUtc.HasValue Then
+                conditions.Add("ReturnedAtUtc >= @fromUtc")
+            End If
+
+            If toUtcExclusive.HasValue Then
+                conditions.Add("ReturnedAtUtc < @toUtcExclusive")
+            End If
+
+            Dim whereClause As String =
+                If(conditions.Count > 0, " WHERE " & String.Join(" AND ", conditions), String.Empty)
+
+            Dim addFilterParameters As Action(Of MySqlCommand) =
+                Sub(command As MySqlCommand)
+                    If fromUtc.HasValue Then
+                        command.Parameters.AddWithValue("@fromUtc", fromUtc.Value)
+                    End If
+                    If toUtcExclusive.HasValue Then
+                        command.Parameters.AddWithValue("@toUtcExclusive", toUtcExclusive.Value)
+                    End If
+                End Sub
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText = "SELECT COUNT(*) FROM SalesReturns" & whereClause & ";"
+                addFilterParameters(command)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of SalesReturn)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT Id, SaleId, ReturnedByUserId, ApprovedByUserId, Reason, ExceedsThreshold, Status, " &
+                    "       RefundMethod, RefundAmount, ReturnedAtUtc, ApprovedAtUtc, RowVersion, CreatedAtUtc, UpdatedAtUtc " &
+                    "  FROM SalesReturns" &
+                    whereClause &
+                    " ORDER BY ReturnedAtUtc " & If(sortDescending, "DESC", "ASC") & ", Id " & If(sortDescending, "DESC", "ASC") &
+                    " LIMIT @pageSize OFFSET @offset;"
+                addFilterParameters(command)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add(ReadSalesReturn(reader))
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>Every SalesReturnLines row for the given return ids, joined to SaleLines (UnitPrice) and Products (Sku, Name) - same projection as <see cref="GetLinesAsync"/>, batched for many returns at once. Empty when <paramref name="salesReturnIds"/> is empty.</summary>
+        Public Shared Async Function GetLinesForReturnsAsync(
+            connection As MySqlConnection,
+            salesReturnIds As IReadOnlyList(Of Integer),
+            Optional cancellationToken As CancellationToken = Nothing) As Task(Of ILookup(Of Integer, SalesReturnLine))
+
+            If salesReturnIds.Count = 0 Then
+                Return Array.Empty(Of SalesReturnLine)().ToLookup(Function(l) l.SalesReturnId)
+            End If
+
+            Dim lines As New List(Of SalesReturnLine)
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT srl.SalesReturnId, srl.Id, srl.SaleLineId, srl.ProductId, p.Sku, p.Name, srl.QuantityReturned, " &
+                    "       sl.UnitPrice, srl.RestocksItem, srl.CreatedAtUtc " &
+                    "  FROM SalesReturnLines srl " &
+                    "  JOIN SaleLines sl ON sl.Id = srl.SaleLineId " &
+                    "  JOIN Products p ON p.Id = srl.ProductId " &
+                    " WHERE srl.SalesReturnId IN (" & SaleRepository.InClausePlaceholders(salesReturnIds.Count) & ") " &
+                    " ORDER BY srl.SalesReturnId, srl.Id;"
+                SaleRepository.AddInClauseParameters(command, salesReturnIds)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+
+                        lines.Add(New SalesReturnLine With {
+                            .SalesReturnId = reader.GetInt32(0),
+                            .Id = reader.GetInt32(1),
+                            .SaleLineId = reader.GetInt32(2),
+                            .ProductId = reader.GetInt32(3),
+                            .ProductSku = reader.GetString(4),
+                            .ProductName = reader.GetString(5),
+                            .QuantityReturned = reader.GetDecimal(6),
+                            .UnitPrice = reader.GetDecimal(7),
+                            .RestocksItem = reader.GetBoolean(8),
+                            .CreatedAtUtc = reader.GetDateTime(9)
+                        })
+
+                    End While
+                End Using
+            End Using
+
+            Return lines.ToLookup(Function(l) l.SalesReturnId)
 
         End Function
 

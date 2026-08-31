@@ -59,6 +59,7 @@
 ' exactly this reason - still fully policy-gated, just imperatively.
 
 Imports System.Collections.Generic
+Imports System.Globalization
 Imports System.Linq
 Imports System.Security.Claims
 Imports System.Threading.Tasks
@@ -85,6 +86,9 @@ Namespace Controllers
 
         ''' <summary>Matches SalesReturns.Reason VARCHAR(255) (0012).</summary>
         Private Const MaxReasonLength As Integer = 255
+
+        Private Const DefaultPageSize As Integer = 25
+        Private Const MaxPageSize As Integer = 100
 
         Private ReadOnly _connectionFactory As ConnectionFactory
         Private ReadOnly _salesReturnService As SalesReturnService
@@ -266,6 +270,125 @@ Namespace Controllers
                 Await _salesReturnService.RejectExceptionalAsync(id, actorUserId, correlationId, cancellationToken:=HttpContext.RequestAborted)
 
             Return TransitionResult(outcome, id, correlationId)
+
+        End Function
+
+        ''' <summary>
+        ''' P6-03: GET /api/v1/sales/returns - the detail endpoint the
+        ''' returns-and-cancellations and product-performance reports
+        ''' reconcile against (docs/report-specification.md section 7), the
+        ''' same scope addition P6-02 made for GET /api/v1/sales. Gated by
+        ''' Reports.View, not SalesReturns.Create/ApproveExceptional - this
+        ''' endpoint exists to serve report reconciliation, the identical
+        ''' reasoning SalesController.SearchSales' own header records for
+        ''' GET /api/v1/sales, applied here rather than re-decided. Every
+        ''' status appears (PendingApproval, Completed, Rejected) - there is
+        ''' no status filter, because the returns-and-cancellations report
+        ''' this endpoint reconciles against lists every status too.
+        ''' </summary>
+        <Authorize(AuthenticationSchemes:=SessionAuthenticationHandler.SchemeName, Policy:=PolicyRegistry.Names.ReportsView)>
+        <HttpGet("returns")>
+        Public Async Function GetReturns(
+            <FromQuery> Optional fromDate As String = Nothing,
+            <FromQuery> Optional toDate As String = Nothing,
+            <FromQuery> Optional sort As String = Nothing,
+            <FromQuery> Optional page As Integer = 1,
+            <FromQuery> Optional pageSize As Integer = DefaultPageSize) As Task(Of IActionResult)
+
+            Dim correlationId As String = HttpContext.GetCorrelationId()
+            Dim fieldErrors As New Dictionary(Of String, String())
+
+            Dim fromLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(fromDate) Then
+                Dim parsedFromDate As DateOnly
+                If DateOnly.TryParseExact(fromDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedFromDate) Then
+                    fromLocalDate = parsedFromDate
+                Else
+                    fieldErrors("fromDate") = {"fromDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            Dim toLocalDate As DateOnly? = Nothing
+
+            If Not String.IsNullOrWhiteSpace(toDate) Then
+                Dim parsedToDate As DateOnly
+                If DateOnly.TryParseExact(toDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, parsedToDate) Then
+                    toLocalDate = parsedToDate
+                Else
+                    fieldErrors("toDate") = {"toDate must be a calendar date in yyyy-MM-dd form, interpreted in the store time zone."}
+                End If
+            End If
+
+            If fromLocalDate.HasValue AndAlso toLocalDate.HasValue AndAlso fromLocalDate.Value > toLocalDate.Value Then
+                fieldErrors("toDate") = {"toDate cannot be before fromDate."}
+            End If
+
+            Dim sortDescending As Boolean = True
+
+            If Not String.IsNullOrWhiteSpace(sort) Then
+                If Not TryParseReturnedAtSort(sort, sortDescending) Then
+                    fieldErrors("sort") = {"Unsupported sort. Use returnedAt, optionally suffixed with ':asc' or ':desc'."}
+                End If
+            End If
+
+            If fieldErrors.Count > 0 Then
+                Return ValidationFailed(fieldErrors, correlationId)
+            End If
+
+            Dim effectivePage As Integer = If(page < 1, 1, page)
+            Dim effectivePageSize As Integer = If(pageSize < 1, DefaultPageSize, Math.Min(pageSize, MaxPageSize))
+
+            Dim fromUtc As DateTime? =
+                If(fromLocalDate.HasValue, CType(StoreTimeZone.StartOfDayUtc(fromLocalDate.Value), DateTime?), Nothing)
+            Dim toUtcExclusive As DateTime? =
+                If(toLocalDate.HasValue, CType(StoreTimeZone.EndOfDayUtcExclusive(toLocalDate.Value), DateTime?), Nothing)
+
+            Dim result =
+                Await _salesReturnService.SearchAsync(
+                    fromUtc, toUtcExclusive, sortDescending, effectivePage, effectivePageSize, HttpContext.RequestAborted)
+
+            Return Ok(New SalesReturnSearchResponse With {
+                .Items = result.Items,
+                .TotalCount = result.TotalCount,
+                .Page = effectivePage,
+                .PageSize = effectivePageSize,
+                .MaxPageSize = MaxPageSize,
+                .Sort = "returnedAt" & If(sortDescending, ":desc", ":asc"),
+                .FromDate = If(fromLocalDate.HasValue, fromLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .ToDate = If(toLocalDate.HasValue, toLocalDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Nothing),
+                .TimeZone = StoreTimeZone.IanaId
+            })
+
+        End Function
+
+        Private Shared Function TryParseReturnedAtSort(value As String, ByRef sortDescending As Boolean) As Boolean
+
+            Dim parts As String() = value.Split(":"c)
+
+            If parts.Length > 2 Then
+                Return False
+            End If
+
+            If Not String.Equals(parts(0).Trim(), "returnedAt", StringComparison.OrdinalIgnoreCase) Then
+                Return False
+            End If
+
+            sortDescending = False
+
+            If parts.Length = 2 Then
+
+                Dim direction As String = parts(1).Trim()
+
+                If String.Equals(direction, "desc", StringComparison.OrdinalIgnoreCase) Then
+                    sortDescending = True
+                ElseIf Not String.Equals(direction, "asc", StringComparison.OrdinalIgnoreCase) Then
+                    Return False
+                End If
+
+            End If
+
+            Return True
 
         End Function
 

@@ -48,6 +48,18 @@ Namespace Data
         CompletedSalesTotal
     End Enum
 
+    ''' <summary>The one sort field <see cref="ReportRepository.GetReturnsAndCancellationsAsync"/> honours - see SalesReturnRepository.SalesReturnSortField's identical single-value precedent.</summary>
+    Public Enum ReturnsAndCancellationsSortField
+        ReturnedAt
+    End Enum
+
+    ''' <summary>The sort fields <see cref="ReportRepository.GetProductPerformanceAsync"/> will honour.</summary>
+    Public Enum ProductPerformanceSortField
+        ProductName
+        NetSalesValue
+        NetQuantity
+    End Enum
+
     Public NotInheritable Class ReportRepository
 
         Private Sub New()
@@ -305,6 +317,211 @@ Namespace Data
                                                 paymentTotalsByCashier(r.CashierUserId),
                                                 CType(Array.Empty(Of (Method As String, Amount As Decimal))(), IReadOnlyList(Of (Method As String, Amount As Decimal)))))).
                 ToList()
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 5. A FLAT per-line listing, one row per
+        ''' SalesReturnLines row - no GROUP BY, so this is a plain multi-table
+        ''' join, not the pre-aggregated-subquery shape this class's header
+        ''' requires for a SUM() over more than one one-to-many relation.
+        ''' Every status appears - see ReturnsAndCancellationsItemResponse's
+        ''' header for why this is never filtered to only-Completed rows.
+        ''' </summary>
+        Public Shared Async Function GetReturnsAndCancellationsAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (SalesReturnId As Integer, SalesReturnLineId As Integer, SaleId As Integer,
+                                                    ProductId As Integer, ProductSku As String, ProductName As String,
+                                                    QuantityReturned As Decimal, Reason As String,
+                                                    ReturnedByUserId As Integer, ReturnedByUsername As String,
+                                                    ApprovedByUserId As Integer?, ApprovedByUsername As String,
+                                                    Status As String, RestocksItem As Boolean, ReturnedAtUtc As DateTime)),
+                       TotalCount As Integer))
+
+            Dim whereClause As String = DateWhereClause("sr.ReturnedAtUtc", fromUtc, toUtcExclusive)
+            Dim trimmedWhereClause As String =
+                If(whereClause.Length > 0, " WHERE " & whereClause.Substring(" AND ".Length), String.Empty)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) " &
+                    "  FROM SalesReturnLines srl JOIN SalesReturns sr ON sr.Id = srl.SalesReturnId" &
+                    trimmedWhereClause & ";"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim items As New List(Of (SalesReturnId As Integer, SalesReturnLineId As Integer, SaleId As Integer,
+                                      ProductId As Integer, ProductSku As String, ProductName As String,
+                                      QuantityReturned As Decimal, Reason As String,
+                                      ReturnedByUserId As Integer, ReturnedByUsername As String,
+                                      ApprovedByUserId As Integer?, ApprovedByUsername As String,
+                                      Status As String, RestocksItem As Boolean, ReturnedAtUtc As DateTime))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT sr.Id, srl.Id, sr.SaleId, srl.ProductId, p.Sku, p.Name, srl.QuantityReturned, sr.Reason, " &
+                    "       sr.ReturnedByUserId, ru.Username, sr.ApprovedByUserId, au.Username, " &
+                    "       sr.Status, srl.RestocksItem, sr.ReturnedAtUtc " &
+                    "  FROM SalesReturnLines srl" &
+                    "  JOIN SalesReturns sr ON sr.Id = srl.SalesReturnId" &
+                    "  JOIN Products p ON p.Id = srl.ProductId" &
+                    "  JOIN Users ru ON ru.Id = sr.ReturnedByUserId" &
+                    "  LEFT JOIN Users au ON au.Id = sr.ApprovedByUserId" &
+                    trimmedWhereClause &
+                    " ORDER BY sr.ReturnedAtUtc " & If(sortDescending, "DESC", "ASC") & ", srl.Id " & If(sortDescending, "DESC", "ASC") &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+
+                        Dim approvedByOrdinal As Integer = 10
+                        Dim approvedByUsernameOrdinal As Integer = 11
+
+                        items.Add((SalesReturnId:=reader.GetInt32(0), SalesReturnLineId:=reader.GetInt32(1), SaleId:=reader.GetInt32(2),
+                                   ProductId:=reader.GetInt32(3), ProductSku:=reader.GetString(4), ProductName:=reader.GetString(5),
+                                   QuantityReturned:=reader.GetDecimal(6), Reason:=reader.GetString(7),
+                                   ReturnedByUserId:=reader.GetInt32(8), ReturnedByUsername:=reader.GetString(9),
+                                   ApprovedByUserId:=If(reader.IsDBNull(approvedByOrdinal), CType(Nothing, Integer?), reader.GetInt32(approvedByOrdinal)),
+                                   ApprovedByUsername:=If(reader.IsDBNull(approvedByUsernameOrdinal), Nothing, reader.GetString(approvedByUsernameOrdinal)),
+                                   Status:=reader.GetString(12), RestocksItem:=reader.GetBoolean(13), ReturnedAtUtc:=reader.GetDateTime(14)))
+
+                    End While
+                End Using
+            End Using
+
+            Return (Items:=items, TotalCount:=totalCount)
+
+        End Function
+
+        ''' <summary>
+        ''' Spec section 14 row 12. Only products with at least one Completed
+        ''' sale line in the window appear (same INNER JOIN restriction
+        ''' <see cref="GetSalesByProductAsync"/> uses). Sold/returned are each
+        ''' pre-aggregated in their own subquery (this class's header) - the
+        ''' returned subquery additionally joins SaleLines for UnitPrice/Cost
+        ''' so the returned VALUE and returned COST BASIS can be netted
+        ''' against the sold side, never against Products.Price/Products.Cost.
+        ''' StockBalances is joined directly, unaggregated - it is one row per
+        ''' product (1:1), never one-to-many, so joining it a third time
+        ''' cannot fan out anything the first two subqueries already
+        ''' collapsed to one row per product. This is also why the join
+        ''' carries NO date predicate: current stock is read LIVE, regardless
+        ''' of the window the sales figures respect (docs/report-
+        ''' specification.md, ProductPerformanceItemResponse's own header -
+        ''' "the mixed-temporality trap").
+        ''' </summary>
+        Public Shared Async Function GetProductPerformanceAsync(
+            connection As MySqlConnection,
+            fromUtc As DateTime?,
+            toUtcExclusive As DateTime?,
+            sortField As ProductPerformanceSortField,
+            sortDescending As Boolean,
+            page As Integer,
+            pageSize As Integer,
+            Optional cancellationToken As CancellationToken = Nothing) _
+            As Task(Of (Items As IReadOnlyList(Of (ProductId As Integer, ProductSku As String, ProductName As String,
+                                                    QuantitySold As Decimal, QuantityReturned As Decimal,
+                                                    GrossSalesValue As Decimal, ReturnedValue As Decimal,
+                                                    CapturedCostBasis As Decimal, ReturnedCostBasis As Decimal,
+                                                    CurrentStockQuantity As Decimal)),
+                       TotalCount As Integer))
+
+            Dim soldWhere As String = DateWhereClause("s.CreatedAtUtc", fromUtc, toUtcExclusive)
+            Dim returnedWhere As String = DateWhereClause("sr.ReturnedAtUtc", fromUtc, toUtcExclusive)
+
+            Dim totalCount As Integer
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT COUNT(*) FROM (" &
+                    "  SELECT sl.ProductId" &
+                    "    FROM SaleLines sl JOIN Sales s ON s.Id = sl.SaleId" &
+                    "   WHERE s.Status = 'Completed'" & soldWhere &
+                    "   GROUP BY sl.ProductId" &
+                    ") counted;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                totalCount = CInt(Await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(False))
+            End Using
+
+            Dim orderBy As String
+            Select Case sortField
+                Case ProductPerformanceSortField.NetSalesValue
+                    orderBy = "(sold.GrossSalesValue - COALESCE(ret.ReturnedValue, 0))"
+                Case ProductPerformanceSortField.NetQuantity
+                    orderBy = "(sold.QuantitySold - COALESCE(ret.QuantityReturned, 0))"
+                Case Else
+                    orderBy = "p.Name"
+            End Select
+            orderBy &= If(sortDescending, " DESC", " ASC")
+
+            Dim items As New List(Of (ProductId As Integer, ProductSku As String, ProductName As String,
+                                      QuantitySold As Decimal, QuantityReturned As Decimal,
+                                      GrossSalesValue As Decimal, ReturnedValue As Decimal,
+                                      CapturedCostBasis As Decimal, ReturnedCostBasis As Decimal,
+                                      CurrentStockQuantity As Decimal))
+
+            Using command As MySqlCommand = connection.CreateCommand()
+                command.CommandText =
+                    "SELECT p.Id, p.Sku, p.Name, " &
+                    "       CAST(sold.QuantitySold AS DECIMAL(19,3)), " &
+                    "       CAST(COALESCE(ret.QuantityReturned, 0) AS DECIMAL(19,3)), " &
+                    "       CAST(sold.GrossSalesValue AS DECIMAL(19,4)), " &
+                    "       CAST(COALESCE(ret.ReturnedValue, 0) AS DECIMAL(19,4)), " &
+                    "       CAST(sold.CapturedCostBasis AS DECIMAL(19,4)), " &
+                    "       CAST(COALESCE(ret.ReturnedCostBasis, 0) AS DECIMAL(19,4)), " &
+                    "       CAST(COALESCE(sb.Quantity, 0) AS DECIMAL(19,3)) " &
+                    "  FROM Products p" &
+                    "  JOIN (" &
+                    "        SELECT sl.ProductId," &
+                    "               SUM(sl.Quantity) AS QuantitySold," &
+                    "               SUM(sl.LineTotal) AS GrossSalesValue," &
+                    "               SUM(sl.Cost * sl.Quantity) AS CapturedCostBasis" &
+                    "          FROM SaleLines sl JOIN Sales s ON s.Id = sl.SaleId" &
+                    "         WHERE s.Status = 'Completed'" & soldWhere &
+                    "         GROUP BY sl.ProductId" &
+                    "       ) sold ON sold.ProductId = p.Id" &
+                    "  LEFT JOIN (" &
+                    "        SELECT srl.ProductId," &
+                    "               SUM(srl.QuantityReturned) AS QuantityReturned," &
+                    "               SUM(srl.QuantityReturned * sl.UnitPrice) AS ReturnedValue," &
+                    "               SUM(srl.QuantityReturned * sl.Cost) AS ReturnedCostBasis" &
+                    "          FROM SalesReturnLines srl" &
+                    "          JOIN SalesReturns sr ON sr.Id = srl.SalesReturnId" &
+                    "          JOIN SaleLines sl ON sl.Id = srl.SaleLineId" &
+                    "         WHERE sr.Status = 'Completed'" & returnedWhere &
+                    "         GROUP BY srl.ProductId" &
+                    "       ) ret ON ret.ProductId = p.Id" &
+                    "  LEFT JOIN StockBalances sb ON sb.ProductId = p.Id" &
+                    " ORDER BY " & orderBy &
+                    " LIMIT @pageSize OFFSET @offset;"
+                AddDateParameters(command, fromUtc, toUtcExclusive)
+                command.Parameters.AddWithValue("@pageSize", pageSize)
+                command.Parameters.AddWithValue("@offset", (page - 1) * pageSize)
+
+                Using reader As MySqlDataReader = Await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(False)
+                    While Await reader.ReadAsync(cancellationToken).ConfigureAwait(False)
+                        items.Add((ProductId:=reader.GetInt32(0), ProductSku:=reader.GetString(1), ProductName:=reader.GetString(2),
+                                   QuantitySold:=reader.GetDecimal(3), QuantityReturned:=reader.GetDecimal(4),
+                                   GrossSalesValue:=reader.GetDecimal(5), ReturnedValue:=reader.GetDecimal(6),
+                                   CapturedCostBasis:=reader.GetDecimal(7), ReturnedCostBasis:=reader.GetDecimal(8),
+                                   CurrentStockQuantity:=reader.GetDecimal(9)))
+                    End While
+                End Using
+            End Using
 
             Return (Items:=items, TotalCount:=totalCount)
 
