@@ -297,6 +297,45 @@ Public Class ApiHttpTests
     End Function
 
     ''' <summary>
+    ''' P6-07 / spec section 15, "Location": the backup directory is
+    ''' "outside the application binaries and not served by the API".
+    ''' Before this test that claim rested on there being no
+    ''' UseStaticFiles/route for it anywhere in Program.vb - true by
+    ''' inspection, never by assertion. A static-file handler added later
+    ''' for an unrelated reason (serving generated reports, say) would start
+    ''' serving this directory too unless it were explicitly excluded, and
+    ''' only a request-level test would notice.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function BackupDirectory_RequestedThroughTheApi_Is404() As Task
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            ' Shaped after the real default (BackupSettings.Directory =
+            ' "C:\MerchandisingBackups") and a couple of plausible route
+            ' names an operator-facing feature might have used instead.
+            Dim requestPaths As String() = {
+                "/MerchandisingBackups/merchandising-20260101-000000.sql",
+                "/backups/merchandising-20260101-000000.sql",
+                "/api/v1/backups"
+            }
+
+            For Each requestPath As String In requestPaths
+
+                Using response As HttpResponseMessage = Await client.GetAsync(requestPath)
+
+                    Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode,
+                                    $"'{requestPath}' should be refused with 404 - the API must never serve backup files.")
+
+                End Using
+
+            Next
+
+        End Using
+
+    End Function
+
+    ''' <summary>
     ''' The leak check from P1-10, applied to a response body. Kept short and
     ''' specific: these are the fragments that actually appeared when the
     ''' defect was live.

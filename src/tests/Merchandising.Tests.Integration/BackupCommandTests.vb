@@ -1,4 +1,8 @@
+Imports System.Collections.Generic
 Imports System.IO
+Imports System.Runtime.Versioning
+Imports System.Security.AccessControl
+Imports System.Security.Principal
 Imports System.Threading.Tasks
 Imports Merchandising.Infrastructure.Data
 Imports Merchandising.Maintenance.Backup
@@ -184,16 +188,21 @@ Public Class BackupCommandTests
 
     ''' <summary>
     ''' Spec section 15, "Retention": a configurable count. Proven by running
-    ''' more backups than the count allows and checking the oldest are gone.
+    ''' more backups than the count allows and checking not merely that two
+    ''' remain, but that they are the two NEWEST - a test that only counts
+    ''' files would pass identically for a bug that deleted the wrong end of
+    ''' the list.
     ''' </summary>
     <TestMethod>
     Public Async Function Backup_PrunesOldestDumpsBeyondRetentionCount() As Task
 
         Dim settings As BackupSettings = BackupSettingsForTest(retentionCount:=2)
+        Dim producedPaths As New List(Of String)
 
         For i As Integer = 1 To 3
             Dim run As BackupResult = Await RunBackupAsync(settings)
             Assert.AreNotEqual(BackupOutcome.Failed, run.Outcome, $"Run {i} failed: {run.Detail}")
+            producedPaths.Add(run.FilePath)
             ' Dump file names carry a whole-second timestamp; without this the
             ' three runs would collide on one name and prove nothing.
             Await Task.Delay(1100)
@@ -202,6 +211,156 @@ Public Class BackupCommandTests
         Dim remaining As String() = Directory.GetFiles(_workDirectory, "*.sql")
         Assert.HasCount(2, remaining,
                         "Retention count of 2 should have left exactly two dumps, found " & remaining.Length)
+
+        Dim oldest As String = producedPaths(0)
+        Dim newest As String() = {producedPaths(1), producedPaths(2)}
+
+        Assert.IsFalse(File.Exists(oldest), $"The OLDEST dump should have been pruned: {oldest}")
+        For Each expected As String In newest
+            Assert.IsTrue(File.Exists(expected), $"A NEWER dump was pruned instead of the oldest: {expected}")
+        Next
+
+    End Function
+
+    ''' <summary>
+    ''' P6-07 / CARRY-02: closes the debt ADR-019 recorded. Until this test,
+    ''' the volume-PRESENT off-host copy was evidenced only by
+    ''' evidence/phase-1/p1-17-backup-success.log - never asserted by any
+    ''' test in this class, deliberately, because a checksum test must not
+    ''' depend on which USB stick is plugged into this desk (ADR-019).
+    ''' </summary>
+    ''' <remarks>
+    ''' This test's entire subject IS the off-host copy, unlike the checksum
+    ''' test ADR-019 was written about - so unlike that test, this one SKIPS
+    ''' LOUDLY (Assert.Inconclusive, with a message explaining why) rather
+    ''' than pretending to prove something it cannot, when no MERCHBACKUP
+    ''' volume is attached. ADR-019 rejected Inconclusive for the checksum
+    ''' test because that test could - and should - assert everything it
+    ''' could regardless of hardware. This test cannot: without a volume
+    ''' there is nothing here to assert.
+    ''' </remarks>
+    <TestMethod>
+    Public Async Function Backup_WhenOffHostVolumeAttached_CopiesByteIdenticalDump() As Task
+
+        If Not IsMerchBackupVolumeReady() Then
+            Assert.Inconclusive(
+                "SKIPPED LOUDLY: no volume labelled 'MERCHBACKUP' is attached to this machine. " &
+                "This test asserts the off-host copy against a REAL volume (CARRY-02 / ADR-019) " &
+                "and proves nothing without one - it is reported Inconclusive, not a silent pass.")
+        End If
+
+        Dim result As BackupResult = Await RunBackupAsync(BackupSettingsForTest(retentionCount:=5))
+
+        Assert.AreEqual(BackupOutcome.Succeeded, result.Outcome,
+                        $"A MERCHBACKUP volume was attached; the run should have copied off-host. Detail: {result.Detail}")
+        Assert.IsNotNull(result.OffHostPath, "Succeeded but recorded no off-host path.")
+        Assert.IsTrue(File.Exists(result.OffHostPath), $"Recorded off-host path does not exist: {result.OffHostPath}")
+
+        Dim localBytes As Byte() = File.ReadAllBytes(result.FilePath)
+        Dim offHostBytes As Byte() = File.ReadAllBytes(result.OffHostPath)
+        CollectionAssert.AreEqual(localBytes, offHostBytes, "Off-host copy is not byte-identical to the local dump.")
+
+        Dim offHostChecksum As String = Merchandising.Maintenance.Migrations.ChecksumCalculator.ComputeSha256Hex(result.OffHostPath)
+        Assert.AreEqual(result.Sha256, offHostChecksum, "Off-host copy's checksum does not match the recorded one.")
+
+    End Function
+
+    ''' <summary>
+    ''' P6-07 / ADR-025: the off-host copy is rotated by the same
+    ''' RetentionCount as the local directory - proven the same way the
+    ''' local retention test above is proven, against the real volume.
+    ''' Skips loudly under the same rule as the test above: this is exactly
+    ''' the branch that cannot be proven without real hardware attached.
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Backup_PrunesOffHostDumpsBeyondRetentionCountToo() As Task
+
+        If Not IsMerchBackupVolumeReady() Then
+            Assert.Inconclusive(
+                "SKIPPED LOUDLY: no volume labelled 'MERCHBACKUP' is attached to this machine. " &
+                "Off-host rotation (P6-07 / ADR-025) cannot be proven without a real off-host copy happening.")
+        End If
+
+        Dim settings As BackupSettings = BackupSettingsForTest(retentionCount:=2)
+
+        For i As Integer = 1 To 3
+            Dim run As BackupResult = Await RunBackupAsync(settings)
+            Assert.AreEqual(BackupOutcome.Succeeded, run.Outcome, $"Run {i} did not succeed: {run.Detail}")
+            Await Task.Delay(1100)
+        Next
+
+        Dim offHostFolder As String = FindOffHostFolder(settings)
+        Dim remaining As String() = Directory.GetFiles(offHostFolder, "*.sql")
+        Assert.HasCount(2, remaining,
+                        "Retention count of 2 should have left exactly two off-host dumps, found " & remaining.Length)
+
+    End Function
+
+    ''' <summary>
+    ''' Spec section 15, "Failure handling", against a different failure
+    ''' than <see cref="Backup_WithWrongCredentials_ReportsFailureAndNeverClaimsSuccess"/>:
+    ''' the database is fully reachable, but the backup directory itself
+    ''' denies write access. This is the induced failure the card names
+    ''' explicitly.
+    ''' </summary>
+    ''' <remarks>
+    ''' Written expecting mysqldump's own result-file write to be what fails.
+    ''' Measured instead: <see cref="MysqlDumpRunner"/> writes its
+    ''' --defaults-extra-file (the credential file) into the SAME directory
+    ''' before it ever starts mysqldump, and that write is what threw -
+    ''' System.UnauthorizedAccessException, straight out of ExecuteAsync,
+    ''' with NOTHING recorded anywhere. That was the actual defect this card
+    ''' exists to close (see BackupCommand.ExecuteAsync's new Try/Catch), not
+    ''' a pre-existing behaviour this test merely documents. Because the
+    ''' database connection itself is unaffected, the fix also proves a
+    ''' failed run lands in BackupLogs here, not only in the local fallback
+    ''' log the wrong-credentials test depends on.
+    ''' </remarks>
+    <TestMethod>
+    <SupportedOSPlatform("windows")>
+    Public Async Function Backup_WithUnwritableDirectory_ReportsFailureAndNeverClaimsSuccess() As Task
+
+        Dim directoryInfo As New DirectoryInfo(_workDirectory)
+        Dim security As DirectorySecurity = directoryInfo.GetAccessControl()
+        Dim currentUser As SecurityIdentifier = WindowsIdentity.GetCurrent().User
+
+        ' Denies exactly the rights mysqldump needs to create its
+        ' --result-file. A deny ACE wins over any allow ACE for the same
+        ' identity, including one inherited from an administrator group, so
+        ' this is a real denial rather than one this test's own account can
+        ' bypass.
+        Dim denyRule As New FileSystemAccessRule(
+            currentUser,
+            FileSystemRights.CreateFiles Or FileSystemRights.WriteData,
+            AccessControlType.Deny)
+
+        security.AddAccessRule(denyRule)
+        directoryInfo.SetAccessControl(security)
+
+        Try
+
+            Dim result As BackupResult = Await RunBackupAsync(BackupSettingsForTest(retentionCount:=5))
+
+            Assert.AreEqual(BackupOutcome.Failed, result.Outcome,
+                            $"An unwritable backup directory should have reported Failed. Detail: {result.Detail}")
+            Assert.IsFalse(String.IsNullOrWhiteSpace(result.Detail), "A failed run recorded no error detail.")
+
+            If result.FilePath IsNot Nothing AndAlso File.Exists(result.FilePath) Then
+                Assert.Fail("A failed run left a dump file behind: " & result.FilePath)
+            End If
+
+            Assert.IsTrue(result.LoggedToDatabase,
+                          "The database connection was never broken by this failure - it should have logged to BackupLogs.")
+
+        Finally
+
+            ' Removed before TestCleanup tries to delete _workDirectory -
+            ' otherwise cleanup fails with the exact denial this test just
+            ' induced.
+            security.RemoveAccessRule(denyRule)
+            directoryInfo.SetAccessControl(security)
+
+        End Try
 
     End Function
 
@@ -218,6 +377,52 @@ Public Class BackupCommandTests
         Dim options As DatabaseOptions = DatabaseOptionsLoader.Load(BackupConfigPath())
         Return Await BackupCommand.ExecuteAsync(
             options, settings, MysqlDumpPath, Guid.NewGuid().ToString("d"))
+    End Function
+
+    ''' <summary>
+    ''' Same lookup <see cref="BackupCommand"/> itself uses in production -
+    ''' matching by LABEL, never by drive letter (a USB stick mounts
+    ''' differently on every machine, ADR-012/ADR-015).
+    ''' </summary>
+    Private Shared Function IsMerchBackupVolumeReady() As Boolean
+
+        For Each drive As DriveInfo In DriveInfo.GetDrives()
+            Try
+                If drive.IsReady AndAlso
+                   String.Equals(drive.VolumeLabel, "MERCHBACKUP", StringComparison.OrdinalIgnoreCase) Then
+                    Return True
+                End If
+            Catch ex As IOException
+                Continue For
+            End Try
+        Next
+
+        Return False
+
+    End Function
+
+    ''' <summary>
+    ''' Finds this test run's own off-host subfolder on the MERCHBACKUP
+    ''' volume - the unique <see cref="_offHostFolderName"/>, never the real
+    ''' operational one, for the same reason <see cref="RemoveWorkDirectory"/>
+    ''' only ever touches that folder.
+    ''' </summary>
+    Private Function FindOffHostFolder(settings As BackupSettings) As String
+
+        For Each drive As DriveInfo In DriveInfo.GetDrives()
+            Try
+                If drive.IsReady AndAlso
+                   String.Equals(drive.VolumeLabel, settings.OffHostVolumeLabel, StringComparison.OrdinalIgnoreCase) Then
+                    Return Path.Combine(drive.RootDirectory.FullName, settings.OffHostFolderName)
+                End If
+            Catch ex As IOException
+                Continue For
+            End Try
+        Next
+
+        Assert.Fail("MERCHBACKUP volume disappeared between IsMerchBackupVolumeReady() and this call.")
+        Return Nothing
+
     End Function
 
     Private Shared Function BackupConfigPath() As String

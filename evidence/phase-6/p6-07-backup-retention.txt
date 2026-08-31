@@ -1,0 +1,190 @@
+P6-07: Retention, integrity, and the off-host copy
+====================================================
+
+Base commit for this card: 68e6318
+(P6-06: CSV export, and the Excel round trip)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope
+-------------------------------------------------------------------
+
+Spec section 15's backup control table, promoted to production quality
+per plan.md's Phase 6 "Build" line ("the backup/restore work from Phase 1
+promoted to production quality with retention and off-host rotation").
+P1-06/P1-07/P1-17 already implemented most of the control table (dump,
+checksum, local retention, off-host copy, failure logging); this card
+closes the specific gaps the Done-when boxes and CARRY-02 named:
+
+  - Retention proven against WHICH files survive, not only how many.
+  - CARRY-02 (ADR-019's recorded debt) closed with a real assertion of
+    the off-host copy against an actually-attached MERCHBACKUP volume.
+  - Off-host rotation: the off-host folder is now pruned by the same
+    RetentionCount as the local directory (previously unbounded growth).
+  - Failure handling proven against the specific induced failure the
+    card names: an unwritable backup directory.
+  - "Not served by the API" asserted over HTTP, not only true by the
+    absence of static-file middleware.
+  - ADR-025 written, closing CARRY-02 and recording the rotation and
+    failure-handling decisions.
+
+-------------------------------------------------------------------
+2. A real defect found by the card's own acceptance test
+-------------------------------------------------------------------
+
+Writing Backup_WithUnwritableDirectory_ReportsFailureAndNeverClaimsSuccess
+against the ORIGINAL BackupCommand failed, but not the way it was written
+to fail:
+
+    System.UnauthorizedAccessException: Access to the path
+    'C:\Users\...\merch-backup-test-...\.032d082e21304936a58f62d109f3ba93.cnf'
+    is denied.
+       at System.IO.File.WriteToFile(...)
+       at Merchandising.Maintenance.Backup.MysqlDumpRunner.WriteDefaultsFile(...)
+       at Merchandising.Maintenance.Backup.MysqlDumpRunner.RunAsync(...)
+       at Merchandising.Maintenance.Backup.BackupCommand.ExecuteAsync(...)
+
+MysqlDumpRunner writes its --defaults-extra-file (the credential file)
+into the backup directory BEFORE mysqldump ever starts. With the
+directory's write access denied by ACL, that write throws, and the
+exception escaped ExecuteAsync entirely - uncaught. Nothing was recorded
+anywhere: no BackupLogs row, no local failure log. That contradicts spec
+section 15's "Failure handling" control directly, and contradicted the
+class's own prior doc comment, which named "an unwritable directory" as
+an expected-to-throw "programming error" - it is not; it is exactly the
+operational failure the control exists to catch.
+
+Fixed in BackupCommand.ExecuteAsync: Directory.CreateDirectory and the
+call to MysqlDumpRunner.RunAsync are now wrapped in a Try/Catch for
+UnauthorizedAccessException and IOException, routed through a new
+FailAsync helper that every failure branch now shares - ending in
+BackupOutcome.Failed and a recorded BackupLogs row (or the local
+failure-log fallback if the database itself is unreachable). Only a
+missing mysqldump.exe (FileNotFoundException, a setup fault) still
+throws. Full account: docs/adr.md ADR-025 point 4.
+
+-------------------------------------------------------------------
+3. What was built/changed
+-------------------------------------------------------------------
+
+  - src/Merchandising.Maintenance/Backup/BackupCommand.vb
+      - ExecuteAsync: the Try/Catch above; new FailAsync helper so every
+        failure branch (bad dump, unwritable directory) ends the same way.
+      - PruneOldDumps: generalized to take (directory, retentionCount,
+        databaseName) instead of reading BackupSettings.Directory
+        directly, so the same rule prunes both the local directory and,
+        when a copy was made, the off-host folder (ADR-025 point 2).
+
+  - src/tests/Merchandising.Tests.Integration/BackupCommandTests.vb
+      - Backup_PrunesOldestDumpsBeyondRetentionCount: strengthened to
+        assert WHICH dumps survive (the two newest), not only the count.
+      - Backup_WhenOffHostVolumeAttached_CopiesByteIdenticalDump (NEW):
+        closes CARRY-02 - runs a real backup against a real MERCHBACKUP
+        volume and asserts Succeeded, a non-null OffHostPath, byte-
+        identical content, and a matching recomputed checksum. Skips
+        loudly (Assert.Inconclusive with an explanatory message) when no
+        such volume is attached.
+      - Backup_PrunesOffHostDumpsBeyondRetentionCountToo (NEW): proves
+        the off-host rotation rule the same way, against the same real
+        volume. Same loud-skip rule.
+      - Backup_WithUnwritableDirectory_ReportsFailureAndNeverClaimsSuccess
+        (NEW): the induced failure the card names. Denies write access on
+        the test's own temp directory via a Windows ACL Deny rule, runs a
+        backup, asserts Failed with a non-empty detail, no dump file left
+        behind, and (since the database connection itself is unaffected)
+        that the row landed in BackupLogs.
+
+  - src/tests/Merchandising.Tests.Integration/ApiHttpTests.vb
+      - BackupDirectory_RequestedThroughTheApi_Is404 (NEW): requests the
+        real default backup directory name plus two plausible route
+        names through the real WebApplicationFactory pipeline and asserts
+        404 on all three.
+
+  - docs/adr.md
+      - ADR-025 (NEW, ACCEPTED): retention default, off-host rotation
+        rule, the failure-handling contract, and CARRY-02 closure.
+
+-------------------------------------------------------------------
+4. Machine state for the CARRY-02 assertion
+-------------------------------------------------------------------
+
+A volume labelled MERCHBACKUP was attached to this machine for this run:
+
+    DriveLetter FileSystemLabel
+    ----------- ---------------
+              D MERCHBACKUP
+                Recovery
+              C Acer
+
+Both volume-dependent tests ran their real assertions (not the loud-skip
+branch) - confirmed by the full run below reporting Skipped: 0.
+
+-------------------------------------------------------------------
+5. Test runs
+-------------------------------------------------------------------
+
+5a. Focused run, immediately after the fix (backup + API tests only):
+
+    dotnet test src/tests/Merchandising.Tests.Integration/Merchandising.Tests.Integration.vbproj \
+      -c Debug --no-build --filter 'FullyQualifiedName~BackupCommandTests|FullyQualifiedName~BackupDirectory_RequestedThroughTheApi'
+
+    Test run for ...Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+    A total of 1 test files matched the specified pattern.
+
+    Passed!  - Failed:     0, Passed:     8, Skipped:     0, Total:     8, Duration: 1 m 43 s - Merchandising.Tests.Integration.dll (net10.0)
+
+5b. Full guardrails + unit + integration suite (pwsh ./scripts/run-tests.ps1):
+
+    === Guardrails ===
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+
+    All guardrails passed.
+
+    === Build ===
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+
+    === Unit tests ===
+    Passed!  - Failed:     0, Passed:   127, Skipped:     0, Total:   127, Duration: 1 s - Merchandising.Tests.Unit.dll (net10.0)
+
+    === Integration tests (real MariaDB) ===
+    Passed!  - Failed:     0, Passed:   501, Skipped:     0, Total:   501, Duration: 4 m - Merchandising.Tests.Integration.dll (net10.0)
+
+    All checks passed.
+
+(Note: 5a's 8 tests are counted again inside 5b's 501 - not double
+evidence of two different states, the same suite run twice: once
+narrowly right after the fix, once as the full gate.)
+
+-------------------------------------------------------------------
+6. What this does NOT prove
+-------------------------------------------------------------------
+
+  - Off-host rotation and CARRY-02 are proven on THIS machine, with THIS
+    USB stick attached, on THIS run. Per ADR-019's own standing rule, a
+    classmate's machine with no MERCHBACKUP volume attached will see
+    these two tests report Inconclusive rather than Passed - that is the
+    designed behaviour (loud skip), not a gap, but it means the green
+    "501 Passed, 0 Skipped" count above is this machine's result, not a
+    portable guarantee. Re-run with the volume attached to re-confirm on
+    a different host.
+  - The scheduled Task Scheduler trigger for "daily after closing" is
+    P1-17's own scope (registered separately, per BackupCommand.vb's
+    header comment) and is not re-verified here.
+  - Restore is P6-08, not this card.
+
+-------------------------------------------------------------------
+7. Files changed
+-------------------------------------------------------------------
+
+    src/Merchandising.Maintenance/Backup/BackupCommand.vb
+    src/tests/Merchandising.Tests.Integration/BackupCommandTests.vb
+    src/tests/Merchandising.Tests.Integration/ApiHttpTests.vb
+    docs/adr.md
+    tasks.md
+    evidence/phase-6/p6-07-backup-retention.txt (this file)

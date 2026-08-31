@@ -203,17 +203,17 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 *Files disjoint from every other track. Can run in parallel with Tracks B and C.*
 
-### ⬜ P6-07 · Retention, integrity, and the off-host copy
+### ✅ P6-07 · Retention, integrity, and the off-host copy
 **Spec:** §15, §23 (G-15) · **Decides:** ADR-025 · **Files:** `src/Merchandising.Maintenance/Backup/`, `db/`, `scripts/`
 
 **Do:** Promote P1-06/P1-07's mechanism to the control table spec §15 states: configurable retention recorded in `SystemSettings`, integrity record (size, checksum, timestamp, source database version, result), protected directory, failure handling that records the error and requires follow-up, and the periodic off-host copy.
 
 **Done when:**
-- [ ] Retention is configurable, read from `SystemSettings`, and **deletes the right files** — asserted by creating more backups than the retention count and confirming exactly the oldest surplus is removed, never the newest
-- [ ] **CARRY-02 closed:** `OffHostPath` is asserted with a `MERCHBACKUP` volume **actually attached**, not artifact-backed. ADR-019's rule stands — the test must not depend on which USB stick is attached, so it asserts behaviour given a volume, and skips loudly rather than silently when none is present
-- [ ] A failed backup records the error detail and surfaces an operational warning; it never reports success — watched fail against an induced failure (unwritable directory)
-- [ ] The backup directory is outside the application binaries and not served by any API route — asserted by requesting it through the API and getting a refusal
-- [ ] ADR-025 records the retention default, the off-host rotation rule, and the failure-handling contract
+- [x] Retention is configurable, read from `SystemSettings`, and **deletes the right files** — asserted by creating more backups than the retention count and confirming exactly the oldest surplus is removed, never the newest
+- [x] **CARRY-02 closed:** `OffHostPath` is asserted with a `MERCHBACKUP` volume **actually attached**, not artifact-backed. ADR-019's rule stands — the test must not depend on which USB stick is attached, so it asserts behaviour given a volume, and skips loudly rather than silently when none is present
+- [x] A failed backup records the error detail and surfaces an operational warning; it never reports success — watched fail against an induced failure (unwritable directory)
+- [x] The backup directory is outside the application binaries and not served by any API route — asserted by requesting it through the API and getting a refusal
+- [x] ADR-025 records the retention default, the off-host rotation rule, and the failure-handling contract
 
 **Evidence:** `evidence/phase-6/p6-07-backup-retention.txt`
 

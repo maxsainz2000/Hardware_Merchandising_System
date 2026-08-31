@@ -41,8 +41,10 @@ Namespace Backup
         ''' Executes one backup run. Never throws for an operational failure -
         ''' a failed backup is a <see cref="BackupResult"/> with
         ''' <see cref="BackupOutcome.Failed"/>, not an exception, because the
-        ''' caller must record it either way. Programming errors (a missing
-        ''' mysqldump.exe, an unwritable directory) still throw.
+        ''' caller must record it either way. This now includes an unwritable
+        ''' backup directory (P6-07) - only a missing mysqldump.exe still
+        ''' throws, because that is a setup fault with no directory to record
+        ''' the failure in and no correlation ID worth persisting yet.
         ''' </summary>
         Public Shared Async Function ExecuteAsync(
             databaseOptions As DatabaseOptions,
@@ -61,14 +63,56 @@ Namespace Backup
                 .Outcome = BackupOutcome.Failed
             }
 
-            Directory.CreateDirectory(settings.Directory)
-
             Dim destination As String = Path.Combine(
                 settings.Directory,
                 $"{databaseOptions.Database}-{result.StartedAtUtc.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.sql")
 
-            Dim dump As MysqlDumpOutcome = Await MysqlDumpRunner.RunAsync(
-                mysqlDumpPath, databaseOptions, destination, cancellationToken).ConfigureAwait(False)
+            Dim dump As MysqlDumpOutcome = Nothing
+            Dim directoryFailureDetail As String = Nothing
+
+            Try
+
+                Directory.CreateDirectory(settings.Directory)
+
+                dump = Await MysqlDumpRunner.RunAsync(
+                    mysqlDumpPath, databaseOptions, destination, cancellationToken).ConfigureAwait(False)
+
+            Catch ex As UnauthorizedAccessException
+
+                ' P6-07: an unwritable backup directory (a denied ACL, a
+                ' read-only mount) used to escape ExecuteAsync as a raw
+                ' exception - "a programming error", the earlier version of
+                ' this comment called it. It is not. It is exactly the
+                ' ordinary operational failure spec section 15's "Failure
+                ' handling" control exists for, and letting it throw meant
+                ' NOTHING was ever recorded: not a BackupLogs row, not the
+                ' local failure log, nothing a human could find the next
+                ' morning. mysqldump itself never even ran - the
+                ' --defaults-extra-file write is what throws, before a
+                ' process is started - so there is no MysqlDumpOutcome to
+                ' build a BackupResult from; this is recorded directly.
+                '
+                ' `Await` is not legal inside a Catch block (BC36943), so the
+                ' detail is captured here and the actual FailAsync call
+                ' happens after the Try/Catch, once execution is back on
+                ' ordinary footing.
+                directoryFailureDetail = $"Backup directory '{settings.Directory}' is not writable: {ex.Message}"
+
+            Catch ex As IOException
+
+                ' Same rule, for the sibling failure mode: a full disk, a
+                ' file locked by another process, or a path that hit
+                ' Windows' MAX_PATH. Also an operational failure, never a
+                ' silent throw.
+                directoryFailureDetail = $"Backup directory '{settings.Directory}' could not be written to: {ex.Message}"
+
+            End Try
+
+            If directoryFailureDetail IsNot Nothing Then
+                DeleteQuietly(destination)
+                Return Await FailAsync(
+                    databaseOptions, settings, result, directoryFailureDetail, cancellationToken).ConfigureAwait(False)
+            End If
 
             If Not IsUsableDump(dump, destination) Then
 
@@ -79,12 +123,8 @@ Namespace Backup
                 ' folder, and would be counted by retention as one.
                 DeleteQuietly(destination)
 
-                result.CompletedAtUtc = Date.UtcNow
-                result.Outcome = BackupOutcome.Failed
-                result.Detail = DescribeDumpFailure(dump)
-
-                Await RecordAsync(databaseOptions, settings, result, cancellationToken).ConfigureAwait(False)
-                Return result
+                Return Await FailAsync(
+                    databaseOptions, settings, result, DescribeDumpFailure(dump), cancellationToken).ConfigureAwait(False)
 
             End If
 
@@ -109,8 +149,42 @@ Namespace Backup
                 result.OffHostPath = offHostPath
             End If
 
-            result.PrunedFileCount = PruneOldDumps(settings, databaseOptions.Database)
+            ' P6-07 / ADR-025: the off-host copy is rotated by the SAME
+            ' RetentionCount as the local directory. Before this card the
+            ' off-host folder was never pruned at all - every run copied a
+            ' new, uniquely-timestamped file onto it and nothing ever came
+            ' off, so the one drive meant to survive the host's death would
+            ' have quietly filled up long before that death happened.
+            result.PrunedFileCount = PruneOldDumps(settings.Directory, settings.RetentionCount, databaseOptions.Database)
+
+            If offHostPath IsNot Nothing Then
+                result.PrunedFileCount += PruneOldDumps(
+                    Path.GetDirectoryName(offHostPath), settings.RetentionCount, databaseOptions.Database)
+            End If
+
             result.CompletedAtUtc = Date.UtcNow
+
+            Await RecordAsync(databaseOptions, settings, result, cancellationToken).ConfigureAwait(False)
+            Return result
+
+        End Function
+
+        ''' <summary>
+        ''' Marks <paramref name="result"/> Failed with <paramref name="detail"/>,
+        ''' records it, and returns it - the one path every failure branch in
+        ''' <see cref="ExecuteAsync"/> ends through, so "a failed run is
+        ''' always recorded" cannot drift out of sync between branches.
+        ''' </summary>
+        Private Shared Async Function FailAsync(
+            databaseOptions As DatabaseOptions,
+            settings As BackupSettings,
+            result As BackupResult,
+            detail As String,
+            cancellationToken As CancellationToken) As Task(Of BackupResult)
+
+            result.CompletedAtUtc = Date.UtcNow
+            result.Outcome = BackupOutcome.Failed
+            result.Detail = detail
 
             Await RecordAsync(databaseOptions, settings, result, cancellationToken).ConfigureAwait(False)
             Return result
@@ -269,28 +343,36 @@ Namespace Backup
         End Function
 
         ''' <summary>
-        ''' Keeps the newest <see cref="BackupSettings.RetentionCount"/>
-        ''' dumps and deletes the rest. Returns how many were deleted.
+        ''' Keeps the newest <paramref name="retentionCount"/> dumps in
+        ''' <paramref name="directory"/> and deletes the rest. Returns how
+        ''' many were deleted.
         ''' </summary>
-        Private Shared Function PruneOldDumps(settings As BackupSettings, databaseName As String) As Integer
+        ''' <remarks>
+        ''' Takes the directory as a parameter, rather than reading
+        ''' <see cref="BackupSettings.Directory"/> directly, so the identical
+        ''' rule can be applied to the off-host folder (P6-07 / ADR-025) as
+        ''' well as the local one - one rule, two call sites, instead of a
+        ''' second copy of this method.
+        ''' </remarks>
+        Private Shared Function PruneOldDumps(directory As String, retentionCount As Integer, databaseName As String) As Integer
 
             ' A retention count of zero or less would mean "delete every
             ' backup on the machine, including the one just taken". That is
             ' never what an operator means, and a misconfigured settings row
             ' must not be able to destroy the backups (spec section 15 calls
             ' for a configurable count, not a configurable self-destruct).
-            If settings.RetentionCount < 1 Then Return 0
+            If retentionCount < 1 Then Return 0
 
-            Dim dumps As FileInfo() = New DirectoryInfo(settings.Directory).
+            Dim dumps As FileInfo() = New DirectoryInfo(directory).
                 GetFiles(databaseName & "-*.sql").
                 OrderByDescending(Function(f) f.CreationTimeUtc).
                 ToArray()
 
-            If dumps.Length <= settings.RetentionCount Then Return 0
+            If dumps.Length <= retentionCount Then Return 0
 
             Dim pruned As Integer = 0
 
-            For Each stale As FileInfo In dumps.Skip(settings.RetentionCount)
+            For Each stale As FileInfo In dumps.Skip(retentionCount)
                 If DeleteQuietly(stale.FullName) Then
                     pruned += 1
                 End If
