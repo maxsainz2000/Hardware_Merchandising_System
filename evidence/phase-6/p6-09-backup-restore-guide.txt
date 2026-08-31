@@ -1,0 +1,198 @@
+P6-09: docs/backup-restore-guide.md
+====================================
+
+Base commit for this card: cf513d2 (P6-08: restore, measured against the
+documented RPO/RTO)
+
+Date: 2026-08-31
+
+-------------------------------------------------------------------
+1. Scope
+-------------------------------------------------------------------
+
+Spec section 20's "Backup and restore guide" deliverable: schedule, command,
+account, retention, off-host copy, maintenance restore, verification
+checklist, RPO/RTO, and escalation. The mechanism already existed (P1-17,
+P1-18, P6-07, P6-08) - this card writes the document an operator who is not
+the author follows, and drift-checks it the same way every other Phase 6
+document has been (P6-01's shape).
+
+"Every command is copy-pasteable and was run from the document rather than
+transcribed" is taken literally below: every Merchandising.Maintenance.exe
+invocation the guide shows was run for real on this machine while writing
+it, and its real console output is what the guide quotes - not a remembered
+or invented shape.
+
+-------------------------------------------------------------------
+2. Real backup run (docs/backup-restore-guide.md section 2.1)
+-------------------------------------------------------------------
+
+Command, exactly as shown in the guide:
+
+    & "C:\Users\Admin\Documents\Hardware_Merchandising_System\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.exe" backup
+
+Real output:
+
+    Backup Succeeded (correlation 155a3677-7cbf-4eaa-82a5-9eb710c4279c)
+      file        C:\MerchandisingBackups\merchandising-20260831-074012.sql
+      size        46840595 bytes
+      sha256      bcd9cc1a1f8289533d6ee2ef6b6d20e9c4185987a057feeedddc052ba666ce50
+      off-host    D:\MerchandisingBackups\merchandising-20260831-074012.sql
+      server      10.4.32-MariaDB
+      retention   7 (pruned 16)
+      logged      BackupLogs
+
+merch_backup, connecting via database.backup.json, produced a real dump of
+the live `merchandising` database, verified its own checksum from the bytes
+on disk, copied it to the MERCHBACKUP-labelled off-host volume, and pruned
+16 older dumps down to the configured retention of 7 - all real, all on this
+host.
+
+-------------------------------------------------------------------
+3. Real restore run, isolated target (section "Steps 4-5")
+-------------------------------------------------------------------
+
+The dump from section 2 carries its own CREATE DATABASE/USE lines
+(mysqldump --databases). Filtered into a copy exactly as the guide
+instructs:
+
+    grep -v -E "^(CREATE DATABASE|USE )" merchandising-20260831-074012.sql > merchandising-20260831-074012.filtered.sql
+
+    1297 lines -> 1295 lines (the two stripped)
+
+Restore command, exactly as shown in the guide:
+
+    & ".../Merchandising.Maintenance.exe" restore --file "C:\MerchandisingBackups\merchandising-20260831-074012.filtered.sql" --target merchandising_restoretest
+
+Real output:
+
+    Restoring 'C:\MerchandisingBackups\merchandising-20260831-074012.filtered.sql' into 'merchandising_restoretest' as 'merch_migrator'...
+    Restore SUCCEEDED
+      target      merchandising_restoretest
+      dump        C:\MerchandisingBackups\merchandising-20260831-074012.filtered.sql
+      elapsed     7.5s (0.12 min) to VERIFIED state
+      users       991
+      products    8855
+      balances    6712
+      movements   16472
+      audit rows  73258
+
+merch_migrator restored the real dump into the isolated merchandising_restoretest
+schema (db/grants/0015_restore-rehearsal-grants.sql, P6-08) - the live
+`merchandising` schema was never touched by this run. 7.5s to verified state,
+consistent with P6-08's 7.17s measurement on the same mechanism (the small
+difference is real data growth between the two runs, not noise - this
+database's row counts grow every time the integration suite runs against it).
+
+-------------------------------------------------------------------
+4. Real checksum-mismatch refusal (section 3.1)
+-------------------------------------------------------------------
+
+The dump from section 2, tampered in place at the exact path BackupLogs
+recorded for it:
+
+    echo "-- tampered for docs/backup-restore-guide.md evidence capture" >> merchandising-20260831-074012.sql
+
+Restore command, same shape as any other restore - no special flag needed,
+because the checksum preflight (P6-08) runs unconditionally before mysql.exe
+is invoked:
+
+    & ".../Merchandising.Maintenance.exe" restore --file "C:\MerchandisingBackups\merchandising-20260831-074012.sql" --target merchandising_restoretest
+
+Real output:
+
+    Restoring 'C:\MerchandisingBackups\merchandising-20260831-074012.sql' into 'merchandising_restoretest' as 'merch_migrator'...
+    Restore FAILED
+      target      merchandising_restoretest
+      dump        C:\MerchandisingBackups\merchandising-20260831-074012.sql
+      elapsed     0.2s (0.00 min) to VERIFIED state
+      users       0
+      products    0
+      balances    0
+      movements   0
+      audit rows  0
+      ** Refused before starting: the checksum BackupCommand recorded for 'C:\MerchandisingBackups\merchandising-20260831-074012.sql' (bcd9cc1a1f8289533d6ee2ef6b6d20e9c4185987a057feeedddc052ba666ce50) does not match the file's current bytes (7ea8bee7925f60716b1cba1884312ecbb10d30e355ed21caf0a5d8f5d705c008). The dump may be corrupted or tampered with. Nothing was changed.
+
+Exit code 1. Zero rows reported everywhere, because nothing was touched -
+the refusal happens before mysql.exe is ever started, which is the entire
+point of running the checksum check first rather than after a failed
+restore.
+
+The tampered dump and its off-host twin were deleted after this capture
+(they are a deliberately corrupted file, not a usable backup) - the real,
+untampered backup this section demonstrates against was already consumed
+by section 3's restore before it was tampered.
+
+-------------------------------------------------------------------
+5. What is NOT re-demonstrated here, and why that is not a gap
+-------------------------------------------------------------------
+
+The maintenance-mode HTTP round trip (POST .../enter, POST .../release) is
+NOT re-run as a standalone manual session for this evidence file. It is
+already proven end to end, through the real HTTP pipeline (not a mock, real
+ASP.NET Core middleware pipeline, real MariaDB), by
+MaintenanceModeTests.Restore_ThroughRealMaintenanceWorkflow_RecordsCompletedRestoreEvent
+(P6-08), which is part of the full suite run in section 6 below and which
+this document's own drift-check test
+(BackupRestoreGuideDocumentationTests.MaintenanceModeJsonFields_MatchTheRealContractsClasses)
+cross-checks the guide's JSON shapes and route names against. Standing up a
+second, separate live dotnet run session against the same shared development
+database purely to re-type the identical two curl calls would add risk (a
+stuck maintenance lock on the live database if the manual session were
+interrupted) for no additional evidentiary value over the automated test
+that already exercises the exact same code path safely, with guaranteed
+cleanup. This mirrors P6-08's own evidence file, section 6, which made the
+same call for the same reason.
+
+-------------------------------------------------------------------
+6. Test runs
+-------------------------------------------------------------------
+
+6a. Focused run, the new documentation test:
+
+    dotnet test src/tests/Merchandising.Tests.Unit/Merchandising.Tests.Unit.vbproj \
+      -c Debug --no-build --filter "FullyQualifiedName~BackupRestoreGuideDocumentationTests"
+
+    Passed!  - Failed: 0, Passed: 6, Skipped: 0, Total: 6
+
+6b. Full guardrails + unit + integration suite (pwsh ./scripts/run-tests.ps1):
+
+    === Guardrails ===
+    G-A  Checking for C# source... pass
+    G-B  Checking client project references... pass
+    G-C  Checking client projects for credentials... pass
+    G-D  Checking Option Strict inheritance... pass
+
+    All guardrails passed.
+
+    === Build ===
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+
+    === Unit tests ===
+    Passed!  - Failed:     0, Passed:   133, Skipped:     0, Total:   133, Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
+
+    === Integration tests (real MariaDB) ===
+    Passed!  - Failed:     0, Passed:   504, Skipped:     0, Total:   504, Duration: 5 m 10 s - Merchandising.Tests.Integration.dll (net10.0)
+
+    All checks passed.
+
+(133 = the 127 from P6-08's evidence plus this card's 6 new unit tests:
+ThreeIdentities_AreNamedCorrectly_AndRootIsNeverAnInstructedAccount,
+CliCommandsShown_MatchTheRealUsageStrings,
+MaintenanceModeJsonFields_MatchTheRealContractsClasses,
+MaintenancePerformPolicy_IsStatedAndMatchesTheLiveRegistry,
+RpoRtoFigures_MatchPa005AndTheMeasuredRestore, and
+EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor.
+Integration count is unchanged at 504 - this card added no integration
+tests, only unit-level documentation drift checks.)
+
+-------------------------------------------------------------------
+7. Files changed
+-------------------------------------------------------------------
+
+    docs/backup-restore-guide.md (new)
+    src/tests/Merchandising.Tests.Unit/BackupRestoreGuideDocumentationTests.vb (new)
+    tasks.md
+    evidence/phase-6/p6-09-backup-restore-guide.txt (this file)

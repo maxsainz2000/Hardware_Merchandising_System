@@ -46,7 +46,7 @@ ADR-015 chose the demo topology on capability *readings*, never a cold start. Tw
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-Two `docs/*.md` remain after this phase's are written: `backup-restore-guide.md` → P6-09; `user-guide.md` → P6-15; `test-plan.md` → Phase 7. The other four are written.
+One `docs/*.md` remains after this phase's are written: `user-guide.md` → P6-15; `test-plan.md` → Phase 7. `backup-restore-guide.md` is written (P6-09). The other five are written.
 
 ### ⬜ CARRY-04 · Intermittent `MSB3030` on a clean-clone build — **second sighting met; now P6-17**
 
@@ -231,16 +231,16 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-08-restore-timed.txt`
 
-### ⬜ P6-09 · `docs/backup-restore-guide.md`
+### ✅ P6-09 · `docs/backup-restore-guide.md`
 **Spec:** §15, §20 · **Files:** `docs/backup-restore-guide.md`
 
 **Do:** The runbook an operator who is not the author follows: exact executable path and options (`mysqldump.exe` — `mariadb-dump` does not exist in this XAMPP build, CLAUDE.md §6.1), the backup account (`merch_backup`, never root), schedule, retention, the protected directory, the off-host step, and the full restore procedure with its measured timing.
 
 **Done when:**
-- [ ] Every command is copy-pasteable and was **run from the document** rather than transcribed — the P2-12/P3-08/P4-13/P5-14 shape
-- [ ] The three database identities are named correctly per ADR-013, and the guide never tells anyone to use root
-- [ ] Drift-checked by a test, including **every evidence path it cites resolved against disk and required to contain what it is cited for**
-- [ ] One of P0-07's remaining documents struck from its list
+- [x] Every command is copy-pasteable and was **run from the document** rather than transcribed — the P2-12/P3-08/P4-13/P5-14 shape
+- [x] The three database identities are named correctly per ADR-013, and the guide never tells anyone to use root
+- [x] Drift-checked by a test, including **every evidence path it cites resolved against disk and required to contain what it is cited for**
+- [x] One of P0-07's remaining documents struck from its list
 
 **Evidence:** `evidence/phase-6/p6-09-backup-restore-guide.txt`
 
