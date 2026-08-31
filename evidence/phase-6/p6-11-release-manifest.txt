@@ -1,0 +1,251 @@
+P6-11 — Release packaging and the runtime manifest
+====================================================
+Spec section 18 (Deployment Strategy) and section 23 (gap register row G-16, "Deployment
+runtime requirements were ambiguous"). Decides ADR-026. Closes G-16. Machine: this laptop
+(also MERCH-HOST). This card produces manifest/checker artifacts only - no service was
+touched and nothing was redeployed.
+
+1. GUARDRAILS (pwsh ./scripts/check-no-csharp.ps1)
+---------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+2. THE MEASURED RELEASE MANIFEST
+-----------------------------------
+Two invocations, matching ADR-010's packaging choice per artifact:
+
+  $ pwsh ./scripts/publish-release.ps1 -Component Api,Maintenance -Mode SelfContained
+  $ pwsh ./scripts/publish-release.ps1 -Component Procurement,Inventory,POS -Mode FrameworkDependent
+
+Each writes/updates artifacts/publish/release-manifest.json (gitignored build output, same
+as every other publish artifact) by reading the just-published artifact's own
+.runtimeconfig.json - never hand-typed. Full console output from both runs:
+
+--- Api, Maintenance (SelfContained) ---
+Build identity for this publish: commit 4e56efdc82bab1159a0825347bf00f74febaa71e at 2026-08-31T08:33:04.7077081Z
+
+=== Api  |  SelfContained  |  win-x64 ===
+  PublishAot       = false
+  PublishTrimmed   = false
+  G-A/B/C/D ... All guardrails passed.
+  Merchandising.Api -> ...\artifacts\publish\Api-sc\
+
+  output    : ...\artifacts\publish\Api-sc
+  files     : 350
+  size      : 107.3 MB
+  package   : 653B51A5F29D652F723A377BA3CAC1DF819F0FE1B28B6BB9BD87395F182FC78C
+  manifest  : Api-sc.sha256
+  runtime   : self-contained, bundles: Microsoft.NETCore.App 10.0.9, Microsoft.AspNetCore.App 10.0.9 - host needs nothing
+  release   : ...\artifacts\publish\release-manifest.json
+
+=== Maintenance  |  SelfContained  |  win-x64 ===
+  PublishAot       = false
+  PublishTrimmed   = false
+  Merchandising.Maintenance -> ...\artifacts\publish\Maintenance-sc\
+
+  output    : ...\artifacts\publish\Maintenance-sc
+  files     : 346
+  size      : 106.7 MB
+  package   : 9991588A26B171BE65B850ABC690188C15F7A560D3A80D17FE40B8C236051E7A
+  manifest  : Maintenance-sc.sha256
+  runtime   : self-contained, bundles: Microsoft.NETCore.App 10.0.9, Microsoft.AspNetCore.App 10.0.9 - host needs nothing
+  release   : ...\artifacts\publish\release-manifest.json
+
+Publish complete.
+
+--- Procurement, Inventory, POS (FrameworkDependent) ---
+Build identity for this publish: commit 4e56efdc82bab1159a0825347bf00f74febaa71e at 2026-08-31T08:33:39.0151696Z
+
+=== Procurement  |  FrameworkDependent  |  win-x64 ===
+  PublishAot       = false
+  PublishTrimmed   = false
+  Merchandising.Procurement -> ...\artifacts\publish\Procurement-fd\
+
+  output    : ...\artifacts\publish\Procurement-fd
+  files     : 15
+  size      : 0.6 MB
+  package   : 04ECB11E04E1F9C5CF75815CC22C030EC428663A3C4183EDF62823409A90ED2B
+  manifest  : Procurement-fd.sha256
+  runtime   : host must provide: Microsoft.NETCore.App 10.0.0, Microsoft.WindowsDesktop.App 10.0.0
+  release   : ...\artifacts\publish\release-manifest.json
+
+=== Inventory  |  FrameworkDependent  |  win-x64 ===
+  PublishAot       = false
+  PublishTrimmed   = false
+  Merchandising.Inventory -> ...\artifacts\publish\Inventory-fd\
+
+  output    : ...\artifacts\publish\Inventory-fd
+  files     : 15
+  size      : 0.6 MB
+  package   : 0DBD41BC0B37F0F0CD279532819BAD5AA6FD800A8C74FD891A46F155F9CF7B97
+  manifest  : Inventory-fd.sha256
+  runtime   : host must provide: Microsoft.NETCore.App 10.0.0, Microsoft.WindowsDesktop.App 10.0.0
+  release   : ...\artifacts\publish\release-manifest.json
+
+=== POS  |  FrameworkDependent  |  win-x64 ===
+  PublishAot       = false
+  PublishTrimmed   = false
+  Merchandising.POS -> ...\artifacts\publish\POS-fd\
+
+  output    : ...\artifacts\publish\POS-fd
+  files     : 15
+  size      : 0.6 MB
+  package   : E5C081C341F7B6180D545538B816761E56FCF44EC46432BA9D02B4CA6275312A
+  manifest  : POS-fd.sha256
+  runtime   : host must provide: Microsoft.NETCore.App 10.0.0, Microsoft.WindowsDesktop.App 10.0.0
+  release   : ...\artifacts\publish\release-manifest.json
+
+Publish complete.
+
+Resulting artifacts/publish/release-manifest.json (all five entries, one document):
+
+[
+  {
+    "component": "Api", "runtimeIdentifier": "win-x64", "mode": "SelfContained",
+    "hostMustProvideRuntime": false,
+    "requiredFrameworks": [
+      { "name": "Microsoft.NETCore.App", "version": "10.0.9" },
+      { "name": "Microsoft.AspNetCore.App", "version": "10.0.9" }
+    ],
+    "packageHash": "653B51A5F29D652F723A377BA3CAC1DF819F0FE1B28B6BB9BD87395F182FC78C",
+    "fileCount": 350, "sizeBytes": 112476600,
+    "publishedAtUtc": "2026-08-31T08:33:22.2582415Z",
+    "commitSha": "4e56efdc82bab1159a0825347bf00f74febaa71e",
+    "buildTimestampUtc": "2026-08-31T08:33:04.7077081Z"
+  },
+  {
+    "component": "Inventory", "runtimeIdentifier": "win-x64", "mode": "FrameworkDependent",
+    "hostMustProvideRuntime": true,
+    "requiredFrameworks": [
+      { "name": "Microsoft.NETCore.App", "version": "10.0.0" },
+      { "name": "Microsoft.WindowsDesktop.App", "version": "10.0.0" }
+    ],
+    "packageHash": "0DBD41BC0B37F0F0CD279532819BAD5AA6FD800A8C74FD891A46F155F9CF7B97",
+    "fileCount": 15, "sizeBytes": 620458,
+    "publishedAtUtc": "2026-08-31T08:33:53.4549536Z"
+  },
+  {
+    "component": "Maintenance", "runtimeIdentifier": "win-x64", "mode": "SelfContained",
+    "hostMustProvideRuntime": false,
+    "requiredFrameworks": [
+      { "name": "Microsoft.NETCore.App", "version": "10.0.9" },
+      { "name": "Microsoft.AspNetCore.App", "version": "10.0.9" }
+    ],
+    "packageHash": "9991588A26B171BE65B850ABC690188C15F7A560D3A80D17FE40B8C236051E7A",
+    "fileCount": 346, "sizeBytes": 111849858,
+    "publishedAtUtc": "2026-08-31T08:33:32.2870565Z"
+  },
+  {
+    "component": "POS", "runtimeIdentifier": "win-x64", "mode": "FrameworkDependent",
+    "hostMustProvideRuntime": true,
+    "requiredFrameworks": [
+      { "name": "Microsoft.NETCore.App", "version": "10.0.0" },
+      { "name": "Microsoft.WindowsDesktop.App", "version": "10.0.0" }
+    ],
+    "packageHash": "E5C081C341F7B6180D545538B816761E56FCF44EC46432BA9D02B4CA6275312A",
+    "fileCount": 15, "sizeBytes": 598696,
+    "publishedAtUtc": "2026-08-31T08:33:59.6838403Z"
+  },
+  {
+    "component": "Procurement", "runtimeIdentifier": "win-x64", "mode": "FrameworkDependent",
+    "hostMustProvideRuntime": true,
+    "requiredFrameworks": [
+      { "name": "Microsoft.NETCore.App", "version": "10.0.0" },
+      { "name": "Microsoft.WindowsDesktop.App", "version": "10.0.0" }
+    ],
+    "packageHash": "04ECB11E04E1F9C5CF75815CC22C030EC428663A3C4183EDF62823409A90ED2B",
+    "fileCount": 15, "sizeBytes": 607062,
+    "publishedAtUtc": "2026-08-31T08:33:46.851675Z"
+  }
+]
+
+Note on the client "10.0.0" floor: this is the minimum-version resolver floor recorded in
+each client's own .runtimeconfig.json; the .NET runtime roll-forward policy resolves it
+against whatever compatible runtime is actually installed (this machine has 10.0.9, which
+satisfies it - confirmed directly in section 3 below).
+
+3. RUNTIME VERIFICATION AT INSTALLATION, PER ARTIFACT
+--------------------------------------------------------
+Api and Maintenance are self-contained (bundle their own runtime, confirmed above) - there
+is nothing for an installer to check on the host, by construction. install-service.ps1
+already installs the Api without any host-runtime dependency; nothing in this card changes
+that script.
+
+The three WPF clients are framework-dependent and need Microsoft.WindowsDesktop.App on the
+host. setup-client.ps1's existing Preflight stage already checks this and names exactly
+what is missing. ADR-010 flagged this check as "unvalidated... cannot be validated here"
+because every machine available had the .NET SDK, which brings the Desktop Runtime with it -
+the same is true of every machine available at P6-11. Rather than leave it assumed, the
+real, UNMODIFIED script was forced into the missing-runtime condition by overriding
+$env:ProgramFiles for that one child process only - no file on any machine was touched:
+
+  $ pwsh -NoProfile -Command "$env:ProgramFiles = 'C:\NoSuchDir-P6-11-Forced-Check'; & ./scripts/setup-client.ps1 -CaptureOnly"
+
+  STAGE 1  PREFLIGHT - what this machine is
+
+    [INFO] Machine name                 LAPTOP-3HH6OHHE
+    [INFO] Windows edition              Microsoft Windows 11 Home Single Language
+    [PASS] Architecture                 64-bit
+    [PASS] Build                        26200 (10.0.26200)
+    [PASS] Administrator rights         not elevated - not needed for -CaptureOnly
+    [PASS] Screen resolution            1920x1200 (primary screen, DPI-adjusted)
+    [PASS] Display scaling              100% (96 DPI)
+    [WARN] .NET Desktop Runtime         none installed
+           -> No .NET 10 desktop runtime. Either install it, or use the self-contained
+              client build, which carries its own runtime and needs nothing here.
+    [INFO] Network                      Tailscale [Tailscale, Private]
+    [INFO] Network                      HUAWEI-5G-fP2f 2 [Wi-Fi, Private]
+
+  -CaptureOnly: stopping before any change is made.
+  RESULT: baseline captured. Nothing was changed.
+
+This is the real detection logic (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.
+WindowsDesktop.App' -> Test-Path -> match '10.*') genuinely finding nothing at the searched
+path and reporting it by name - not a simulated log line. Immediately after, the same
+unmodified script was run with $env:ProgramFiles untouched:
+
+  $ pwsh -NoProfile -File ./scripts/setup-client.ps1 -CaptureOnly
+
+    [PASS] .NET Desktop Runtime         10.0.9, 8.0.28, 9.0.17
+
+Same code path, opposite condition, opposite result. This closes the loose end ADR-010 left
+open without needing a genuinely runtime-free second machine - "an equivalent forced check,
+not assumed," per the card's own wording. The Desktop\client-baseline-LAPTOP-3HH6OHHE.txt
+report file that -CaptureOnly writes was overwritten twice by this sequence and ends this
+section back in its normal (accurate, PASS) state - no lasting change to this machine.
+
+4. UNRELATED FINDING, FIXED SEPARATELY (commit 0cc9ac4, "P6-02: paginate sales-by-cashier
+   reconciliation test")
+-----------------------------------------------------------------------------------------------
+While verifying the full suite for this card, SalesReportsTests.SalesByCashier_Reconciles_
+AgainstSalesDetailEndpoint failed deterministically ("Sequence contains no matching
+element") - the shared dev database's same-day cashier count had crossed the report's
+page-100 size, the identical failure mode P6-03 had already fixed once for
+FetchAllByProductAsync. Added the equivalent FetchAllByCashierAsync pagination loop and
+switched the test to use it. This is P6-02's file, not P6-11's, and was committed
+separately before this card's own commit, per the reasoning in that commit message.
+
+5. FULL SUITE (pwsh ./scripts/run-tests.ps1), taken AFTER the fix above
+--------------------------------------------------------------------------
+=== Guardrails ===  All guardrails passed.
+=== Build ===        Build succeeded. 0 Warning(s), 0 Error(s)
+=== Unit tests ===    Passed! Failed: 0, Passed: 133, Skipped: 0, Total: 133
+=== Integration tests (real MariaDB) ===
+                      Passed! Failed: 0, Passed: 505, Skipped: 0, Total: 505,
+                      Duration: 5 m 1 s
+All checks passed.
+
+CONCLUSION. The release manifest now records, per artifact, its target runtime identifier,
+its framework-dependent/self-contained mode, and the exact runtime it needs - measured from
+each artifact's own published output, not typed by hand. Runtime presence is verified at
+installation for every artifact that has anything to verify: self-contained artifacts need
+nothing by construction, and the framework-dependent clients' existing check has now been
+proven, by a real forced condition, to correctly detect and name a missing runtime rather
+than silently passing on every machine that happens to have the SDK. No PublishAot/
+PublishTrimmed crept in (guardrail G-D, and the script's own explicit refusal check, both
+confirmed above). ADR-026 records the decision, the measurements, and the rejected
+alternatives.

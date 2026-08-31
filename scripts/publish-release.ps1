@@ -105,6 +105,63 @@ $selfContained = ($Mode -eq 'SelfContained')
 function Write-Step { param([string] $Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
 # ---------------------------------------------------------------------------
+# P6-11 / G-16. What runtime does the HOST need for this artifact to run at
+# all - read from the artifact's own published .runtimeconfig.json, never
+# hand-typed. A self-contained publish carries its runtime under
+# "includedFrameworks" and needs nothing from the host (ADR-010's whole
+# reason for choosing it for the Api and Maintenance); a framework-dependent
+# publish names what it needs under "framework" (one) or "frameworks" (more
+# than one - an ASP.NET Core app needs both Microsoft.NETCore.App and
+# Microsoft.AspNetCore.App) and the host must already have it. Reading the
+# real file means a future SDK/runtime version bump shows up here
+# automatically instead of silently drifting out of a hand-maintained note.
+# ---------------------------------------------------------------------------
+function Get-RuntimeRequirement {
+    param([string] $OutDir)
+
+    $runtimeConfigFile = Get-ChildItem -Path $OutDir -Filter '*.runtimeconfig.json' | Select-Object -First 1
+    if (-not $runtimeConfigFile) {
+        throw "No .runtimeconfig.json found in '$OutDir' - cannot record what runtime this artifact needs."
+    }
+
+    $config = Get-Content -Raw -Path $runtimeConfigFile.FullName | ConvertFrom-Json
+    $options = $config.runtimeOptions
+
+    if ($options.includedFrameworks) {
+        $frameworks = @($options.includedFrameworks | ForEach-Object { [PSCustomObject]@{ name = $_.name; version = $_.version } })
+        return [PSCustomObject]@{ hostMustProvide = $false; frameworks = $frameworks }
+    }
+
+    $named = @()
+    if ($options.framework) { $named += $options.framework }
+    if ($options.frameworks) { $named += $options.frameworks }
+    if ($named.Count -eq 0) {
+        throw "'$($runtimeConfigFile.FullName)' names neither 'framework' nor 'includedFrameworks' - cannot determine what this artifact needs from the host."
+    }
+    $frameworks = @($named | ForEach-Object { [PSCustomObject]@{ name = $_.name; version = $_.version } })
+    return [PSCustomObject]@{ hostMustProvide = $true; frameworks = $frameworks }
+}
+
+# Upserts one component's entry into a single manifest covering every
+# artifact published across however many separate invocations of this
+# script it took to produce them - spec section 18's release manifest is
+# one document per release, not one file per component.
+function Set-ReleaseManifestEntry {
+    param(
+        [string]     $ManifestPath,
+        [PSCustomObject] $Entry
+    )
+
+    $existing = @()
+    if (Test-Path $ManifestPath) {
+        $existing = @(Get-Content -Raw -Path $ManifestPath | ConvertFrom-Json)
+    }
+    $kept = @($existing | Where-Object { $_.component -ne $Entry.component })
+    $all = @($kept) + @($Entry) | Sort-Object component
+    ($all | ConvertTo-Json -Depth 6) | Set-Content -Path $ManifestPath -Encoding UTF8
+}
+
+# ---------------------------------------------------------------------------
 # P6-10 / CARRY-05. Read ONCE, here, at publish time - never inside the
 # running process, which would just report whatever the live working tree's
 # HEAD happens to be and could never disagree with itself. Only the Api
@@ -220,12 +277,40 @@ try {
         $manifestPath = "$outDir.sha256"
         Set-Content -Path $manifestPath -Value $manifestText -Encoding UTF8
 
+        # ------------------------------------------------------------------
+        # P6-11 / G-16 release manifest entry for this artifact.
+        # ------------------------------------------------------------------
+        $runtimeRequirement = Get-RuntimeRequirement -OutDir $outDir
+
+        $releaseEntry = [PSCustomObject]@{
+            component              = $name
+            runtimeIdentifier      = $Rid
+            mode                   = $Mode
+            hostMustProvideRuntime = $runtimeRequirement.hostMustProvide
+            requiredFrameworks     = $runtimeRequirement.frameworks
+            packageHash            = $packageHash
+            fileCount              = $files.Count
+            sizeBytes              = [int64] $bytes
+            publishedAtUtc         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+        }
+        if ($name -eq 'Api') {
+            $releaseEntry | Add-Member -NotePropertyName commitSha -NotePropertyValue $commitSha
+            $releaseEntry | Add-Member -NotePropertyName buildTimestampUtc -NotePropertyValue $buildTimestampUtc
+        }
+
+        $releaseManifestPath = Join-Path $OutputRoot 'release-manifest.json'
+        Set-ReleaseManifestEntry -ManifestPath $releaseManifestPath -Entry $releaseEntry
+
+        $runtimeSummary = ($runtimeRequirement.frameworks | ForEach-Object { "$($_.name) $($_.version)" }) -join ', '
+
         Write-Host ''
         Write-Host "  output    : $outDir"
         Write-Host "  files     : $($files.Count)"
         Write-Host ("  size      : {0:N1} MB" -f ($bytes / 1MB))
         Write-Host "  package   : $packageHash"
         Write-Host "  manifest  : $(Split-Path -Leaf $manifestPath)"
+        Write-Host "  runtime   : $(if ($runtimeRequirement.hostMustProvide) { "host must provide: $runtimeSummary" } else { "self-contained, bundles: $runtimeSummary - host needs nothing" })"
+        Write-Host "  release   : $releaseManifestPath"
     }
 
     Write-Host "`nPublish complete." -ForegroundColor Green

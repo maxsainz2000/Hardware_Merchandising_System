@@ -128,7 +128,7 @@ These sections are owned by later tasks and are deliberately absent rather than 
 | Windows Service registration and recovery settings | P1-16 |
 | Backup schedule, retention, and off-host destination | P1-17 — **written, see §6** |
 | Restore procedure and maintenance mode | P1-18 |
-| Client prerequisites (.NET 10 Desktop Runtime) and client install | Phase 6 |
+| ~~Client prerequisites (.NET 10 Desktop Runtime) and client install~~ | **Written, see §7 — P6-11** |
 
 ---
 
@@ -417,4 +417,82 @@ Reformatting to NTFS was **considered and rejected**: ACLs on removable media ar
 - ✅ Off-host copy proven byte-identical on the `MERCHBACKUP` volume
 - ⬜ **Scheduled task not yet registered** — needs one elevated command (§6.3). The agent session could not elevate; this is owed to the operator
 - ⬜ Restore is P1-18
+
+---
+
+## 7. Release manifest and runtime prerequisites (P6-11, ADR-026)
+
+Spec §18 requires every published artifact to name its target runtime identifier and its
+framework-dependent-vs-self-contained choice, and requires that choice to be **verified at
+installation**, not assumed. This closes gap **G-16**.
+
+### 7.1 The manifest
+
+```powershell
+pwsh ./scripts/publish-release.ps1 -Component Api,Maintenance -Mode SelfContained
+pwsh ./scripts/publish-release.ps1 -Component Procurement,Inventory,POS -Mode FrameworkDependent
+```
+
+Each run upserts `artifacts/publish/release-manifest.json` — one document covering every
+artifact that has ever been published on this machine, keyed by component name. Every field is
+read out of that artifact's own `.runtimeconfig.json`, never typed by hand:
+
+| Component | Mode | Host must provide a runtime? | Required framework(s) |
+|---|---|---|---|
+| Api | Self-contained | **No** | `Microsoft.NETCore.App 10.0.9`, `Microsoft.AspNetCore.App 10.0.9` — bundled |
+| Maintenance | Self-contained | **No** | `Microsoft.NETCore.App 10.0.9`, `Microsoft.AspNetCore.App 10.0.9` — bundled |
+| Procurement | Framework-dependent | **Yes** | `Microsoft.NETCore.App 10.0.0`, `Microsoft.WindowsDesktop.App 10.0.0` |
+| Inventory | Framework-dependent | **Yes** | `Microsoft.NETCore.App 10.0.0`, `Microsoft.WindowsDesktop.App 10.0.0` |
+| POS | Framework-dependent | **Yes** | `Microsoft.NETCore.App 10.0.0`, `Microsoft.WindowsDesktop.App 10.0.0` |
+
+The `10.0.0` floor on the clients is the version the .NET runtime **roll-forward** policy
+resolves from — this machine has `10.0.9` installed, which satisfies it. `artifacts/publish/`
+is gitignored, same as every other publish output; the measured values above are recorded in
+`evidence/phase-6/p6-11-release-manifest.txt` and ADR-026 as of this installation.
+
+### 7.2 Verifying the runtime is present — per artifact, because the two modes differ
+
+**Api and Maintenance carry their own runtime.** There is nothing to check on the host —
+that is the entire reason ADR-010 chose self-contained for the Windows Service and the
+recovery tool. A check here would be a check that can never meaningfully fail.
+
+**The three WPF clients need `Microsoft.WindowsDesktop.App` on the host**, and that is what
+`setup-client.ps1`'s Preflight stage already verifies, before a client is ever pointed at the
+API:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-client.ps1 -CaptureOnly
+```
+
+If the runtime is missing, Preflight reports it by name rather than letting the client fail
+later at launch:
+
+```
+[WARN] .NET Desktop Runtime         none installed
+       -> No .NET 10 desktop runtime. Either install it, or use the self-contained
+          client build, which carries its own runtime and needs nothing here.
+```
+
+**This was proven against a real missing-runtime condition, not assumed.** Every machine
+available at P6-11 has the .NET SDK, which brings the Desktop Runtime with it, so a genuinely
+runtime-free machine could not be produced here either — the same gap ADR-010 left open.
+Instead, the unmodified script was run with `$env:ProgramFiles` pointed at a directory that
+does not exist, for that one process only (no file on any machine was touched):
+
+```powershell
+$env:ProgramFiles = 'C:\NoSuchDir'
+& .\scripts\setup-client.ps1 -CaptureOnly
+```
+
+which reproduced the `WARN`/`none installed` line above from the script's real detection
+logic, and a normal run immediately after reported `[PASS] .NET Desktop Runtime  10.0.9,
+8.0.28, 9.0.17` — proving the same code path in both directions. Full transcripts:
+`evidence/phase-6/p6-11-release-manifest.txt`.
+
+### 7.3 Current status
+
+- ✅ Manifest produced and measured for all five artifacts on this machine
+- ✅ Self-contained artifacts (Api, Maintenance) need no host-runtime check by construction
+- ✅ The framework-dependent client check is proven to fire on a genuine (forced) missing-runtime condition, closing the loose end ADR-010 left open
+- G-16 is now **closed** jointly by this section and P6-16's clean-installation criterion
 

@@ -265,16 +265,16 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-10-build-identity.txt`
 
-### ⬜ P6-11 · Release packaging and the runtime manifest
+### ✅ P6-11 · Release packaging and the runtime manifest
 **Spec:** §23 (G-16) · **Closes:** G-16 · **Decides:** ADR-026 · **Files:** `scripts/publish-release.ps1`, `docs/installation-guide.md`
 
 **Do:** G-16's mitigation: name `win-x64`; record the client Desktop Runtime and the host API runtime/self-contained choice; verify at installation. Never `PublishAot` or `PublishTrimmed` — both are C#-only and forbidden (CLAUDE.md §3).
 
 **Done when:**
-- [ ] The release manifest records, per artifact: target runtime, framework-dependent vs. self-contained, and the exact runtime version required
-- [ ] The installer **verifies** the required runtime is present before installing and names what is missing when it is not — verified by running it on a machine lacking the Desktop Runtime, or by an equivalent forced check, not assumed
-- [ ] Guardrail G-D still passes — no `PublishAot`/`PublishTrimmed` crept into any project file
-- [ ] ADR-026 records the packaging choice per artifact and why
+- [x] The release manifest records, per artifact: target runtime, framework-dependent vs. self-contained, and the exact runtime version required
+- [x] The installer **verifies** the required runtime is present before installing and names what is missing when it is not — verified by running it on a machine lacking the Desktop Runtime, or by an equivalent forced check, not assumed
+- [x] Guardrail G-D still passes — no `PublishAot`/`PublishTrimmed` crept into any project file
+- [x] ADR-026 records the packaging choice per artifact and why
 
 **Evidence:** `evidence/phase-6/p6-11-release-manifest.txt`
 

@@ -1200,6 +1200,35 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-026 · The release manifest, and closing the runtime-verification half of G-16
+
+**Status:** ACCEPTED
+**Date:** 2026-08-31
+**Decides:** what the release manifest spec section 18 asks for actually contains, and how "verify at installation" is proven for each artifact rather than assumed. **Closes G-16** - ADR-010 named the packaging choice per artifact but left both of these open. Raised and settled at P6-11, Track E.
+
+**Decision.**
+
+1. **`scripts/publish-release.ps1` now writes `artifacts/publish/release-manifest.json`, one document covering every artifact, upserted per component on each publish run.** Each entry records the target runtime identifier (`win-x64`, fixed), the mode (framework-dependent or self-contained), whether the host must supply a runtime at all, and the exact framework name(s) and version(s) required - `Get-RuntimeRequirement` reads these out of the artifact's own published `.runtimeconfig.json` rather than having them typed by hand anywhere. A self-contained artifact's `includedFrameworks` list is recorded for the record even though the host needs none of it; a framework-dependent artifact's `framework`/`frameworks` list is what the host must actually have.
+2. **Measured, not guessed, for all five artifacts in this sitting:** Api and Maintenance publish self-contained and bundle `Microsoft.NETCore.App 10.0.9` + `Microsoft.AspNetCore.App 10.0.9` - the host needs nothing. Procurement, Inventory and POS publish framework-dependent and each name `Microsoft.NETCore.App 10.0.0` + `Microsoft.WindowsDesktop.App 10.0.0` as the floor version the runtime resolver will roll forward from (this machine actually has `10.0.9`, which satisfies it). Full manifest in the evidence file.
+3. **Runtime verification at installation is per-artifact, because the two packaging modes need genuinely different things.** A self-contained artifact (Api, Maintenance) carries its own runtime by construction - there is nothing to verify on the host, and inventing a check for it would be a check that can never fail meaningfully. A framework-dependent artifact (the three WPF clients) needs the host's `Microsoft.WindowsDesktop.App`, and that check **already exists**: `setup-client.ps1`'s Preflight stage inspects `%ProgramFiles%\dotnet\shared\Microsoft.WindowsDesktop.App`, reports `WARN` with the exact missing-runtime advice when it finds nothing matching `10.*`, and is run before a client is ever pointed at the API. This card does not duplicate that mechanism with a second one that could disagree with it.
+4. **The client runtime check is proven to fire on a genuinely missing runtime, closing the loose end ADR-010 left open** ("the WPF Desktop Runtime prerequisite check is unvalidated and cannot be validated here"). Every machine available this session has the .NET SDK, which brings the Desktop Runtime with it, so a real runtime-free machine cannot be produced here either. Instead: `setup-client.ps1 -CaptureOnly` was run, **unmodified**, with `$env:ProgramFiles` pointed at a directory that does not exist for that one process only - no file on disk was touched, on this machine or any other. The script's real, unmodified detection logic then genuinely found no `Microsoft.WindowsDesktop.App` directory and reported `[WARN] .NET Desktop Runtime  none installed` with its real advice text; run again with `$env:ProgramFiles` untouched, the same unmodified script reported `[PASS] .NET Desktop Runtime  10.0.9, 8.0.28, 9.0.17`. Both transcripts are in the evidence file.
+
+**Reasoning.**
+
+- **Reading the runtimeconfig rather than hand-typing the manifest** is the same "measured, not stated" discipline as every other evidence card this phase - a manifest someone forgot to update after a target-framework bump would be silently wrong in exactly the way this card exists to prevent.
+- **An environment-variable override is an equivalent forced check, not a weaker one.** It exercises the identical code path (`Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.WindowsDesktop.App'`, `Test-Path`, the `10.*` match) that a genuinely runtime-free machine would exercise; the only thing substituted is which path that code looks under, and the substitution is scoped to one child process. Renaming the real, currently-relied-upon `Microsoft.WindowsDesktop.App` folder on this host to simulate the same condition was considered and rejected as needlessly destructive for no additional proof.
+- **Self-contained needs no host check, and that is a feature of ADR-010's choice, not a gap in this one.** Spec section 18's "verify at installation" is satisfied for Api and Maintenance by construction - there is no runtime dependency left to fail silently, which is exactly the failure class ADR-010 chose self-contained to close for the Windows Service.
+
+**Rejected.**
+
+- **A second, dedicated runtime-checker script for the clients**, separate from `setup-client.ps1`. Would create two mechanisms capable of disagreeing about whether a given laptop is ready, for a check `setup-client.ps1` already performs correctly as part of the one command a client machine needs to run.
+- **One manifest file per component**, matching the existing `.sha256` sidecar pattern. Rejected because spec section 18 asks for *the* release manifest - a single document an installer or a gate reviewer can open once and see every artifact's runtime requirement, not five files to find and reconcile by hand.
+- **Hard-coding the required framework versions in this script** from what the SDK documentation says today. Rejected for the same reason ADR-023 rejected a self-comparing reconciliation test: a value the tool could instead measure from the thing it is describing is strictly better evidence than the same value typed from memory, and the SDK's own resolved output is right there in `.runtimeconfig.json`.
+
+**Evidence.** `evidence/phase-6/p6-11-release-manifest.txt`.
+
+---
+
 ## ADR-027 · Health endpoint build identity, and why in-process tests cannot prove it
 
 **Status:** ACCEPTED
