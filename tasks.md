@@ -65,9 +65,11 @@ ADR-015 chose the demo topology on capability *readings*, never a cold start. Tw
 
 `user-guide.md` written in full (P6-15). `test-plan.md` → Phase 7 is the only one left.
 
-### ⬜ CARRY-04 · Intermittent `MSB3030` on a clean-clone build — **second sighting met; now P6-17**
+### ✅ CARRY-04 · Intermittent `MSB3030` on a clean-clone build — **closed at P6-17 (ADR-029)**
 
-Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 consecutive deterministic failures under a deep `AppData\Local\Temp` path, against a first-attempt clean build at a plain path, same commit. The prior theory ("the generating task had not run yet") was **ruled out** — the referenced `runtimeconfig.json` was on disk at the moment the copy claimed it was missing. Card raised as **P6-17**.
+Threshold reached at the Phase 5 gate (`evidence/phase-5/INDEX.md` §4.5): 9 consecutive deterministic failures under a deep `AppData\Local\Temp` path, against a first-attempt clean build at a plain path, same commit. The prior theory ("the generating task had not run yet") was **ruled out** — the referenced `runtimeconfig.json` was on disk at the moment the copy claimed it was missing.
+
+**Closed at P6-17.** Root cause is `MAX_PATH` with `LongPathsEnabled = 0`, confirmed by controlled test rather than argued: a 260-character copy path failed, a 163-character one under the identical tree built clean. Guard in `run-tests.ps1`, constraint documented in the installation guide, no registry change. **Consumed one card later:** P6-18's clean clone was deliberately made at `C:\p6clone` rather than the deep scratchpad path for exactly this reason, and built at 0 warnings with no recurrence.
 
 ---
 
@@ -357,20 +359,25 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 **Evidence:** `evidence/phase-6/p6-17-msb3030.txt`
 
-### ⬜ P6-18 · Phase 6 closure pack
+### ✅ P6-18 · Phase 6 closure pack
 **Spec:** §20 · **Files:** `evidence/phase-6/`
 
 **Done when:**
-- [ ] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p6-18-clean-clone.log`
-- [ ] `evidence/phase-6/INDEX.md` maps every exit criterion and every card to an artifact that exists **and contains what it is cited for** — three gates running have now been failed by a claim outrunning its evidence, and the last one had a perfect existence record
-- [ ] **G-22 and G-15 recorded closed** in the gap register, each against its own artifact
-- [ ] **G-16 recorded as its two halves, never as one gap closed** — the release-manifest and runtime-verification half closed here against `p6-11-release-manifest.txt`; the clean-machine installation test **open, owned by P8-03** (ADR-030). A gap register that says "G-16 closed" is this pack's own failure mode
-- [ ] Every carried item from Phases 0–5 either closed or explicitly re-carried with an owner — CARRY-01, CARRY-02, CARRY-04, CARRY-05 close here; **P0-02 and P0-05 re-carried to the Phase 8 gate under ADR-030**, which is the ADR-016 mechanism used a third time, not a quiet slip
-- [ ] **ADR-030 is ACCEPTED and its card-move table matches `plan.md` §7 and this file** — P6-13→P8-01, P6-14→P8-02, P6-16→P8-03, checked in all three places rather than assumed consistent
-- [ ] Any claim narrower than its wording marked ⚠ and explained; **every quantitative claim checked against the number it cites**
-- [ ] Every ADR this phase owed (ADR-023 – ADR-030, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md`
-- [ ] New ADRs appended **before** the *Template for new entries* section — verified by line number
-- [ ] **The deployed service is current**, verified by P6-10's own build-identity check rather than by hand
+- [x] Clean clone outside the repository, **0** `bin`/`obj` at clone time, builds at **0 warnings** and passes guardrails plus both suites → `p6-18-clean-clone.log` — commit `af9ef1c`, clone at `C:\p6clone`, `0 Warning(s) 0 Error(s)`, **unit 140/140, integration 512/512, 0 skipped**, `run-tests.ps1` exit 0
+- [x] `evidence/phase-6/INDEX.md` maps every exit criterion and every card to an artifact that exists **and contains what it is cited for** — three gates running have now been failed by a claim outrunning its evidence, and the last one had a perfect existence record — 17 paths in this file and 7 cross-phase paths in the four Phase 6 documents, each opened and read for the claim it is cited for (INDEX §2)
+- [x] **G-22 and G-15 recorded closed** in the gap register, each against its own artifact — INDEX §3
+- [x] **G-16 recorded as its two halves, never as one gap closed** — the release-manifest and runtime-verification half closed here against `p6-11-release-manifest.txt`; the clean-machine installation test **open, owned by P8-03** (ADR-030). A gap register that says "G-16 closed" is this pack's own failure mode — INDEX §3 and §4.3; `docs/installation-guide.md` §7.3's outright "closed" claim corrected at this card
+- [x] Every carried item from Phases 0–5 either closed or explicitly re-carried with an owner — CARRY-01, CARRY-02, CARRY-04, CARRY-05 close here; **P0-02 and P0-05 re-carried to the Phase 8 gate under ADR-030**, which is the ADR-016 mechanism used a third time, not a quiet slip — INDEX §6
+- [x] **ADR-030 is ACCEPTED and its card-move table matches `plan.md` §7 and this file** — P6-13→P8-01, P6-14→P8-02, P6-16→P8-03, checked in all three places rather than assumed consistent
+- [x] Any claim narrower than its wording marked ⚠ and explained; **every quantitative claim checked against the number it cites** — INDEX §4 (six entries) and §5, which corrects Phase 5's 79→82 and Phase 4's 346→348 against their own logs
+- [x] Every ADR this phase owed (ADR-023 – ADR-030, and any raised along the way) is ACCEPTED, not PENDING — checked directly against `docs/adr.md` — INDEX §7
+- [x] New ADRs appended **before** the *Template for new entries* section — verified by line number: ADR-023–030 at lines 1109–1324, template at 1375
+- [x] **The deployed service is current**, verified by P6-10's own build-identity check rather than by hand — found **7 commits stale** and caught by the mechanism in seconds rather than by hand (its first real detection); redeployed and re-verified matching. ⚠ Inherently one commit behind at capture — INDEX §4.4
+
+**Three findings this card made, all recorded rather than smoothed over:** Phase 6 introduced three
+analyzer warnings that passed through two cards claiming "suites green" (fixed at `af9ef1c`, watched
+fail — INDEX §4.1), and this pack's own first clean-clone run reported 9 false failures by invoking
+`dotnet test -c Release` instead of `scripts/run-tests.ps1` (INDEX §4.5).
 
 **Evidence:** `evidence/phase-6/p6-18-clean-clone.log`, `evidence/phase-6/INDEX.md`
 
@@ -380,13 +387,18 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 From `plan.md` §7. Every criterion needs an artifact under `evidence/phase-6/` — a file someone else could read, **containing what it is cited for**.
 
-- [ ] Every report reconciles to source data (P6-01 – P6-05)
-- [ ] CSV round-trips through Excel without mangling (P6-06)
-- [ ] Backup/restore meets the documented RPO/RTO with measured evidence (P6-07, P6-08)
-- [ ] G-22 and G-15 closed in the gap register; **G-16 recorded as one half closed, one half open** (P6-18)
-- [ ] `report-specification.md`, `backup-restore-guide.md`, `user-guide.md` written; `installation-guide.md` current (P6-01, P6-09, P6-15)
-- [ ] Clean-clone build and both test suites green (P6-18)
-- [ ] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up
+- [x] Every report reconciles to source data (P6-01 – P6-05) — INDEX §1 row 1
+- [x] CSV round-trips through Excel without mangling (P6-06) — real export read back, artifact committed
+- [x] Backup/restore meets the documented RPO/RTO with measured evidence (P6-07, P6-08) — **7.17 s to verified state against a 900 s target**; ⚠ database portion, not service restart — INDEX §4.2
+- [x] G-22 and G-15 closed in the gap register; **G-16 recorded as one half closed, one half open** (P6-18) — INDEX §3
+- [x] `report-specification.md`, `backup-restore-guide.md`, `user-guide.md` written; `installation-guide.md` current (P6-01, P6-09, P6-15)
+- [x] Clean-clone build and both test suites green (P6-18) — **140/140 unit, 512/512 integration, 0 warnings, 0 skipped**
+- [x] *(CLAUDE.md §9)* Every task done — no card left 🟡 and rounded up — 14 closed; the 3 machine-dependent cards are **moved by ADR-030, not rounded up**, and appear as ⬜ under Phase 8 rather than ticked here
+
+**These boxes are the closure pack's own reading, not a gate result.** `/phase-gate` runs the exit
+review and is the only thing that may declare PASS. Three phases running have returned FAIL on their
+first sitting with every artifact present, so a ticked list here is an invitation to that review, not
+a substitute for it.
 
 **Moved to the Phase 8 gate by ADR-030 — struck from this list, not silently dropped:**
 

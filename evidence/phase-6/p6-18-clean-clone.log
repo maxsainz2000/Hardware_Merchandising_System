@@ -1,0 +1,92 @@
+===============================================================================
+P6-18 - PHASE 6 CLOSURE PACK: CLEAN CLONE, BUILD, GUARDRAILS, BOTH SUITES
+Captured 2026-08-31 on LAPTOP-3HH6OHHE
+Card: tasks.md P6-18, first Done-when box
+===============================================================================
+
+This is a clean CLONE, not a clean MACHINE - the same wording P1-20,
+P2-13, P3-09, P4-14, P4-15, P5-15 and P5-16 used, because the claim has
+not grown. It reuses this host's %ProgramData%\MerchandisingSystem\config
+\*.json, its XAMPP MariaDB instance, and its installed .NET SDK.
+
+Source commit    : af9ef1cfbe89edcc1376868c989a35fd3332d2a0
+                   (af9ef1c) "P6-18: close the three analyzer warnings Phase 6 introduced (part 1)"
+Clone target     : C:\p6clone  (outside the repository, path length 10)
+dotnet SDK       : 10.0.301
+LongPathsEnabled : 0  (ADR-029 - why the clone root is short)
+Clone commit     : af9ef1cfbe89edcc1376868c989a35fd3332d2a0
+Clone matches    : YES
+bin/obj at clone : 0 directories - verified by enumeration before building
+Command          : pwsh -NoProfile -File <clone>\scripts\run-tests.ps1
+
+===============================================================================
+RUN-TESTS.PS1 - guardrails, build, both suites
+===============================================================================
+
+=== Guardrails ===
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+=== Build ===
+  Determining projects to restore...
+  Restored C:\p6clone\src\Merchandising.ClientCommon\Merchandising.ClientCommon.vbproj (in 211 ms).
+  Restored C:\p6clone\src\Merchandising.Inventory\Merchandising.Inventory.vbproj (in 213 ms).
+  Restored C:\p6clone\src\Merchandising.POS\Merchandising.POS.vbproj (in 211 ms).
+  Restored C:\p6clone\src\Merchandising.Domain\Merchandising.Domain.vbproj (in 188 ms).
+  Restored C:\p6clone\src\Merchandising.Procurement\Merchandising.Procurement.vbproj (in 4 ms).
+  Restored C:\p6clone\src\Merchandising.Contracts\Merchandising.Contracts.vbproj (in 8 ms).
+  Restored C:\p6clone\src\Merchandising.Infrastructure\Merchandising.Infrastructure.vbproj (in 169 ms).
+  Restored C:\p6clone\src\Merchandising.Api\Merchandising.Api.vbproj (in 489 ms).
+  Restored C:\p6clone\src\Merchandising.Maintenance\Merchandising.Maintenance.vbproj (in 489 ms).
+  Restored C:\p6clone\src\tests\Merchandising.Tests.Integration\Merchandising.Tests.Integration.vbproj (in 680 ms).
+  Restored C:\p6clone\src\tests\Merchandising.Tests.Unit\Merchandising.Tests.Unit.vbproj (in 681 ms).
+  Merchandising.Domain -> C:\p6clone\src\Merchandising.Domain\bin\Debug\net10.0\Merchandising.Domain.dll
+  Merchandising.Contracts -> C:\p6clone\src\Merchandising.Contracts\bin\Debug\net10.0\Merchandising.Contracts.dll
+  Merchandising.ClientCommon -> C:\p6clone\src\Merchandising.ClientCommon\bin\Debug\net10.0-windows\Merchandising.ClientCommon.dll
+  Merchandising.Infrastructure -> C:\p6clone\src\Merchandising.Infrastructure\bin\Debug\net10.0\Merchandising.Infrastructure.dll
+  Merchandising.Procurement -> C:\p6clone\src\Merchandising.Procurement\bin\Debug\net10.0-windows\Merchandising.Procurement.dll
+  Merchandising.Maintenance -> C:\p6clone\src\Merchandising.Maintenance\bin\Debug\net10.0\Merchandising.Maintenance.dll
+  Merchandising.Inventory -> C:\p6clone\src\Merchandising.Inventory\bin\Debug\net10.0-windows\Merchandising.Inventory.dll
+  Merchandising.POS -> C:\p6clone\src\Merchandising.POS\bin\Debug\net10.0-windows\Merchandising.POS.dll
+  Merchandising.Api -> C:\p6clone\src\Merchandising.Api\bin\Debug\net10.0\Merchandising.Api.dll
+  G-A  Checking for C# source... pass
+  G-B  Checking client project references... pass
+  G-C  Checking client projects for credentials... pass
+  G-D  Checking Option Strict inheritance... pass
+  
+  All guardrails passed.
+  Merchandising.Tests.Unit -> C:\p6clone\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll
+  Merchandising.Tests.Integration -> C:\p6clone\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:12.80
+
+=== Unit tests ===
+Test run for C:\p6clone\src\tests\Merchandising.Tests.Unit\bin\Debug\net10.0-windows\Merchandising.Tests.Unit.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   140, Skipped:     0, Total:   140, Duration: 2 s - Merchandising.Tests.Unit.dll (net10.0)
+
+=== Integration tests (real MariaDB) ===
+Confirm MariaDB is running via the XAMPP control panel before this step.
+Test run for C:\p6clone\src\tests\Merchandising.Tests.Integration\bin\Debug\net10.0\Merchandising.Tests.Integration.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   512, Skipped:     0, Total:   512, Duration: 6 m 5 s - Merchandising.Tests.Integration.dll (net10.0)
+
+All checks passed.
+
+===============================================================================
+RESULT
+===============================================================================
+run-tests.ps1 exit code : 0
+Finished (UTC)          : 2026-08-31T12:47:05.9937704Z
+Total elapsed           : 394s
+Clone deleted after capture.
