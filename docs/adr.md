@@ -1200,6 +1200,36 @@ Full rendering, one row per pair with its error code: `evidence/phase-3/p3-01-tr
 
 ---
 
+## ADR-027 · Health endpoint build identity, and why in-process tests cannot prove it
+
+**Status:** PENDING
+**Date:** 2026-08-31
+**Decides:** how the deployed API's commit and build time are exposed and checked, and why `WebApplicationFactory`-based integration tests are structurally unable to catch a stale deployment - CARRY-05, found at the Phase 4 and Phase 5 gates, both times by hand. Raised and settled at P6-10, Track E.
+
+**Decision.**
+
+1. **The commit SHA and build timestamp are baked into the compiled assembly at publish time, as `AssemblyMetadata` attributes - never read from the working tree at request time.** `scripts/publish-release.ps1` resolves `git rev-parse HEAD` and the current UTC time exactly once, before the Api's `dotnet publish` runs, and passes them as `-p:MerchCommitSha=... -p:MerchBuildTimestampUtc=...`. `Merchandising.Api.vbproj` declares matching `AssemblyMetadata` items, defaulting both to the literal `"unknown"` when the properties are not supplied - the case for every ordinary `dotnet build` or `dotnet test`. `HealthController.GetHealth` reads them by reflection, the same pattern already used for `version`, and adds them to the existing anonymous payload as `commitSha` and `buildTimestampUtc`.
+2. **This uses the SDK's built-in `GenerateAssemblyInfo` target, not a source generator.** That target is a plain MSBuild step that writes a physical `AssemblyInfo.vb` into `obj/` via the `WriteCodeFragment` task, and has worked identically for VB, C# and F# since SDK-style projects existed - it predates Roslyn incremental source generators entirely. It is unrelated to `EnableRequestDelegateGenerator` and does not reopen CLAUDE.md section 3's C#-source-generator prohibition.
+3. **`scripts/install-service.ps1` gained `-CheckOnly`.** Without touching the service, ACL or Event Log, it calls the local `/health`, compares `commitSha` against `git rev-parse HEAD`, prints both values, and exits non-zero on a mismatch (`Test-DeployedBuildIdentity`, reusing the script's existing `Stop-WithError` convention). A normal install runs the identical comparison as its last step and refuses to print "Install complete." on a mismatch.
+4. **Why `WebApplicationFactory`-based integration tests can never catch this class of defect.** Every integration test in this repository builds the API host in-process, from the assembly the test run itself just compiled - so any staleness check exercised only through that harness would compare the current tree against a host built from the current tree, and could never disagree with itself. The defect this card closes is specifically the gap *between* what is on disk in the repository and what is running as a separately-deployed Windows Service; a factory that never leaves the test process structurally cannot observe that gap. That is precisely why P4's and P5's full integration suites - 505 passing tests including this phase's own health test - never noticed the deployed service was stale, and why the mechanism instead has to reach out over the real network to the real, separately-published binary (`Test-DeployedBuildIdentity`'s `Invoke-RestMethod` against `127.0.0.1:8443`).
+
+**Reasoning.**
+
+- **Stamping at publish time rather than reading git at request time** is the one property the whole card exists to establish: a value the running process could recompute live from the tree would track the tree, not the binary, and would report "current" forever regardless of whether anyone had redeployed - reproducing exactly the defect being fixed.
+- **A commit SHA is safe to expose unauthenticated.** It identifies no person, credential, machine name or filesystem path, and it is already public in every clone of this repository; CLAUDE.md section 5's "leaks nothing beyond commit and timestamp" is satisfied by construction, and `ApiHttpTests.Health_ReturnsBuildIdentityAndNothingElse` asserts the payload's key set is exactly `status`, `version`, `utcTime`, `commitSha`, `buildTimestampUtc` - nothing else can be added to this response without that test failing.
+- **The watched-fail rehearsal is the actual proof, not the code.** `Test-DeployedBuildIdentity -CheckOnly` was run against the API already installed on this machine (published at commit `173fb39`, the Phase 5 gate commit) before this task's own commit existed, confirmed red for the right reason (a real, pre-existing stale deployment - exactly the fault this card was raised to close), then republished and reinstalled from this task's own commit and confirmed green; then, without any redeploy, `-CheckOnly` was run again against the parent of this task's commit and confirmed red once more, purely from the commit boundary itself. Full transcript in the evidence file.
+
+**Rejected.**
+
+- **A companion JSON file written beside the executable at publish time, read by the controller at request time**, instead of an assembly attribute. Works, but adds a second artifact that has to travel with the binary and can be edited or go missing independently of it; an `AssemblyMetadata` attribute is part of the same file the process is already running from, and cannot be separated from it by an incomplete copy.
+- **SourceLink** (`Microsoft.SourceLink.GitHub` or similar) to populate `SourceRevisionId` automatically. It requires a recognised remote provider and targets `AssemblyInformationalVersionAttribute`'s `+`-suffix specifically, which `ResolveProductVersion` already strips deliberately (see `HealthController.vb`) so the product version does not carry build metadata a client has no use for. Introducing a second, differently-shaped mechanism just for the commit SHA, when a plain MSBuild property passed by the one script that ever publishes this project does the whole job, is not a trade this card needs to make.
+- **Reading `git rev-parse HEAD` inside the running API process**, e.g. at startup. Requires `git.exe` and a repository clone to exist on the deployment host, which is not guaranteed and is not this project's dependency to add; and it reports the tree the process happens to be sitting next to, not the commit the running binary was actually built from - the two are only the same immediately after a publish, which is exactly the moment this check is least needed.
+- **Only wiring the comparison into `install-service.ps1`'s normal install path**, with no standalone mode. The card's own watched-fail test requires checking staleness *without* redeploying - reinstalling to test whether staleness detection works would always redeploy the very commit being checked against, and could never demonstrate a red result. `-CheckOnly` exists specifically so the check can be run on a schedule, or by hand, against a service nobody is touching.
+
+**Evidence.** `evidence/phase-6/p6-10-build-identity.txt`.
+
+---
+
 ## Template for new entries
 
 ```markdown

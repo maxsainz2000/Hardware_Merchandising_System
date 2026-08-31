@@ -104,6 +104,21 @@ $selfContained = ($Mode -eq 'SelfContained')
 
 function Write-Step { param([string] $Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
+# ---------------------------------------------------------------------------
+# P6-10 / CARRY-05. Read ONCE, here, at publish time - never inside the
+# running process, which would just report whatever the live working tree's
+# HEAD happens to be and could never disagree with itself. Only the Api
+# component's project file consumes these (Merchandising.Api.vbproj); passing
+# them for the other components is harmless but pointless, so they are only
+# added to that one `dotnet publish` call below.
+# ---------------------------------------------------------------------------
+$commitSha = (& git -C $RepoRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $commitSha -notmatch '^[0-9a-f]{40}$') {
+    throw "Could not resolve 'git rev-parse HEAD' in '$RepoRoot' (got '$commitSha'). The published Api build-identity would be meaningless without it."
+}
+$buildTimestampUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+Write-Host "Build identity for this publish: commit $commitSha at $buildTimestampUtc" -ForegroundColor DarkGray
+
 Push-Location $RepoRoot
 try {
     foreach ($name in $Component) {
@@ -112,6 +127,12 @@ try {
         if (-not (Test-Path $project)) { throw "Project not found: $project" }
 
         Write-Step "$name  |  $Mode  |  $Rid"
+
+        # Only the Api carries a build-identity health endpoint (HealthController.vb).
+        $buildIdentityArgs = @()
+        if ($name -eq 'Api') {
+            $buildIdentityArgs = @("-p:MerchCommitSha=$commitSha", "-p:MerchBuildTimestampUtc=$buildTimestampUtc")
+        }
 
         # ------------------------------------------------------------------
         # Refuse to publish with AOT or trimming enabled.
@@ -147,7 +168,8 @@ try {
             --runtime $Rid `
             --self-contained $selfContained.ToString().ToLowerInvariant() `
             --output $outDir `
-            --nologo
+            --nologo `
+            @buildIdentityArgs
 
         if ($LASTEXITCODE -ne 0) { throw "Publish failed for $name ($Mode)." }
 

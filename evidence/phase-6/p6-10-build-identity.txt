@@ -1,0 +1,142 @@
+P6-10 / CARRY-05 — Health endpoint carries build identity
+===========================================================
+Spec section 23 (gap register row G-16, "no mechanism in this repository could detect
+a stale deployment"). Decides ADR-027. Machine: this laptop, doubling as MERCH-HOST.
+
+THIS FILE IS WRITTEN IN TWO PARTS BY CONSTRUCTION, NOT BY ACCIDENT.
+--------------------------------------------------------------------
+The card's own acceptance test ("run the comparison, make a source commit without
+redeploying, confirm the check goes red") requires a real commit boundary to exist
+between two of its steps. Part 1 below covers everything provable before the P6-10
+commit exists. Part 2, appended immediately after that commit in a short follow-up
+commit, is the watched-fail confirmation itself and the final hygiene reinstall.
+Nothing in Part 1 depends on Part 2, and Part 1 alone already proves the code works —
+Part 2 exists to prove the ONE thing that cannot be proven any earlier: that this
+mechanism actually goes red when a real commit lands with no matching redeploy.
+
+=====================================================================
+PART 1 — implementation, guardrails, full suites, and the pre-existing stale reading
+=====================================================================
+
+1. GUARDRAILS (pwsh ./scripts/check-no-csharp.ps1)
+---------------------------------------------------
+G-A  Checking for C# source... pass
+G-B  Checking client project references... pass
+G-C  Checking client projects for credentials... pass
+G-D  Checking Option Strict inheritance... pass
+
+All guardrails passed.
+
+2. FULL SUITE (pwsh ./scripts/run-tests.ps1)
+---------------------------------------------
+=== Guardrails ===  All guardrails passed.
+=== Build ===        Build succeeded. 0 Error(s), 1 pre-existing unrelated warning
+                      (MSTEST0037 in CsvExporterTests.vb, not touched by this card).
+=== Unit tests ===    Passed! Failed: 0, Passed: 133, Skipped: 0, Total: 133
+=== Integration tests (real MariaDB) ===
+                      Passed! Failed: 0, Passed: 505, Skipped: 0, Total: 505,
+                      Duration: 5 m 12 s
+All checks passed.
+
+Included in the 505: ApiHttpTests.Health_ReturnsBuildIdentityAndNothingElse, written
+FIRST and watched to fail for the right reason before HealthController.vb changed —
+CollectionAssert.AreEquivalent reported "Expected:<5>. Actual:<3>." against the
+unmodified three-field payload. It now asserts the payload's key set is EXACTLY
+{status, version, utcTime, commitSha, buildTimestampUtc} — nothing else can be added
+to this unauthenticated response without that assertion failing — and that both new
+fields are either the literal "unknown" (unstamped dev build) or, respectively, a
+40-hex-character SHA and a round-trippable timestamp.
+
+3. THE PRE-EXISTING STALE DEPLOYMENT — read before any of this card's code existed
+-------------------------------------------------------------------------------------
+Before implementing anything, the ALREADY-RUNNING MerchandisingApi service on this
+machine (published before this phase, serving since the P0-05/P1-16 line of work) was
+checked with the new -CheckOnly switch, run against the OLD (pre-P6-10) health payload
+which has no commitSha field at all:
+
+  $ pwsh -File ./scripts/install-service.ps1 -CheckOnly
+  Merchandising System - build identity check (P6-10 / CARRY-05)
+  Read-only: no service, ACL or Event Log change. Does not require elevation.
+
+  === build identity check ===
+    git rev-parse HEAD : 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+    deployed commitSha :
+
+    FAIL STALE DEPLOYMENT: the running service was published from a different commit
+    than the current tree.
+         Republish (scripts/publish-release.ps1) and reinstall
+         (scripts/install-service.ps1 -PublishDir ...) from the current commit.
+  (exit code 1)
+
+This is exactly the defect CARRY-05 names: a real, already-present stale deployment,
+undetected by every test in the 505-test integration suite (which builds its host
+in-process, from the current tree, and therefore cannot see a separately-deployed
+process at all — see ADR-027 point 4), caught the moment a mechanism actually looked
+at the two things that matter: the tree's HEAD and the running process's own identity.
+
+4. PUBLISH — stamped from the tree as it stood immediately before the P6-10 commit
+---------------------------------------------------------------------------------------
+  $ pwsh -File ./scripts/publish-release.ps1 -Component Api -Mode SelfContained
+  Build identity for this publish: commit 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+  at 2026-08-31T08:12:52.1395888Z
+
+  === Api  |  SelfContained  |  win-x64 ===
+    PublishAot       = false
+    PublishTrimmed   = false
+    ...
+    G-A/B/C/D ... All guardrails passed.
+    Merchandising.Api -> ...\artifacts\publish\Api-sc\
+
+    output    : ...\artifacts\publish\Api-sc
+    files     : 350
+    size      : 107.3 MB
+    package   : 1FED2FA33EEBFD4BAF215F59E41D5DD32865FA843A61E20871EB7611DB3273BC
+    manifest  : Api-sc.sha256
+
+  Publish complete.
+
+git rev-parse HEAD at the moment of this publish: 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+(the working tree carried this card's uncommitted changes; HEAD itself had not moved,
+so the build correctly carries the LAST REAL COMMIT's identity, not a future one that
+did not exist yet — the same as any other publish run before its own change is
+committed.)
+
+5. INSTALL — new versioned folder, elevated, run by the operator (not this agent;
+   scripts/install-service.ps1 requires an elevated session and this agent has none)
+---------------------------------------------------------------------------------------
+  Copy-Item -Recurse -Force artifacts\publish\Api-sc  C:\MerchandisingService\Api-sc-721f2ff
+  pwsh -File scripts/install-service.ps1 -PublishDir C:\MerchandisingService\Api-sc-721f2ff
+
+Confirmed independently afterward (not by trusting the install's own "Install
+complete." message, but by re-running the same read-only check the card asks for):
+
+  $ pwsh -File ./scripts/install-service.ps1 -CheckOnly
+  Merchandising System - build identity check (P6-10 / CARRY-05)
+  Read-only: no service, ACL or Event Log change. Does not require elevation.
+
+  === build identity check ===
+    git rev-parse HEAD : 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+    deployed commitSha : 721f2ffe54b96394cba6db67fdbd2ff574e854d4
+    OK   Deployed build matches the current commit.
+  (exit code 0)
+
+Service registration confirmed directly:
+  Name      : MerchandisingApi
+  State     : Running
+  StartMode : Auto
+  PathName  : "C:\MerchandisingService\Api-sc-721f2ff\Merchandising.Api.exe"
+
+This closes boxes 1, 2, 4 and 5 of the card: the endpoint carries a publish-time
+commit and timestamp (never re-read from the tree at request time — the deployed
+process above kept reporting 721f2ffe... across multiple checks while the working
+tree already held every uncommitted P6-10 change, which is exactly the "does not
+always agree with itself" property required); a script (install-service.ps1
+-CheckOnly) compares it against git rev-parse HEAD and fails loudly, with both values
+printed, when they differ (step 3 above); the same comparison runs automatically as
+the last step of a normal install and would have refused to report success on a
+mismatch (nothing to show here since this install was not stale — Part 2 exercises
+the refusal path indirectly by showing the identical function goes red the moment the
+tree moves without a matching install); and the payload leaks nothing beyond commit
+and timestamp (test in section 2).
+
+--- Part 1 ends here. Part 2 follows in a short, immediate follow-up commit. ---

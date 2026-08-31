@@ -78,6 +78,59 @@ Public Class ApiHttpTests
     End Function
 
     ''' <summary>
+    ''' P6-10 / CARRY-05: the endpoint must carry a build identity a comparison
+    ''' script can check against <c>git rev-parse HEAD</c>, and must reveal
+    ''' nothing beyond it (spec section 13; CLAUDE.md section 5).
+    ''' </summary>
+    <TestMethod>
+    Public Async Function Health_ReturnsBuildIdentityAndNothingElse() As Task
+
+        Using client As HttpClient = _factory.CreateClient()
+
+            Using response As HttpResponseMessage = Await client.GetAsync("/health")
+
+                Dim raw As String = Await response.Content.ReadAsStringAsync()
+                Using document As JsonDocument = JsonDocument.Parse(raw)
+
+                    Dim root As JsonElement = document.RootElement
+
+                    Dim actualKeys As New List(Of String)
+                    For Each prop As JsonProperty In root.EnumerateObject()
+                        actualKeys.Add(prop.Name)
+                    Next
+
+                    CollectionAssert.AreEquivalent(
+                        New String() {"status", "version", "utcTime", "commitSha", "buildTimestampUtc"},
+                        actualKeys,
+                        "The health payload must carry exactly status, version, utcTime, commitSha and " &
+                        "buildTimestampUtc - nothing more, per CLAUDE.md section 5.")
+
+                    Dim commitSha As String = root.GetProperty("commitSha").GetString()
+                    Assert.IsFalse(String.IsNullOrWhiteSpace(commitSha), "commitSha must not be blank.")
+                    Assert.IsTrue(
+                        String.Equals(commitSha, "unknown", StringComparison.Ordinal) OrElse
+                        System.Text.RegularExpressions.Regex.IsMatch(commitSha, "^[0-9a-f]{40}$"),
+                        "commitSha must be the literal 'unknown' (an unstamped dev build) or a full " &
+                        "40-character git SHA, not '" & commitSha & "'.")
+
+                    Dim buildTimestamp As String = root.GetProperty("buildTimestampUtc").GetString()
+                    Assert.IsFalse(String.IsNullOrWhiteSpace(buildTimestamp), "buildTimestampUtc must not be blank.")
+                    Dim parsedTimestamp As DateTimeOffset
+                    Assert.IsTrue(
+                        String.Equals(buildTimestamp, "unknown", StringComparison.Ordinal) OrElse
+                        DateTimeOffset.TryParse(buildTimestamp, parsedTimestamp),
+                        "buildTimestampUtc must be the literal 'unknown' or a round-trippable timestamp, " &
+                        "not '" & buildTimestamp & "'.")
+
+                End Using
+
+            End Using
+
+        End Using
+
+    End Function
+
+    ''' <summary>
     ''' The non-production marker keys on the TRANSPORT, not on the
     ''' environment - NonProductionWarningMiddleware tags any request where
     ''' Request.IsHttps is false. TestServer carries no TLS, so a default

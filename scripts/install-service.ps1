@@ -35,16 +35,26 @@
 .PARAMETER Uninstall
     Remove the service, its Event Log source, and its ACL grant, then exit.
 
+.PARAMETER CheckOnly
+    P6-10 / CARRY-05. Touches nothing - no service, no ACL, no Event Log.
+    Calls the already-running service's /health endpoint, compares its
+    commitSha to `git rev-parse HEAD` in this repository, prints both, and
+    exits 1 on a mismatch. This is the standalone half of the staleness check
+    described below; a normal install runs the same comparison automatically
+    as its last step. Does not require an elevated session.
+
 .EXAMPLE
     pwsh -File scripts/install-service.ps1 -PublishDir C:\MerchandisingApi
     pwsh -File scripts/install-service.ps1 -Uninstall
+    pwsh -File scripts/install-service.ps1 -CheckOnly
 #>
 
 [CmdletBinding()]
 param(
     [string] $PublishDir,
     [string] $ConfigDir = "$env:ProgramData\MerchandisingSystem\config",
-    [switch] $Uninstall
+    [switch] $Uninstall,
+    [switch] $CheckOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -93,6 +103,74 @@ function Invoke-Sc {
         Stop-WithError "$What failed (sc.exe exit $LASTEXITCODE)." ($output -join "`n       ")
     }
     return $output
+}
+
+function Get-RepoRoot {
+    Split-Path -Parent $PSScriptRoot
+}
+
+function Get-GitHeadSha {
+    param([string] $RepoRoot)
+
+    $sha = (& git -C $RepoRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') {
+        Stop-WithError "Could not resolve 'git rev-parse HEAD' in '$RepoRoot' (got '$sha')." 'Run this script from inside the repository clone.'
+    }
+    return $sha
+}
+
+# ---------------------------------------------------------------------------
+# P6-10 / CARRY-05 - THE WHOLE POINT OF THIS CARD.
+#
+# The Phase 4 and Phase 5 gates both found the deployed service stale, by
+# hand, and nothing in this repository could have noticed on its own: the
+# integration suite builds the host in-process from the CURRENT tree, so any
+# staleness check run through it would always agree with itself. This
+# function is the only place that compares what the TREE says against what
+# the RUNNING PROCESS says - fed by /health's commitSha, which HealthController
+# reads from an AssemblyMetadata value baked in at PUBLISH time
+# (Merchandising.Api.vbproj / scripts/publish-release.ps1), never re-read from
+# the tree at request time.
+# ---------------------------------------------------------------------------
+function Test-DeployedBuildIdentity {
+    param([string] $RepoRoot)
+
+    $expected = Get-GitHeadSha -RepoRoot $RepoRoot
+
+    try {
+        $health = Invoke-RestMethod -Uri 'https://127.0.0.1:8443/health' -SkipCertificateCheck -TimeoutSec 10
+    }
+    catch {
+        Stop-WithError 'Could not reach https://127.0.0.1:8443/health to check build identity.' $_.Exception.Message
+    }
+
+    $deployed = $health.commitSha
+
+    Write-Host ''
+    Write-Host '=== build identity check ===' -ForegroundColor Cyan
+    Write-Host "  git rev-parse HEAD : $expected"
+    Write-Host "  deployed commitSha : $deployed"
+
+    if ($deployed -eq 'unknown') {
+        Stop-WithError 'The deployed build reports commitSha "unknown" - it was never published through scripts/publish-release.ps1.' `
+            'Publish with scripts/publish-release.ps1, which stamps the real commit at publish time, then reinstall.'
+    }
+
+    if ($deployed -ne $expected) {
+        Stop-WithError 'STALE DEPLOYMENT: the running service was published from a different commit than the current tree.' `
+            'Republish (scripts/publish-release.ps1) and reinstall (scripts/install-service.ps1 -PublishDir ...) from the current commit.'
+    }
+
+    Write-Ok 'Deployed build matches the current commit.'
+}
+
+if ($CheckOnly) {
+    Write-Host ''
+    Write-Host 'Merchandising System - build identity check (P6-10 / CARRY-05)' -ForegroundColor White
+    Write-Host 'Read-only: no service, ACL or Event Log change. Does not require elevation.' -ForegroundColor DarkGray
+
+    Test-DeployedBuildIdentity -RepoRoot (Get-RepoRoot)
+    exit 0
 }
 
 Write-Host ''
@@ -430,6 +508,19 @@ if (-not $listening) {
         "Check the Application event log, source '$ServiceName' - that is where a startup failure is reported."
 }
 Write-Ok 'Listening on 8443.'
+
+# ===========================================================================
+# 8. BUILD IDENTITY - P6-10 / CARRY-05
+#
+# "The service reached Running and answers on 8443" is not "the service is
+# CURRENT" - that was found the hard way at the Phase 4 and Phase 5 gates,
+# both times by hand, four weeks stale. Stop-WithError inside
+# Test-DeployedBuildIdentity exits non-zero on a mismatch, so this install is
+# never reported successful while serving a different commit than the one on
+# disk.
+# ===========================================================================
+Write-Step 'Verifying build identity'
+Test-DeployedBuildIdentity -RepoRoot (Get-RepoRoot)
 
 Write-Host ''
 Write-Host 'Install complete.' -ForegroundColor Green

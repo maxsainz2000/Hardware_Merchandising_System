@@ -80,6 +80,36 @@
     <TargetFramework>$(MerchNetTfm)</TargetFramework>
   </PropertyGroup>
 
+  <!--
+    P6-10 / CARRY-05. The health endpoint's build identity (see
+    HealthController.GetHealth) has to be baked into the compiled assembly at
+    PUBLISH time, not read from the working tree at request time - a value
+    read live from the tree would always agree with itself and detect nothing.
+
+    scripts/publish-release.ps1 is the only caller that ever sets
+    MerchCommitSha / MerchBuildTimestampUtc, via -p: on `dotnet publish`, from
+    a single `git rev-parse HEAD` taken once at publish time. An ordinary
+    `dotnet build` or `dotnet test` never supplies them, which is why they
+    default to the literal "unknown" below rather than shelling out to git on
+    every inner-loop build.
+
+    This uses the SDK's built-in GenerateAssemblyInfo target, which writes a
+    plain AssemblyInfo.vb into obj/ via the WriteCodeFragment task. That is
+    NOT a Roslyn source generator - it predates Roslyn source generators
+    entirely and works identically for VB, C# and F# - so it is unaffected by
+    EnableRequestDelegateGenerator=false above and does not reopen CLAUDE.md
+    section 3's C#-source-generator prohibition.
+  -->
+  <PropertyGroup Label="P6-10 build identity">
+    <MerchCommitSha Condition="'$(MerchCommitSha)' == ''">unknown</MerchCommitSha>
+    <MerchBuildTimestampUtc Condition="'$(MerchBuildTimestampUtc)' == ''">unknown</MerchBuildTimestampUtc>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="MerchCommitSha" Value="$(MerchCommitSha)" />
+    <AssemblyMetadata Include="MerchBuildTimestampUtc" Value="$(MerchBuildTimestampUtc)" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
   </ItemGroup>

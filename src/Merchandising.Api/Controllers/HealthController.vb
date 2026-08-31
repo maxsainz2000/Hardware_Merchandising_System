@@ -25,6 +25,13 @@ Namespace Controllers
     ''' who can reach the port can read this response. If a future task needs a
     ''' deeper readiness check, it belongs behind authorization on a separate
     ''' endpoint, not added to this payload.
+    '''
+    ''' P6-10 / CARRY-05 added <c>commitSha</c> and <c>buildTimestampUtc</c> to
+    ''' that list of permitted fields, deliberately. A commit hash identifies
+    ''' no person, machine, credential or path - it is already public in
+    ''' every clone of this repository - and without it nothing in the system
+    ''' could tell a currently-running deployment from a four-week-stale one,
+    ''' which is exactly what happened at both the Phase 4 and Phase 5 gates.
     ''' </remarks>
     <ApiController>
     <Route("health")>
@@ -39,11 +46,26 @@ Namespace Controllers
         Private Shared ReadOnly ProductVersion As String = ResolveProductVersion()
 
         ''' <summary>
+        ''' The commit this binary was published from, and when. Resolved once
+        ''' at type initialisation, from <see cref="AssemblyMetadataAttribute"/>
+        ''' entries baked in at publish time by
+        ''' <c>scripts/publish-release.ps1</c> via
+        ''' <c>Merchandising.Api.vbproj</c> - never read from the working tree
+        ''' at request time, which would always agree with itself and detect
+        ''' nothing. An ordinary dev build carries the literal "unknown" for
+        ''' both.
+        ''' </summary>
+        Private Shared ReadOnly CommitSha As String = ResolveBuildMetadata("MerchCommitSha")
+
+        ''' <summary>See <see cref="CommitSha"/>.</summary>
+        Private Shared ReadOnly BuildTimestampUtc As String = ResolveBuildMetadata("MerchBuildTimestampUtc")
+
+        ''' <summary>
         ''' Reports that the API process is running.
         ''' </summary>
         ''' <returns>
-        ''' HTTP 200 with <c>status</c>, <c>version</c> and <c>utcTime</c>, and
-        ''' nothing else.
+        ''' HTTP 200 with <c>status</c>, <c>version</c>, <c>utcTime</c>,
+        ''' <c>commitSha</c> and <c>buildTimestampUtc</c>, and nothing else.
         ''' </returns>
         ''' <remarks>
         ''' P2-03: <c>AllowAnonymous</c> made explicit rather than relying on
@@ -63,7 +85,9 @@ Namespace Controllers
             Dim payload = New With {
                 .status = "ok",
                 .version = ProductVersion,
-                .utcTime = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
+                .utcTime = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                .commitSha = CommitSha,
+                .buildTimestampUtc = BuildTimestampUtc
             }
 
             Return Ok(payload)
@@ -107,6 +131,43 @@ Namespace Controllers
             If assemblyVersion IsNot Nothing Then
                 Return assemblyVersion.ToString()
             End If
+
+            Return "unknown"
+
+        End Function
+
+        ''' <summary>
+        ''' Reads one <c>AssemblyMetadata</c> value baked into this assembly at
+        ''' publish time by <c>Merchandising.Api.vbproj</c> / P6-10.
+        ''' </summary>
+        ''' <param name="key">
+        ''' <c>MerchCommitSha</c> or <c>MerchBuildTimestampUtc</c> - the
+        ''' <c>AssemblyMetadata</c> item names declared in the project file.
+        ''' </param>
+        ''' <remarks>
+        ''' Returns "unknown" when the attribute is absent, which is the
+        ''' ordinary case for a plain <c>dotnet build</c> or <c>dotnet test</c>
+        ''' that never passed <c>-p:MerchCommitSha=...</c>. A published build
+        ''' always carries a real value, because
+        ''' <c>Merchandising.Api.vbproj</c> defaults the MSBuild property to the
+        ''' same literal when the publish script does not supply it - so this
+        ''' method never has to guess whether "unknown" means "not stamped" or
+        ''' "stamped as unknown"; they are the same thing.
+        ''' </remarks>
+        Private Shared Function ResolveBuildMetadata(key As String) As String
+
+            Dim apiAssembly As Assembly = GetType(HealthController).Assembly
+
+            For Each metadata As AssemblyMetadataAttribute In
+                apiAssembly.GetCustomAttributes(Of AssemblyMetadataAttribute)()
+
+                If String.Equals(metadata.Key, key, StringComparison.Ordinal) AndAlso
+                   Not String.IsNullOrWhiteSpace(metadata.Value) Then
+
+                    Return metadata.Value
+
+                End If
+            Next
 
             Return "unknown"
 
