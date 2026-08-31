@@ -46,7 +46,7 @@ ADR-015 chose the demo topology on capability *readings*, never a cold start. Tw
 
 ### 🟡 P0-07 · Repository structure — **the last box closes in Phase 7**
 
-One `docs/*.md` remains after this phase's are written: `user-guide.md` → P6-15; `test-plan.md` → Phase 7. `backup-restore-guide.md` is written (P6-09). The other five are written.
+`user-guide.md` written in full (P6-15). `test-plan.md` → Phase 7 is the only one left.
 
 ### ⬜ CARRY-04 · Intermittent `MSB3030` on a clean-clone build — **second sighting met; now P6-17**
 
@@ -330,14 +330,14 @@ route `StockAdjustments` has ever had; it reconciles an Applied adjustment's
 
 ## Track H — Documents and closure
 
-### ⬜ P6-15 · `docs/user-guide.md`
+### ✅ P6-15 · `docs/user-guide.md`
 **Spec:** §20 · **Files:** `docs/user-guide.md`
 
 **Done when:**
-- [ ] Covers all five roles and all three clients, task-first (*"take a sale"*, *"receive goods"*, *"close the day"*), not screen-first
-- [ ] States what the system does **not** do, where a user reads it: no terminal, bank, cash drawer, scale, customer display or receipt printer integration (G-24), and card/e-wallet is recorded, not authorised
-- [ ] Drift-checked, with every evidence path it cites resolved and required to contain what it is cited for
-- [ ] The last of P0-07's Phase 6 documents struck from its list
+- [x] Covers all five roles and all three clients, task-first (*"take a sale"*, *"receive goods"*, *"close the day"*), not screen-first
+- [x] States what the system does **not** do, where a user reads it: no terminal, bank, cash drawer, scale, customer display or receipt printer integration (G-24), and card/e-wallet is recorded, not authorised
+- [x] Drift-checked, with every evidence path it cites resolved and required to contain what it is cited for
+- [x] The last of P0-07's Phase 6 documents struck from its list
 
 **Evidence:** `evidence/phase-6/p6-15-user-guide.txt`
 

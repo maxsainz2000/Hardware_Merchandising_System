@@ -1,0 +1,159 @@
+P6-15 - docs/user-guide.md, all five roles and all three WPF clients.
+
+Captured 2026-08-31 on this workstation (box1). Base commit before this card:
+48c3618 (P6-12: reset-password and unlock-user on the Maintenance CLI).
+
+===============================================================================
+0. What this card built
+===============================================================================
+
+docs/user-guide.md expanded from the P6-12 stub (account recovery only) into
+the full task-first guide spec section 20 requires: Procurement, Inventory,
+POS, Admin, and Super Admin operating procedures. Organized by task ("take a
+sale", "close the day", "buy and receive goods") rather than by screen, per
+the card's own instruction.
+
+Every screen described was read from the live MainWindow.xaml of each client
+before being written up - not transcribed from the spec or invented. That
+reading surfaced a real, previously undocumented fact: several
+role-permission-matrix policies (Products.Manage, Suppliers.Manage,
+PurchaseReturns.Manage, PurchaseOrders.Close, SalesReturns.ApproveExceptional,
+Reports.View, Configuration.Manage, Audit.Review, Receiving.Prepare) have no
+consuming WPF screen in any of the three clients as of Phase 6 - some are
+reachable only by a direct API call (documented in section 8, with routes and
+policies cross-checked against the live controller source), and two
+(Audit.Review, Receiving.Prepare) are registered policies with no consuming
+endpoint at all. This is stated plainly in the document rather than
+glossed over (plan.md section 6, ADR-016's own standard for what a claim may
+not overstate).
+
+src/tests/Merchandising.Tests.Unit/UserGuideDocumentationTests.vb (8 tests) -
+the P2-12/P3-08/P4-13/P5-14/P6-09 drift-check shape applied to this document:
+reads the live PaymentWording.xaml resource and cross-checks the quoted G-24
+wording against it verbatim; reflects over ProductsController,
+SuppliersController, PurchaseOrdersController, ReceivingController,
+SalesReturnsController, SystemSettingsController, and ReportsController to
+assert every route template and effective <Authorize> policy quoted in
+section 8 matches the live source exactly; cross-checks the four system
+setting keys quoted against SystemSettingRegistry.Keys's own constants; scans
+every controller source file to assert PolicyRegistry.Names.AuditReview and
+PolicyRegistry.Names.ReceivingPrepare are still unconsumed (so the day either
+gets a real endpoint, this suite - not just the document - goes stale and
+fails); and resolves every evidence path the document cites against disk.
+
+===============================================================================
+1. What is proven, by an automated suite that ran on this machine
+===============================================================================
+
+  pwsh ./scripts/check-no-csharp.ps1   -> All guardrails passed (G-A..G-D).
+  pwsh ./scripts/run-tests.ps1         -> Build: 0 warnings, 0 errors.
+                                           Unit tests:        140 passed, 0 failed.
+                                           Integration tests: 512 passed, 0 skipped.
+
+UserGuideDocumentationTests - 8 tests, new this card, inside the 140 above:
+  - Document_NamesAllFiveRolesAndAllThreeClients
+  - Document_StatesTheG24ExclusionsAndTheExactRecordedNotAuthorisedWording
+  - Section8Routes_MatchTheLiveControllerSourceExactly
+  - ConfigurationSettingKeys_MatchSystemSettingRegistry
+  - AuditReviewAndReceivingPrepare_RemainUnconsumedByAnyController
+  - EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+  - Document_LinksBackupRestoreGuide_RatherThanDuplicatingIt
+
+===============================================================================
+2. Proven falsifiable
+===============================================================================
+
+Per this repo's own standard (P5-12: "a wording test that has never fired is
+exactly as decorative as any other"), the route/policy drift-check was
+watched fail before being trusted. docs/user-guide.md section 8's quoted
+close-order route was deliberately edited from:
+
+    | ... | `POST /api/v1/purchase-orders/{id}/close` ... |
+
+to:
+
+    | ... | `POST /api/v1/purchase-orders/{id}/finish` ... |
+
+Running only UserGuideDocumentationTests against the corrupted document:
+
+    Failed Section8Routes_MatchTheLiveControllerSourceExactly [X ms]
+    Error Message:
+       Assert.IsTrue failed. StringAssert.Contains failed. String
+       '...' does not contain string
+       'POST /api/v1/purchase-orders/{id}/close'. docs/user-guide.md no
+       longer quotes 'POST /api/v1/purchase-orders/{id}/close' for
+       PurchaseOrdersController.ClosePurchaseOrder..
+    Failed!  - Failed: 2, Passed: 5, Skipped: 0, Total: 7
+
+(Two tests failed, not one: EveryEvidencePathTheDocumentCites also failed at
+that point in the sequence, for the separate and expected reason that this
+evidence file did not yet exist - see section 3.)
+
+The edit was then reverted and the full suite re-run clean before this
+evidence file was written.
+
+The evidence-path check was watched fail for real, not staged: every run of
+`pwsh ./scripts/run-tests.ps1` before this file existed failed
+EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor with
+exactly the missing-file message quoted in section 3 below, because the
+document already cited this file's path before the file existed - the same
+chicken-and-egg every prior *DocumentationTests evidence file in this phase
+resolves the same way: write the document and test first, watch the citation
+fail, then write this file, then re-run clean.
+
+===============================================================================
+3. Watched fail for the right reason (evidence-path citation)
+===============================================================================
+
+Before this file existed, the full suite reported:
+
+    Failed EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor
+    Error Message:
+       Assert.IsEmpty failed. Expected collection of size 0. Actual: 1.
+       docs/user-guide.md cites evidence files that do not exist on disk:
+       evidence/phase-6/p6-15-user-guide.txt
+    Failed!  - Failed: 1, Passed: 139, Skipped: 0, Total: 140
+
+That is the correct failure for the right reason: the document cited this
+file honestly, before it existed. Writing this file and re-running is what
+resolves it - not editing the citation away.
+
+===============================================================================
+4. Done-when boxes - status
+===============================================================================
+
+  [x] Covers all five roles (Super Admin, Admin, Procurement Officer,
+      Inventory Clerk, Cashier) and all three clients, task-first ("take a
+      sale", "receive goods", "close the day"), not screen-first - sections
+      1-9, asserted by Document_NamesAllFiveRolesAndAllThreeClients.
+  [x] States what the system does not do, where a user reads it: no
+      terminal, bank, cash drawer, scale, customer display or receipt
+      printer integration (G-24), and card/e-wallet is recorded, not
+      authorised - section 10, the quoted sentence asserted verbatim
+      against the live PaymentWording.xaml resource by
+      Document_StatesTheG24ExclusionsAndTheExactRecordedNotAuthorisedWording.
+  [x] Drift-checked, with every evidence path it cites resolved against disk
+      and required to contain what it is cited for -
+      EveryEvidencePathTheDocumentCites_ExistsAndContainsWhatItIsCitedFor,
+      proven falsifiable in section 3 above.
+  [x] The last of P0-07's Phase 6 documents struck from its list - tasks.md
+      line 47-49 updated: user-guide.md now written in full (was previously
+      the account-recovery-only stub).
+
+===============================================================================
+5. What this document does NOT claim - stated honestly, not smoothed over
+===============================================================================
+
+Section 8 of docs/user-guide.md records, rather than hides, that eight
+role-permission-matrix policies have no consuming WPF screen as of Phase 6:
+Products.Manage, Suppliers.Manage, PurchaseReturns.Manage,
+PurchaseOrders.Close, and SalesReturns.ApproveExceptional are reachable only
+by a direct API call (documented with real routes and bodies); Reports.View
+and Configuration.Manage likewise have no report or settings screen in any
+client; and Audit.Review and Receiving.Prepare are registered policies with
+no consuming endpoint of any kind - reviewing the audit log today requires a
+direct database read on the host, which the document states rather than
+implying a review screen exists. None of this is a Phase 6 exit criterion by
+itself; all of it is `ui-specification.md`'s own named Phase 7 UI-refinement
+scope, and is recorded here so it is not forgotten by the document's own
+silence.
